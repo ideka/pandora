@@ -472,6 +472,8 @@ bool SettingsMenu::navigate_bindings(int key) {
         return false;
     Rml::ElementList rows;
     doc_->GetElementsByClassName(rows, "binding");
+    // data-for keeps its template element (hidden) next to the rows it generates.
+    std::erase_if(rows, [](Rml::Element* row) { return !row->IsVisible(); });
     if (rows.empty())
         return false;
     auto cell = [](Rml::Element* row, int column) -> Rml::Element* {
