@@ -66,6 +66,16 @@
 
     <div class="page" data-if="tab == 'general'">
         <div class="setting">
+            <span class="name">Rumble</span>
+            <input type="range" min="0" max="100" step="10" data-value="rumble"/>
+            <span class="value">{{ rumble == 0 ? 'Off' : rumble + '%' }}</span>
+        </div>
+        <div class="setting">
+            <span class="name">Mouse aims pointer</span>
+            <input type="checkbox" data-checked="mouse_pointer"/>
+            <span class="note">Move the mouse over the window to aim the Wii Remote pointer</span>
+        </div>
+        <div class="setting">
             <span class="name">Fullscreen</span>
             <input type="checkbox" data-checked="fullscreen"/>
             <span class="note">F11 or Alt+Enter</span>

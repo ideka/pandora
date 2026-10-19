@@ -13,3 +13,5 @@
 805EA4F0 KPADDisableDPD       # provisional: clears per-channel byte 0x642 (work area 0x807E0D38 + chan * 0x688)
 805EA510 KPADEnableDPD        # provisional: sets it
 805A40D0 WPADGetInfoAsync     # provisional: (chan, WPADInfo* (0x18 bytes), callback), called every 60 frames
+805A43C0 WPADEnableMotor      # stores the SYSCONF rumble setting (set from WPADInit, which is stubbed)
+805A4400 WPADIsMotorEnabled   # returns it; the game checks it before every WPADControlMotor

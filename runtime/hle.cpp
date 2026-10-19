@@ -103,6 +103,19 @@ void Runtime::install_hle() {
         rt.ret(0);
     });
 
+    // BOOL WPADIsMotorEnabled(void): the console's rumble setting, normally read by WPADInit (stubbed).
+    // Always on; the settings menu's rumble intensity decides whether the host gamepad shakes.
+    hook("WPADIsMotorEnabled", [](Runtime& rt) { rt.ret(1); });
+
+    // void WPADControlMotor(s32 chan, u32 command): 1 starts the rumble motor, 0 stops it.
+    hook("WPADControlMotor", [](Runtime& rt) {
+        if (rt.cpu.gpr[3] == 0) {
+            LOG_DEBUG("input", "rumble %s", rt.cpu.gpr[4] == 1 ? "on" : "off");
+            rt.input().set_rumble(rt.cpu.gpr[4] == 1);
+        }
+        rt.ret(0);
+    });
+
     // s32 KPADRead(s32 chan, KPADStatus* samples, u32 length): one sample per call.
     // KPADStatus (0xF0 bytes, RVL SDK 4.x): hold/trig/release, acc, pointer, horizon, distance,
     // device type/error/DPD-valid/format at 0x5C, Nunchuk status at 0x60.
@@ -119,7 +132,8 @@ void Runtime::install_hle() {
             std::memcpy(&bits, &v, 4);
             mem::write32(c, buf + off, bits);
         };
-        const PadState& p = rt.input().state();
+        PadState p = rt.input().state();
+        p.buttons &= ~WPAD_HOME;  // the HOME Menu is disabled (a nuisance, and a source of softlocks)
         for (u32 i = 0; i < 0xF0; i += 4)
             mem::write32(c, buf + i, 0);
         mem::write32(c, buf + 0x00, p.buttons);

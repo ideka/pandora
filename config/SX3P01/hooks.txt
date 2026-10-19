@@ -9,3 +9,5 @@ WPADInit  # stubbed until input is HLE'd at the WPAD/KPAD level
 KPADRead
 WPADProbe
 WPADGetInfoAsync
+WPADControlMotor  # rumble, played on the host gamepad
+WPADIsMotorEnabled  # always on: the menu's rumble setting decides

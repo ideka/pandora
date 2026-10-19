@@ -9,6 +9,8 @@ struct Settings {
     bool fullscreen = false;
     int volume = 100;  // percent
     bool muted = false;
+    int rumble = 100;          // percent; 0 disables rumble
+    bool mouse_pointer = true;  // the mouse aims the Wii Remote pointer
     Bindings bindings = Bindings::defaults();
 
     // Missing or unreadable files leave the defaults; unknown keys are ignored.

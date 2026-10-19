@@ -16,7 +16,6 @@ constexpr BindingInfo CONTROLS[kControlCount] = {
     {"2", "2", false},
     {"plus", "+ (Plus)", false},
     {"minus", "- (Minus)", false},
-    {"home", "Home", false},
     {"dpad_up", "D-Pad Up", false},
     {"dpad_down", "D-Pad Down", false},
     {"dpad_left", "D-Pad Left", false},
@@ -47,7 +46,7 @@ constexpr BindingInfo MENU_ACTIONS[kMenuActionCount] = {
 
 // Wii buttons driven by each button control (the rest are analog).
 constexpr u32 BUTTON_BITS[kControlCount] = {
-    WPAD_A, WPAD_B, WPAD_1, WPAD_2, WPAD_PLUS, WPAD_MINUS, WPAD_HOME,
+    WPAD_A, WPAD_B, WPAD_1, WPAD_2, WPAD_PLUS, WPAD_MINUS,
     WPAD_UP, WPAD_DOWN, WPAD_LEFT, WPAD_RIGHT, WPAD_Z, WPAD_C,
 };
 
@@ -57,7 +56,7 @@ struct ButtonName {
 };
 constexpr ButtonName SCRIPT_BUTTONS[] = {
     {"A", WPAD_A},       {"B", WPAD_B},         {"1", WPAD_1},       {"2", WPAD_2},
-    {"PLUS", WPAD_PLUS}, {"MINUS", WPAD_MINUS}, {"HOME", WPAD_HOME}, {"UP", WPAD_UP},
+    {"PLUS", WPAD_PLUS}, {"MINUS", WPAD_MINUS}, {"UP", WPAD_UP},
     {"DOWN", WPAD_DOWN}, {"LEFT", WPAD_LEFT},   {"RIGHT", WPAD_RIGHT}, {"Z", WPAD_Z},
     {"C", WPAD_C},
 };
@@ -233,12 +232,12 @@ Bindings Bindings::defaults() {
     auto control = [&](Control c) -> Mappings& { return b.controls[(size_t)c]; };
     set(control(Control::A), P::button(SDL_GAMEPAD_BUTTON_SOUTH), none, P::key(SDL_SCANCODE_RETURN),
         P::key(SDL_SCANCODE_SPACE));
-    set(control(Control::B), P::button(SDL_GAMEPAD_BUTTON_EAST), none, P::key(SDL_SCANCODE_BACKSPACE), none);
+    set(control(Control::B), P::button(SDL_GAMEPAD_BUTTON_EAST), none, P::key(SDL_SCANCODE_BACKSPACE),
+        P::mouse(SDL_BUTTON_LEFT));
     set(control(Control::One), P::button(SDL_GAMEPAD_BUTTON_WEST), none, P::key(SDL_SCANCODE_1), none);
     set(control(Control::Two), P::button(SDL_GAMEPAD_BUTTON_NORTH), none, P::key(SDL_SCANCODE_2), none);
     set(control(Control::Plus), P::button(SDL_GAMEPAD_BUTTON_START), none, P::key(SDL_SCANCODE_EQUALS), none);
     set(control(Control::Minus), P::button(SDL_GAMEPAD_BUTTON_BACK), none, P::key(SDL_SCANCODE_MINUS), none);
-    set(control(Control::Home), none, none, P::key(SDL_SCANCODE_H), none);  // Guide opens the menu
     set(control(Control::DpadUp), P::button(SDL_GAMEPAD_BUTTON_DPAD_UP), none, P::key(SDL_SCANCODE_UP), none);
     set(control(Control::DpadDown), P::button(SDL_GAMEPAD_BUTTON_DPAD_DOWN), none, P::key(SDL_SCANCODE_DOWN), none);
     set(control(Control::DpadLeft), P::button(SDL_GAMEPAD_BUTTON_DPAD_LEFT), none, P::key(SDL_SCANCODE_LEFT), none);
@@ -321,9 +320,22 @@ void Input::update(u64 frame, bool use_devices) {
         px = val(Control::PointerRight) - val(Control::PointerLeft);
         py = val(Control::PointerDown) - val(Control::PointerUp);
     }
-    // The pointer moves at a rate set by its controls and stays where it was left.
+    // The pointer moves at a rate set by its controls and stays where it was left; moving the mouse
+    // over the window puts it under the mouse instead (absolute, -1..1 across the window).
     pointer_x_ = std::clamp(pointer_x_ + px * 0.05f, -1.0f, 1.0f);
     pointer_y_ = std::clamp(pointer_y_ + py * 0.05f, -1.0f, 1.0f);
+    if (use_devices && mouse_pointer_) {
+        float mx = 0, my = 0;
+        SDL_GetMouseState(&mx, &my);
+        int w = 0, h = 0;
+        if (SDL_Window* window = SDL_GetMouseFocus(); window && SDL_GetWindowSize(window, &w, &h) && w > 0 && h > 0 &&
+                                                      (mx != mouse_x_ || my != mouse_y_)) {
+            pointer_x_ = std::clamp(mx / (float)w * 2.0f - 1.0f, -1.0f, 1.0f);
+            pointer_y_ = std::clamp(my / (float)h * 2.0f - 1.0f, -1.0f, 1.0f);
+        }
+        mouse_x_ = mx;
+        mouse_y_ = my;
+    }
     s.pointer_x = pointer_x_;
     s.pointer_y = pointer_y_;
 
@@ -331,4 +343,17 @@ void Input::update(u64 frame, bool use_devices) {
         if (frame >= p.start && frame < p.start + p.frames)
             s.buttons |= p.buttons;
     state_ = s;
+
+    // Rumble: refreshed every guest frame with a short duration, so it stops by itself when the
+    // game pauses or stops calling in.
+    SDL_Gamepad* pad = use_devices ? first_gamepad() : nullptr;
+    const bool want = pad && rumble_on_ && rumble_intensity_ > 0.0f;
+    if (want) {
+        const auto strength = (Uint16)std::lround(std::clamp(rumble_intensity_, 0.0f, 1.0f) * 0xFFFF);
+        SDL_RumbleGamepad(pad, strength, strength, 200);
+    } else if (rumbling_) {
+        if (SDL_Gamepad* p = first_gamepad())
+            SDL_RumbleGamepad(p, 0, 0, 0);
+    }
+    rumbling_ = want;
 }

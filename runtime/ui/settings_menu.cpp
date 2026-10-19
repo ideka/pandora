@@ -86,6 +86,23 @@ bool SettingsMenu::init(const std::string& asset_dir) {
             }
         });
     c.BindFunc(
+        "rumble", [this](Rml::Variant& v) { v = settings_.rumble; },
+        [this](const Rml::Variant& v) {
+            const int rumble = std::clamp((int)std::lround(v.Get<float>()), 0, 100);
+            if (rumble != settings_.rumble) {
+                settings_.rumble = rumble;
+                changed();
+            }
+        });
+    c.BindFunc(
+        "mouse_pointer", [this](Rml::Variant& v) { v = settings_.mouse_pointer; },
+        [this](const Rml::Variant& v) {
+            if (v.Get<bool>() != settings_.mouse_pointer) {
+                settings_.mouse_pointer = v.Get<bool>();
+                changed();
+            }
+        });
+    c.BindFunc(
         "fullscreen", [this](Rml::Variant& v) { v = settings_.fullscreen; },
         [this](const Rml::Variant& v) {
             if (v.Get<bool>() != settings_.fullscreen) {
@@ -145,6 +162,7 @@ bool SettingsMenu::init(const std::string& asset_dir) {
         .priority = in::kRmlUiLayerPriority,
         .onEvent = &SettingsMenu::on_event,
         .capturesSource = &SettingsMenu::captures,
+        .pointerMode = &SettingsMenu::pointer_mode,
         .userdata = this,
     });
     return true;
@@ -290,6 +308,15 @@ in::EventResult SettingsMenu::on_event(const in::InputEvent& event, void* self) 
 
 // While open, the menu takes every source so the game sees nothing through the router.
 bool SettingsMenu::captures(const in::InputSource&, void* self) { return static_cast<SettingsMenu*>(self)->open_; }
+
+// The OS cursor shows in the menu; in the game it is hidden while the mouse aims the pointer (the
+// game draws its own).
+in::PointerMode SettingsMenu::pointer_mode(void* self) {
+    auto* menu = static_cast<SettingsMenu*>(self);
+    if (menu->open_)
+        return in::PointerMode::Visible;
+    return menu->settings_.mouse_pointer ? in::PointerMode::Hidden : in::PointerMode::AutoHide;
+}
 
 std::vector<SettingsMenu::Edge> SettingsMenu::edges(const in::InputEvent& event) {
     std::vector<Edge> out;

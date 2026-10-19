@@ -34,8 +34,11 @@ Open work only. How things currently work, and why, is in [NOTES.md](NOTES.md).
 
 - `WPADGetInfoAsync` never calls its callback (needs a way to call back into guest code).
 - Motion controls: the accelerometer always reads "at rest"; map shakes/swings.
-- Pointer: add a mouse-absolute mode (currently rate-controlled by its bound inputs).
-- Hook `KPADReadEx`, the connect/extension callbacks and rumble (`WPADControlMotor`).
+- Hook `KPADReadEx` and the connect/extension callbacks.
+- Rumble is untested on hardware (no in-game rumble event was scripted); check intensity feel and
+  that the Wii's on/off pattern is followed.
+- Mouse pointer mapping assumes the game image fills the window; correct for letterboxing if aurora
+  ever adds it.
 - Confirm the provisional names `WPADInit`, `WPADRegisterAllocator` and `KPADInit` in
   `config/SX3P01/names.txt` (identified from call structure).
 
@@ -44,7 +47,6 @@ Open work only. How things currently work, and why, is in [NOTES.md](NOTES.md).
 - Graphics tab (internal resolution/scale, aspect ratio, vsync, MSAA) once aurora exposes them.
 - Per-device controller profiles (by GUID) and more than one gamepad; currently the first one.
 - Show controller glyphs for the connected pad type instead of position names.
-- Mouse-absolute pointer mode option.
 - Keep the settings file in the user's profile rather than `build/aurora` for distributed builds.
 
 ## System

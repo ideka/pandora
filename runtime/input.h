@@ -35,7 +35,7 @@ struct PadState {
 
 // The emulated controls that can be bound.
 enum class Control : u8 {
-    A, B, One, Two, Plus, Minus, Home,
+    A, B, One, Two, Plus, Minus,  // no Home: the HOME Menu is disabled
     DpadUp, DpadDown, DpadLeft, DpadRight,
     Z, C,
     StickUp, StickDown, StickLeft, StickRight,
@@ -99,6 +99,12 @@ public:
     // Bindings in effect (owned by the caller, e.g. the settings); defaults when unset.
     void set_bindings(const Bindings* bindings) { bindings_ = bindings; }
 
+    // Rumble from the game (WPADControlMotor), scaled by intensity (0 = off).
+    void set_rumble(bool on) { rumble_on_ = on; }
+    void set_rumble_intensity(float intensity) { rumble_intensity_ = intensity; }
+    // Whether the mouse position aims the pointer (absolute, over the window).
+    void set_mouse_pointer(bool enabled) { mouse_pointer_ = enabled; }
+
     // Poll the host devices (when use_devices) and apply scripted presses for this guest frame.
     void update(u64 frame, bool use_devices);
     const PadState& state() const { return state_; }
@@ -112,4 +118,8 @@ private:
     const Bindings* bindings_ = nullptr;
     PadState state_;
     float pointer_x_ = 0, pointer_y_ = 0;
+    float mouse_x_ = -1, mouse_y_ = -1;  // last mouse position seen (window coordinates)
+    bool mouse_pointer_ = true;
+    bool rumble_on_ = false, rumbling_ = false;
+    float rumble_intensity_ = 1.0f;
 };

@@ -172,6 +172,8 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
         if (!background && fullscreen != settings.fullscreen)
             SDL_SetWindowFullscreen(window, settings.fullscreen);
         rt.set_audio_volume(settings.muted ? 0.0f : (float)settings.volume / 100.0f);
+        rt.input().set_rumble_intensity((float)settings.rumble / 100.0f);
+        rt.input().set_mouse_pointer(settings.mouse_pointer);
     };
     apply_settings();
     SettingsMenu menu(settings, [&] {

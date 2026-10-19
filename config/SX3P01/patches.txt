@@ -1,0 +1,10 @@
+# Instruction patches applied to the recompiled code (tools/patch_hooks.py; guest memory keeps the
+# original DOL). Format: <address> <original word> <new word>  # what it does
+# The original word is checked, so a patch never lands on the wrong instruction.
+
+# Skip the Wii Remote strap (safety) screen. Its state machine (fn_8034BA78, state at scene+208)
+# fades in (0), waits for the fade (1), waits 60 frames (2), then waits for a button or 20 s (3),
+# fades out and frees the pages (4) and starts the title (5). State 0 now goes straight to 3, and 3
+# sees a press at once, so the strap fades out from (nearly) zero alpha and cleans up as usual.
+8034BAE4 38000001 38000003  # li r0, 1 -> li r0, 3 (state 0 -> 3)
+8034BB68 3BC00000 3BC00001  # li r30, 0 -> li r30, 1 ("button pressed")

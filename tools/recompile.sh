@@ -25,6 +25,7 @@ export DOLRECOMP_UNSAFE_DIRECT_CALLS=1
 
 mkdir -p build/SX3P01
 python -I tools/export_map.py config/SX3P01/symbols.txt build/SX3P01.map
-python -I tools/patch_hooks.py orig/SX3P01/main.dol config/SX3P01/symbols.txt config/SX3P01/hooks.txt     build/SX3P01/main_hooked.dol
+python -I tools/patch_hooks.py orig/SX3P01/main.dol config/SX3P01/symbols.txt config/SX3P01/hooks.txt \
+    build/SX3P01/main_hooked.dol config/SX3P01/patches.txt
 rm -rf build/recomp
 "$DOLRECOMP" --cpu broadway --map build/SX3P01.map -j8 build/SX3P01/main_hooked.dol SX3P01 build/recomp

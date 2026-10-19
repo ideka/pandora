@@ -58,6 +58,7 @@ private:
 
     static aurora::input::EventResult on_event(const aurora::input::InputEvent& event, void* self);
     static bool captures(const aurora::input::InputSource& source, void* self);
+    static aurora::input::PointerMode pointer_mode(void* self);
     aurora::input::EventResult handle(const aurora::input::InputEvent& event);
     std::vector<Edge> edges(const aurora::input::InputEvent& event);
     bool capture(const aurora::input::InputEvent& event, const std::vector<Edge>& edges);

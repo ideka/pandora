@@ -62,11 +62,28 @@ aids. Open work is in [TODO.md](TODO.md).
   SDL's event queue (`*N` holds one for N host frames) and captures our own window with
   `PrintWindow` (the UI is composited after the EFB, so the EFB readback does not see it).
 
+## Game patches
+
+- Instruction patches for the recompiled code live in `config/SX3P01/patches.txt` (address,
+  original word, new word; the original is checked). Guest memory keeps the original DOL.
+- The Wii Remote strap screen is skipped there: its state machine (`fn_8034BA78`, state at
+  scene+208) goes from state 0 straight to the button wait, which sees a press at once, so the strap
+  fades out from zero alpha and is cleaned up as usual.
+- The HOME Menu is disabled by never reporting the HOME button (`KPADRead` masks it; there is no
+  Home binding).
+
 ## Input
 
 - WPAD/KPAD are emulated at the API level (`KPADRead`, `WPADProbe`, `WPADGetInfoAsync`): one Wii
-  Remote + Nunchuk on channel 0, fed from SDL gamepads, the keyboard and scripted presses
-  (`--press`).
+  Remote + Nunchuk on channel 0, fed from SDL gamepads, the keyboard and mouse, and scripted
+  presses (`--press`).
+- The pointer is rate-controlled by its bound inputs; moving the mouse over the window puts it
+  under the mouse (absolute, -1..1 across the window). The OS cursor is hidden in the game while
+  the mouse aims, and shown in the menu.
+- Rumble: the game starts the motor through `fn_804F1F84` only if `WPADIsMotorEnabled` (the SYSCONF
+  setting, read by the stubbed `WPADInit`), which is hooked to return true; `WPADControlMotor` is
+  hooked and drives `SDL_RumbleGamepad`, refreshed every guest frame with a 200 ms duration so it
+  stops by itself when the game pauses.
 
 ## System
 
