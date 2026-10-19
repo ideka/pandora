@@ -1,0 +1,6 @@
+# Hand-identified functions: <address> <name> [# note]. Applied by tools/apply_names.py.
+80545300 OSSwitchFiber        # call pc on a new stack, return (r3=pc, r4=sp)
+80545330 OSSwitchFiberEx      # same with four args (r3-r6, r7=pc, r8=sp)
+804E7758 alFiberSwitchThunk   # b alFiberSwitch; its address is installed as the switch hook
+804E775C alFiberSwitch        # full context save, swaps r1 with r13-0x5C64, bctr to saved pc
+804E7BE0 alFiberInstallSwitch # stores &alFiberSwitchThunk to r13-0x5C58
