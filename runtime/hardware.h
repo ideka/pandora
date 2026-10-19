@@ -15,6 +15,7 @@ class Runtime;
 namespace DSP {
 class DSPManager;
 }
+class CommandProcessor;
 
 // PI interrupt causes (PI_INTERRUPT_CAUSE bits).
 enum : u32 {
@@ -35,6 +36,7 @@ public:
     ~Hardware();
 
     DSP::DSPManager& dsp() { return *dsp_; }
+    CommandProcessor& gpu() { return *cp_; }
 
     u64 read(u32 addr, u8 size);
     void write(u32 addr, u64 value, u8 size);
@@ -65,6 +67,7 @@ private:
     Runtime& rt_;
     Exi exi_;
     std::unique_ptr<DSP::DSPManager> dsp_;
+    std::unique_ptr<CommandProcessor> cp_;
     std::unordered_map<u32, u32> regs_;
     std::unordered_set<u32> seen_;
 

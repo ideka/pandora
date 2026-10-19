@@ -40,6 +40,7 @@ add_executable(pandora
     runtime/dsp/ucode.cpp
     runtime/disc.cpp
     runtime/exi.cpp
+    runtime/gpu/command_processor.cpp
     runtime/hardware.cpp
     runtime/hle.cpp
     runtime/ios.cpp

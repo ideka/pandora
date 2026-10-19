@@ -7,6 +7,7 @@
 #include <thread>
 #include <fstream>
 
+#include "gpu/command_processor.h"
 #include "hardware.h"
 #include "ios.h"
 #include "log.h"
@@ -507,7 +508,9 @@ void Runtime::dump() const {
         if (pc)
             std::fprintf(stderr, "  %s\n", describe(pc).c_str());
     }
-    std::fprintf(stderr, "GX FIFO bytes written: %" PRIu64 "\n", hw_->wgpipe_bytes());
+    std::fprintf(stderr, "GX FIFO bytes written: %" PRIu64 ", GPU commands %" PRIu64 ", draws %" PRIu64
+                         ", draw done %" PRIu64 "\n",
+                 hw_->wgpipe_bytes(), hw_->gpu().commands(), hw_->gpu().draws(), hw_->gpu().draw_dones());
     for (auto [addr, len] : opts_.dumps) {
         std::fprintf(stderr, "memory %08X:\n", addr);
         for (u32 off = 0; off < len; off += 16) {

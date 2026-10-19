@@ -3,6 +3,7 @@
 #include <cstring>
 
 #include "dsp/dsp.h"
+#include "gpu/command_processor.h"
 #include "ios.h"
 #include "log.h"
 #include "memory.h"
@@ -47,10 +48,14 @@ const char* block_name(u32 phys) {
 
 constexpr u32 DSP_BASE = 0x0C005000;
 bool is_dsp(u32 phys) { return (phys & 0xFFFFFF00) == DSP_BASE; }
+bool is_cp(u32 phys) { return (phys & 0xFFFFFF80) == 0x0C000000; }
+bool is_pe(u32 phys) { return (phys & 0xFFFFFF80) == 0x0C001000; }
 
 }  // namespace
 
-Hardware::Hardware(Runtime& rt) : rt_(rt), exi_(rt), dsp_(std::make_unique<DSP::DSPManager>(rt)) {}
+Hardware::Hardware(Runtime& rt)
+    : rt_(rt), exi_(rt), dsp_(std::make_unique<DSP::DSPManager>(rt)),
+      cp_(std::make_unique<CommandProcessor>(rt, *this)) {}
 Hardware::~Hardware() = default;
 
 u64 Hardware::read(u32 addr, u8 size) {
@@ -90,6 +95,8 @@ void Hardware::gather(u64 value, u8 size) {
             fifo_wptr_ += 32;
         gather_count_ -= 32;
         std::memmove(gather_, gather_ + 32, gather_count_);
+        cp_->gather_burst();
+        cp_->link_pi_fifo(fifo_base_, fifo_end_, fifo_wptr_);
     }
 }
 
@@ -114,6 +121,11 @@ u32 Hardware::read_reg(u32 phys, u8 size) {
     }
     if (phys >= 0x0D006800 && phys < 0x0D006838)
         return exi_.read(phys - 0x0D006800);
+    if (is_cp(phys) || is_pe(phys)) {  // 16-bit registers
+        u32 off = phys & 0x7F;
+        auto rd = [&](u32 o) { return is_cp(phys) ? cp_->cp_read16(o) : cp_->pe_read16(o); };
+        return size == 4 ? (u32)rd(off) << 16 | rd(off + 2) : rd(off & ~1u);
+    }
     if (is_dsp(phys)) {  // 16-bit registers; wider accesses are split high half first
         u32 off = phys - DSP_BASE;
         u32 v = size == 4 ? (u32)dsp_->read16(off) << 16 | dsp_->read16(off + 2) : dsp_->read16(off & ~1u);
@@ -204,6 +216,17 @@ void Hardware::write_reg(u32 phys, u32 value, u8 size) {
         set_pi(PI_INT_EXI, exi_.interrupt_pending());
         return;
     }
+    if (is_cp(phys) || is_pe(phys)) {
+        u32 off = phys & 0x7F;
+        auto wr = [&](u32 o, u16 v) { is_cp(phys) ? cp_->cp_write16(o, v) : cp_->pe_write16(o, v); };
+        if (size == 4) {
+            wr(off, (u16)(value >> 16));
+            wr(off + 2, (u16)value);
+        } else {
+            wr(off & ~1u, (u16)value);
+        }
+        return;
+    }
     if (is_dsp(phys)) {
         u32 off = phys - DSP_BASE;
         if (size == 4) {
@@ -241,6 +264,7 @@ void Hardware::set_pi(u32 cause, bool asserted) {
 void Hardware::tick(u64 tb_ticks) {
     tb_ += tb_ticks;
     dsp_->tick(tb_ticks);
+    cp_->tick(tb_ticks);
     set_pi(PI_INT_DSP, dsp_->interrupt_pending());
     if (tb_ < next_field_tb_)
         return;

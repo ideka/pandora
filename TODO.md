@@ -22,6 +22,8 @@
 ## System
 
 - ES ioctlv 0x16 (GetConsumption) is unhandled.
+- After reopening `/tmp/pac001.aar` the game issues a NAND write on fd 0 ("write on unknown fd 0");
+  find out which open it expected to succeed.
 - `/dev/net/*` (WiiConnect24) devices are absent; the game reports errors and continues.
 - The console reports itself as NDEV 2.1 because of the `0x800030E6` flag copied from Dolphin;
   check whether a retail value changes game behaviour.
