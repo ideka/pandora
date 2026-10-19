@@ -42,7 +42,8 @@ public:
     // One row of a bindings table, as the document sees it.
     struct Row {
         Rml::String label, first, second;
-        bool clear_first = false, clear_second = false;  // whether the mapping can be removed
+        bool clear_first = false, clear_second = false;  // whether the clear/reset button does anything
+        bool reset_first = false;  // the first mapping's button resets it to the default instead
         int index = 0;
     };
 
@@ -60,7 +61,9 @@ private:
     aurora::input::EventResult handle(const aurora::input::InputEvent& event);
     std::vector<Edge> edges(const aurora::input::InputEvent& event);
     bool capture(const aurora::input::InputEvent& event, const std::vector<Edge>& edges);
-    bool apply_actions(const std::vector<Edge>& edges);
+    bool apply_actions(const std::vector<Edge>& edges, bool fire);
+    void update_held(bool fire);
+    void release_source(aurora::input::InputSource::Kind kind);
     void action(MenuAction a);
 
     void navigate(int key);  // an Rml::Input::KeyIdentifier
@@ -69,6 +72,7 @@ private:
 
     Mappings& mappings(int table, int index);
     bool can_clear(int table, int index, int slot);
+    bool is_reset(int table, int index, int slot) const;
     void start_capture(int table, int index, int slot);
     void finish_capture(const PhysicalInput& input);
     void cancel_capture();
@@ -89,7 +93,8 @@ private:
     bool open_ = false;
     uint64_t layer_ = 0;
 
-    std::array<int, kMenuActionCount> held_{};  // inputs currently holding each action
+    std::vector<PhysicalInput> down_;            // physical inputs currently held
+    std::array<int, kMenuActionCount> held_{};  // how many of them hold each action
     std::array<Clock::time_point, kMenuActionCount> next_repeat_{};
     std::array<float, SDL_GAMEPAD_AXIS_COUNT> axes_{};  // last value of each gamepad axis
 };

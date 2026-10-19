@@ -19,7 +19,9 @@
         <div class="table-header">
             <span class="name"></span>
             <span class="column">Mapping 1</span>
+            <span class="spacer"></span>
             <span class="column">Mapping 2</span>
+            <span class="spacer"></span>
         </div>
         <div id="bindings">
             <div class="section">Wii Remote + Nunchuk</div>
@@ -37,7 +39,8 @@
                 <span class="name">{{ row.label }}</span>
                 <button class="cell bind" data-class-capturing="capturing == 1000 + row.index * 10"
                         data-event-click="bind(1, row.index, 0)">{{ capturing == 1000 + row.index * 10 ? prompt : row.first }}</button>
-                <button class="cell clear" data-class-disabled="!row.clear_first" data-event-click="clear(1, row.index, 0)">&#215;</button>
+                <button class="cell clear" data-class-reset="row.reset_first" data-class-disabled="!row.clear_first"
+                        data-event-click="clear(1, row.index, 0)"><span class="icon" data-if="row.reset_first"></span>{{ row.reset_first ? '' : '&#215;' }}</button>
                 <button class="cell bind" data-class-capturing="capturing == 1000 + row.index * 10 + 1"
                         data-event-click="bind(1, row.index, 1)">{{ capturing == 1000 + row.index * 10 + 1 ? prompt : row.second }}</button>
                 <button class="cell clear" data-class-disabled="!row.clear_second" data-event-click="clear(1, row.index, 1)">&#215;</button>

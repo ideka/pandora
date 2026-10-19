@@ -56,6 +56,7 @@ bool SettingsMenu::init(const std::string& asset_dir) {
         row.RegisterMember("second", &Row::second);
         row.RegisterMember("clear_first", &Row::clear_first);
         row.RegisterMember("clear_second", &Row::clear_second);
+        row.RegisterMember("reset_first", &Row::reset_first);
         row.RegisterMember("index", &Row::index);
     }
     c.RegisterArray<std::vector<Row>>();
@@ -202,13 +203,19 @@ Mappings& SettingsMenu::mappings(int table, int index) {
     return table == MENU_TABLE ? settings_.bindings.menu[index] : settings_.bindings.controls[index];
 }
 
-// A mapping can be removed unless it is the last one of a required action on its device.
+// Required actions (open/close, accept) cannot lose their first mapping: its button resets it to
+// the default instead of clearing it.
+bool SettingsMenu::is_reset(int table, int index, int slot) const {
+    return table == MENU_TABLE && slot == 0 && menu_action_info((MenuAction)index).required;
+}
+
+// Whether the clear (or reset) button would change anything.
 bool SettingsMenu::can_clear(int table, int index, int slot) {
-    const auto& m = mappings(table, index)[device_ == "gamepad" ? 0 : 1];
-    if (!m[slot])
-        return false;
-    const bool required = table == MENU_TABLE && menu_action_info((MenuAction)index).required;
-    return !required || std::count_if(m.begin(), m.end(), [](const PhysicalInput& p) { return (bool)p; }) > 1;
+    const size_t dev = device_ == "gamepad" ? 0 : 1;
+    const PhysicalInput& current = mappings(table, index)[dev][slot];
+    if (is_reset(table, index, slot))
+        return current != Bindings::defaults().menu[index][dev][slot];
+    return (bool)current;
 }
 
 void SettingsMenu::refresh_rows() {
@@ -219,7 +226,8 @@ void SettingsMenu::refresh_rows() {
         for (size_t i = 0; i < count; i++) {
             const auto& m = mappings(table, (int)i)[dev];
             rows.push_back({table == MENU_TABLE ? menu_action_info((MenuAction)i).label : control_info((Control)i).label,
-                            label(m[0]), label(m[1]), can_clear(table, (int)i, 0), can_clear(table, (int)i, 1), (int)i});
+                            label(m[0]), label(m[1]), can_clear(table, (int)i, 0), can_clear(table, (int)i, 1),
+                            is_reset(table, (int)i, 0), (int)i});
         }
     };
     build(wii_rows_, WII_TABLE, kControlCount);
@@ -264,7 +272,9 @@ void SettingsMenu::clear_mapping(int table, int index, int slot) {
     if (!can_clear(table, index, slot))
         return;
     cancel_capture();
-    mappings(table, index)[device_ == "gamepad" ? 0 : 1][slot] = {};
+    const size_t dev = device_ == "gamepad" ? 0 : 1;
+    mappings(table, index)[dev][slot] = is_reset(table, index, slot) ? Bindings::defaults().menu[index][dev][slot]
+                                                                     : PhysicalInput{};
     refresh_rows();
     changed();
 }
@@ -330,26 +340,57 @@ bool SettingsMenu::capture(const in::InputEvent& event, const std::vector<Edge>&
     return true;
 }
 
-// Tracks which actions are held and runs an action when it is first pressed. True if any edge
-// belongs to an action.
-bool SettingsMenu::apply_actions(const std::vector<Edge>& es) {
+// Records presses and releases, then updates which actions are held (running an action when it
+// is first pressed, if fire). True if any edge belongs to an action.
+bool SettingsMenu::apply_actions(const std::vector<Edge>& es, bool fire) {
     bool matched = false;
-    for (const Edge& e : es)
-        for (size_t a = 0; a < kMenuActionCount; a++) {
-            const auto& m = settings_.bindings.menu[a][(size_t)e.input.device()];
-            if (std::find(m.begin(), m.end(), e.input) == m.end())
-                continue;
-            matched = true;
-            if (e.pressed) {
-                if (held_[a]++ == 0) {
-                    next_repeat_[a] = Clock::now() + REPEAT_DELAY;
-                    action((MenuAction)a);
-                }
-            } else if (held_[a] > 0) {
-                held_[a]--;
-            }
+    for (const Edge& e : es) {
+        const auto it = std::find(down_.begin(), down_.end(), e.input);
+        if (e.pressed && it == down_.end())
+            down_.push_back(e.input);
+        else if (!e.pressed && it != down_.end())
+            down_.erase(it);
+        for (const auto& action : settings_.bindings.menu) {
+            const auto& m = action[(size_t)e.input.device()];
+            matched = matched || std::find(m.begin(), m.end(), e.input) != m.end();
         }
+    }
+    update_held(fire);
     return matched;
+}
+
+void SettingsMenu::update_held(bool fire) {
+    for (size_t a = 0; a < kMenuActionCount; a++) {
+        int count = 0;
+        for (const PhysicalInput& p : down_) {
+            const auto& m = settings_.bindings.menu[a][(size_t)p.device()];
+            count += (int)std::count(m.begin(), m.end(), p);
+        }
+        const bool pressed = held_[a] == 0 && count > 0;
+        held_[a] = count;
+        if (pressed && fire) {
+            next_repeat_[a] = Clock::now() + REPEAT_DELAY;
+            action((MenuAction)a);
+        }
+    }
+}
+
+// The router cancels a source when another layer starts or stops capturing it; its releases may
+// never arrive (e.g. the key that opened the menu), so forget what that source held.
+void SettingsMenu::release_source(in::InputSource::Kind kind) {
+    std::erase_if(down_, [kind](const PhysicalInput& p) {
+        switch (p.kind) {
+        case PhysicalInput::Kind::Key: return kind == in::InputSource::Kind::Keyboard;
+        case PhysicalInput::Kind::MouseButton: return kind == in::InputSource::Kind::Mouse;
+        case PhysicalInput::Kind::Button:
+        case PhysicalInput::Kind::Axis: return kind == in::InputSource::Kind::Controller;
+        case PhysicalInput::Kind::None: break;
+        }
+        return false;
+    });
+    if (kind == in::InputSource::Kind::Controller)
+        axes_ = {};
+    update_held(false);
 }
 
 void SettingsMenu::action(MenuAction a) {
@@ -374,20 +415,19 @@ void SettingsMenu::action(MenuAction a) {
 }
 
 in::EventResult SettingsMenu::handle(const in::InputEvent& event) {
+    if (event.payload.is<in::InputEvent::Cancelled>()) {
+        release_source(event.source.kind);
+        if (open_)
+            aurora::rmlui::process_input(event);
+        return open_ ? in::EventResult::Consume : in::EventResult::Pass;
+    }
     const std::vector<Edge> es = edges(event);
     if (open_ && capturing_ >= 0) {
-        // Keep held counts consistent (releases), but don't run actions.
-        for (const Edge& e : es)
-            if (!e.pressed)
-                for (size_t a = 0; a < kMenuActionCount; a++) {
-                    const auto& m = settings_.bindings.menu[a][(size_t)e.input.device()];
-                    if (held_[a] > 0 && std::find(m.begin(), m.end(), e.input) != m.end())
-                        held_[a]--;
-                }
+        apply_actions(es, false);  // keep held state current without running actions
         capture(event, es);
         return in::EventResult::Consume;
     }
-    const bool matched = apply_actions(es);
+    const bool matched = apply_actions(es, true);
     if (!open_)
         return in::EventResult::Pass;
     const bool gamepad = event.payload.is<in::InputEvent::ButtonChanged>() || event.payload.is<in::InputEvent::AxisChanged>();

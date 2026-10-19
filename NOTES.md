@@ -52,7 +52,10 @@ aids. Open work is in [TODO.md](TODO.md).
 - RmlUi's spatial navigation does not cross scroll containers, so the bindings tables are navigated
   by hand (rows of mapping, clear, mapping, clear).
 - Bindings are per device class (gamepad; keyboard and mouse), two mappings each. "Open/Close Menu"
-  and "Accept" keep at least one mapping per device.
+  and "Accept" cannot lose their first mapping: its button resets it to the default instead.
+- Held inputs are tracked as a set of physical inputs that are down. The router sends a layer
+  `Cancelled` (and drops its pending releases) when capturing starts or stops with a press held,
+  e.g. the key that opened the menu, so a cancelled source's inputs are forgotten.
 - F5 pauses the game: the guest is not run and `aurora_set_preserve_frame` (patches/aurora/0004)
   keeps the last EFB on screen; the pacer is re-anchored on resume.
 - `--menu-test <frame>:<png>` (with `--menu-keys a,b,Key*N`) opens the menu, plays keys through
