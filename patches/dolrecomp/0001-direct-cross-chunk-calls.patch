@@ -1,0 +1,52 @@
+diff --git a/src/app/pipeline.c b/src/app/pipeline.c
+index d5cb313..4bb976a 100644
+--- a/src/app/pipeline.c
++++ b/src/app/pipeline.c
+@@ -2609,6 +2609,38 @@ int emit_code_sections_split(const LoadedCodeSection* sections,
+     FunctionList funcs = {0};
+     SMCAnalysis smc = {0};
+ 
++    // Direct cross-chunk calls bypass the chassis dispatcher. That is unsafe
++    // for runtimes which validate mutable guest code at dispatch boundaries,
++    // so only emit them after an explicit opt-in. The table covers the chunks
++    // of every section up front, so calls into later sections are direct too.
++    u32* chunk_starts = NULL;
++    const char* direct = getenv("DOLRECOMP_UNSAFE_DIRECT_CALLS");
++    if (direct && strcmp(direct, "1") == 0) {
++        u32 total = 0;
++        for (u32 s = 0; s < section_count; s++)
++            if (sections[s].size != 0 && sections[s].data)
++                total += (sections[s].size / 4 + chunk_instructions - 1u) / chunk_instructions;
++        chunk_starts = (u32*)malloc((size_t)(total ? total : 1) * sizeof(u32));
++        if (chunk_starts) {
++            u32 n = 0;
++            for (u32 s = 0; s < section_count; s++) {
++                if (sections[s].size == 0 || !sections[s].data)
++                    continue;
++                for (u32 i = 0; i < sections[s].size / 4; i += chunk_instructions)
++                    chunk_starts[n++] = sections[s].address + i * 4u;
++            }
++            // Sections are not guaranteed to be in address order.
++            for (u32 i = 1; i < n; i++)
++                for (u32 j = i; j > 0 && chunk_starts[j - 1] > chunk_starts[j]; j--) {
++                    u32 t = chunk_starts[j];
++                    chunk_starts[j] = chunk_starts[j - 1];
++                    chunk_starts[j - 1] = t;
++                }
++            emit_set_chunk_table(chunk_starts, n);
++            printf("cross-chunk direct calls enabled (%u chunks)\n", n);
++        }
++    }
++
+     for (u32 s = 0; s < section_count; s++) {
+         const LoadedCodeSection* section = &sections[s];
+         if (section->size == 0 || !section->data)
+@@ -2774,6 +2806,8 @@ int emit_code_sections_split(const LoadedCodeSection* sections,
+         free(chunk_jobs);
+         free(insts);
+     }
++    emit_set_chunk_table(NULL, 0);
++    free(chunk_starts);
+ 
+     {
+         char smc_report_path[1100];

@@ -1,3 +1,4 @@
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -21,7 +22,7 @@ int g_log_level = 1;
 static void usage() {
     std::fprintf(stderr,
                  "usage: pandora --disc <extracted partition> [--headless | --background] [--nand <dir>] [--map <file>]\n"
-                 "               [--max-blocks N] [--audio-dump <wav>] [--mute] [--profile] [-v|-vv|-vvv]\n"
+                 "               [--max-blocks N] [--audio-dump <wav>] [--mute] [--unthrottled] [--profile] [-v|-vv|-vvv]\n"
                  "               [--screenshot <frame>:<file.png>]... [--exit-after <frames>]\n"
                  "               [--press <button>@<frame>[+<frames>]]...\n"
                  "  debugging: [--watch <symbol>]... [--watch-write <hexaddr>]... [--dump <hexaddr>[:len]]...\n"
@@ -61,7 +62,32 @@ static bool is_fullscreen_toggle(const SDL_Event& e) {
     return (e.key.key == SDLK_RETURN || e.key.key == SDLK_KP_ENTER) && (e.key.mod & SDL_KMOD_ALT);
 }
 
-static int run_windowed(Runtime& rt, int argc, char** argv, bool background, bool mute) {
+// Keeps emulated time in step with the wall clock: sleeps while the guest is ahead, and
+// re-anchors when it falls behind (slow frames are not made up by running fast afterwards).
+class Pacer {
+public:
+    explicit Pacer(u64 timebase) { reset(timebase); }
+    void reset(u64 timebase) {
+        tb_ = timebase;
+        wall_ = std::chrono::steady_clock::now();
+    }
+    void wait(u64 timebase) {
+        const double emu = (double)(timebase - tb_) / 60750000.0;
+        const double wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - wall_).count();
+        if (emu > wall)
+            SDL_DelayPrecise((Uint64)((emu - wall) * 1e9));
+        else if (wall - emu > 0.1)
+            reset(timebase);
+    }
+    // Shift the schedule: positive slows the guest down, negative lets it catch up.
+    void nudge(double seconds) { wall_ += std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(seconds)); }
+
+private:
+    u64 tb_ = 0;
+    std::chrono::steady_clock::time_point wall_;
+};
+
+static int run_windowed(Runtime& rt, int argc, char** argv, bool background, bool mute, bool unthrottled) {
     const std::string settings_path = "build/aurora/settings.ini";
     Settings settings;
     settings.load(settings_path);
@@ -91,8 +117,20 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
     if (!mute)
         rt.enable_audio_output();
     rt.start();
+    // --profile: where host time goes, logged every 60 frames.
+    using clock = std::chrono::steady_clock;
+    auto secs = [](clock::time_point a, clock::time_point b) { return std::chrono::duration<double>(b - a).count(); };
+    struct {
+        double total = 0, run = 0, end = 0, other = 0;
+        u32 frames = 0;
+    } prof;
+    u64 prof_tb = rt.cpu.timebase;
+    auto prof_start = clock::now();
+
+    Pacer pacer(rt.cpu.timebase);
     bool running = true;
     while (running) {
+        const auto t0 = clock::now();
         for (const AuroraEvent* e = aurora_update(); e && e->type != AURORA_NONE; ++e) {
             if (e->type == AURORA_EXIT)
                 running = false;
@@ -119,9 +157,40 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
         for (const auto& c : rt.options().draw_shots)
             if (bridge.frames() == c.frame)
                 bridge.request_draw_shot(c.frame, c.index, c.path);
+        const auto t1 = clock::now();
         running = rt.run_frame();
+        const auto t2 = clock::now();
+        if (!unthrottled) {
+            // Follow the audio device's clock: keep 90-170 ms queued (just after a frame's burst).
+            if (const int queued = rt.audio_queued_ms(); queued > 170)
+                pacer.nudge(0.002);
+            else if (queued >= 0 && queued < 90)
+                pacer.nudge(-0.002);
+            pacer.wait(rt.cpu.timebase);
+        }
         aurora_end_frame();
+        const auto t3 = clock::now();
         bridge.poll_screenshot();
+        if (rt.options().profile) {
+            prof.other += secs(t0, t1);
+            prof.run += secs(t1, t2);
+            prof.end += secs(t2, t3);
+            if (++prof.frames == 60) {
+                const auto now = clock::now();
+                const double wall = secs(prof_start, now), emu = (double)(rt.cpu.timebase - prof_tb) / 60750000.0;
+                const auto bt = bridge.take_timing();
+                const double ms = 1000.0 / prof.frames;
+                LOG_INFO("perf",
+                         "%.1f fps, emulated %.2fx real time | per frame ms: guest %.2f (bridge %.2f, draw-done wait "
+                         "%.2f x%.1f), pacing+present %.2f, events %.2f | %.0f draws/frame",
+                         prof.frames / wall, emu / wall, (prof.run - bt.forward - bt.drain) * ms, bt.forward * ms,
+                         bt.drain * ms, (double)bt.drains / prof.frames, prof.end * ms, prof.other * ms,
+                         (double)bt.draws / prof.frames);
+                prof = {};
+                prof_tb = rt.cpu.timebase;
+                prof_start = now;
+            }
+        }
         if (rt.options().exit_after_frames && bridge.frames() >= rt.options().exit_after_frames) {
             rt.halt("quit");
             // let pending screenshots finish reading back
@@ -135,13 +204,14 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
         }
     }
     int status = rt.finish();
+    rt.disable_audio_output();  // before aurora shuts SDL down
     aurora_shutdown();
     return status;
 }
 
 int main(int argc, char** argv) {
     Options opts;
-    bool headless = false, background = false, mute = false;
+    bool headless = false, background = false, mute = false, unthrottled = false;
     std::vector<std::string> presses;
     for (int i = 1; i < argc; i++) {
         const char* a = argv[i];
@@ -154,6 +224,8 @@ int main(int argc, char** argv) {
             background = true;
         else if (!std::strcmp(a, "--mute"))
             mute = true;
+        else if (!std::strcmp(a, "--unthrottled"))
+            unthrottled = true;
         else if (!std::strcmp(a, "--press") && i + 1 < argc)
             presses.push_back(next());
         else if (!std::strcmp(a, "--nand") && i + 1 < argc)
@@ -228,5 +300,5 @@ int main(int argc, char** argv) {
     // Background (test) runs are silent unless an SDL audio driver is forced, e.g.
     // SDL_AUDIO_DRIVER=disk, which writes the output to a file instead of a device.
     const bool forced_driver = std::getenv("SDL_AUDIO_DRIVER") != nullptr;
-    return headless ? rt.run() : run_windowed(rt, argc, argv, background, mute || (background && !forced_driver));
+    return headless ? rt.run() : run_windowed(rt, argc, argv, background, mute || (background && !forced_driver), unthrottled);
 }

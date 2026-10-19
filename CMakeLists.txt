@@ -51,7 +51,9 @@ add_library(guest STATIC
 target_include_directories(guest PRIVATE "${CMAKE_SOURCE_DIR}/runtime/fastmem")
 target_include_directories(guest PUBLIC "${DOLRECOMP_DIR}/src" "${PANDORA_GENERATED_DIR}")
 if(MSVC)
-    target_compile_options(guest PRIVATE /w /bigobj /MP)
+    # Debug info (/Z7, in the objects) costs nothing at run time and lets profilers and crash
+    # dumps name the recompiled functions.
+    target_compile_options(guest PRIVATE /w /bigobj /MP /Z7)
     target_compile_definitions(guest PRIVATE _CRT_SECURE_NO_WARNINGS)
 else()
     target_compile_options(guest PRIVATE -w)
@@ -74,6 +76,7 @@ add_executable(pandora
     runtime/hardware.cpp
     runtime/hle.cpp
     runtime/ios.cpp
+    runtime/host_profiler.cpp
     runtime/input.cpp
     runtime/settings.cpp
     runtime/ios_devices.cpp
@@ -98,6 +101,8 @@ if(WIN32 AND EXISTS "${DAWN_PREBUILT_BIN}/dxil.dll")
                 "${DAWN_PREBUILT_BIN}/dxil.dll" $<TARGET_FILE_DIR:pandora>)
 endif()
 if(MSVC)
-    target_compile_options(pandora PRIVATE /W4 /permissive- /MP)
+    target_compile_options(pandora PRIVATE /W4 /permissive- /MP /Z7)
+    target_link_options(pandora PRIVATE /DEBUG /OPT:REF /OPT:ICF)
+    target_link_libraries(pandora PRIVATE dbghelp)
     target_compile_definitions(pandora PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif()

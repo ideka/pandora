@@ -15,6 +15,7 @@
 
 #include "audio_dump.h"
 #include "audio_out.h"
+#include "host_profiler.h"
 #include "input.h"
 #include "guest.h"
 #include "symbols.h"
@@ -71,6 +72,8 @@ public:
     void enable_rendering();
     // Play the guest's audio on the host's default device.
     bool enable_audio_output();
+    void disable_audio_output() { audio_out_.close(); }
+    int audio_queued_ms() const { return audio_out_.queued_ms(); }
     AuroraBridge* bridge() { return bridge_.get(); }
     Input& input() { return input_; }
     std::string backtrace(int max_frames) const;
@@ -124,6 +127,7 @@ private:
     std::unique_ptr<AuroraBridge> bridge_;
     std::atomic<bool> profiling_{false};
     std::thread sampler_;
+    HostProfiler host_profiler_;
     std::unordered_map<u32, u32> samples_;
     std::unordered_map<u32, Hook> hooks_;
     std::unordered_map<u32, u32> code_copies_;  // low-memory pc -> original text address

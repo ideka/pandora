@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <cinttypes>
 #include <thread>
 #include <fstream>
@@ -437,6 +438,7 @@ void Runtime::on_mem1_write(u32 offset, u32 size, void* user) {
 void Runtime::start() {
     // Sampling profiler: a side thread reads the (racy, but word-sized) guest pc every millisecond.
     if (opts_.profile) {
+        host_profiler_.start();
         profiling_ = true;
         sampler_ = std::thread([this] {
             while (profiling_) {
@@ -535,6 +537,9 @@ int Runtime::finish() {
     profiling_ = false;
     if (sampler_.joinable())
         sampler_.join();
+    host_profiler_.stop();
+    if (opts_.profile)
+        host_profiler_.report();
     if (opts_.profile) {
         std::unordered_map<std::string, u32> by_fn;
         u32 total = 0;

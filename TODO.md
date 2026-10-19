@@ -8,9 +8,9 @@
   fails; voices fall back to linear interpolation, as in Dolphin without the file. Add an option to
   load a user-supplied `dsp_coef.bin` (Dolphin validates it with an Adler-32 checksum) and compare
   the sound with and without it.
-- Audio plays through SDL (runtime/audio_out.cpp). The DAC rate is fixed at 32 kHz (AICR AIDFR is
-  ignored), and when the guest runs ahead of real time, blocks beyond 120 ms of queue are dropped
-  rather than slowing the guest; consider pacing emulation from the audio clock.
+- Audio plays through SDL (runtime/audio_out.cpp) with an 80 ms prebuffer; emulation is paced to
+  the wall clock and nudged to keep 90-170 ms queued, so it follows the device clock. The DAC rate
+  is fixed at 32 kHz (AICR AIDFR is ignored).
 - Left/right are nearly uncorrelated on the title music: check the SYSCONF sound mode (Dolby Pro
   Logic II encoding would explain it) and compare with Dolphin.
 - `__OSInitAudioSystem` / `__OSStopAudioSystem` are skipped by hooks; the DSP init microcode
@@ -61,5 +61,12 @@
 
 ## Performance
 
+- Build with clang (tools/build_clang.bat): gameplay ~37 fps unthrottled (1.24x real time) vs
+  ~21 fps with MSVC. Remaining host profile: DolRecomp's FP/paired-single helpers (binary_single,
+  psq_load_value, ...) are out-of-line calls in cpu.c (31k call sites); the memory fast path
+  (pandora_mem_read32) is not always inlined; the bridge costs ~3.7 ms/frame (vertex index scan in
+  prepare_draw, a FIFO publish/worker wake per draw); every instruction stores ctx->pc.
+- Cross-chunk direct calls (patches/dolrecomp/0001, DOLRECOMP_UNSAFE_DIRECT_CALLS) halve
+  dispatches; they bypass dispatch-time checks, which is fine while hooks are in-code markers.
 - About 0.3x real time during boot, dominated by OS alarm/scheduler churn from the game polling
   with `OSSleepTicks(1)`. Re-measure once frames complete.

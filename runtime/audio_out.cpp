@@ -8,9 +8,14 @@ namespace {
 
 constexpr int RATE = 32000;
 constexpr size_t BATCH_FRAMES = 256;  // 8 ms
-// Queued audio beyond this is dropped: the guest is running ahead of real time, and letting the
+constexpr int BYTES_PER_MS = RATE * 4 / 1000;
+// The guest produces audio in bursts (a frame's worth while it runs, nothing while it waits for
+// the next frame), so playback starts once this much is queued, and pauses to refill after an
+// underrun rather than playing a stream of tiny gaps.
+constexpr int PREBUFFER_BYTES = 80 * BYTES_PER_MS;
+// Queued audio beyond this is dropped (the guest is running ahead of real time); letting the
 // queue grow would add latency without bound.
-constexpr int MAX_QUEUED_BYTES = RATE * 4 * 120 / 1000;  // 120 ms
+constexpr int MAX_QUEUED_BYTES = 250 * BYTES_PER_MS;
 
 }  // namespace
 
@@ -26,7 +31,7 @@ bool AudioOut::open() {
         SDL_QuitSubSystem(SDL_INIT_AUDIO);
         return false;
     }
-    SDL_ResumeAudioStreamDevice(stream_);
+    playing_ = false;  // starts once PREBUFFER_BYTES are queued
     pending_.reserve(BATCH_FRAMES * 2);
     LOG_INFO("audio", "output on %s", SDL_GetAudioDeviceName(SDL_GetAudioStreamDevice(stream_)));
     return true;
@@ -35,6 +40,7 @@ bool AudioOut::open() {
 void AudioOut::close() {
     if (!stream_)
         return;
+    LOG_INFO("audio", "%u underruns, %u batches dropped", underruns_, dropped_);
     SDL_DestroyAudioStream(stream_);
     stream_ = nullptr;
     SDL_QuitSubSystem(SDL_INIT_AUDIO);
@@ -49,7 +55,23 @@ void AudioOut::push(const u8* b) {
     }
     if (pending_.size() < BATCH_FRAMES * 2)
         return;
-    if (SDL_GetAudioStreamQueued(stream_) < MAX_QUEUED_BYTES)
+    int queued = SDL_GetAudioStreamQueued(stream_);
+    if (playing_ && queued == 0) {  // underrun: refill before playing on
+        SDL_PauseAudioStreamDevice(stream_);
+        playing_ = false;
+        underruns_++;
+    }
+    if (queued < MAX_QUEUED_BYTES) {
         SDL_PutAudioStreamData(stream_, pending_.data(), (int)(pending_.size() * sizeof(s16)));
+        queued += (int)(pending_.size() * sizeof(s16));
+    } else {
+        dropped_++;
+    }
     pending_.clear();
+    if (!playing_ && queued >= PREBUFFER_BYTES) {
+        SDL_ResumeAudioStreamDevice(stream_);
+        playing_ = true;
+    }
 }
+
+int AudioOut::queued_ms() const { return stream_ ? SDL_GetAudioStreamQueued(stream_) / BYTES_PER_MS : -1; }

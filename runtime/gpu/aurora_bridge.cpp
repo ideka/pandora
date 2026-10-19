@@ -1,6 +1,7 @@
 #include "aurora_bridge.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -169,7 +170,23 @@ u64 AuroraBridge::host(u32 phys, u32 len) const {
 
 // --- Commands --------------------------------------------------------------------------------
 
+namespace {
+double seconds_since(std::chrono::steady_clock::time_point t) {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - t).count();
+}
+}  // namespace
+
 void AuroraBridge::command(const u8* p, u32 len, const u32* cpreg) {
+    if (!rt_.options().profile) {
+        forward(p, len, cpreg);
+        return;
+    }
+    const auto start = std::chrono::steady_clock::now();
+    forward(p, len, cpreg);
+    timing_.forward += seconds_since(start);
+}
+
+void AuroraBridge::forward(const u8* p, u32 len, const u32* cpreg) {
     const u8 op = p[0];
     // Debugging: log every command of frame 100 up to its second draw.
     if (frames_ == debug_frame() && frame_draws_ < 16 && g_log_level >= 3) {
@@ -198,6 +215,7 @@ void AuroraBridge::command(const u8* p, u32 len, const u32* cpreg) {
             } else
                 ++it;
         stats_.draws++;
+        timing_.draws++;
         frame_draws_++;
         if (len >= 3 + 16 && vertex_layout(cpreg, p[0] & 7).size == 16) {
             last_color_ = be32(p + 3 + 12);
@@ -452,8 +470,11 @@ void AuroraBridge::request_draw_shot(u64 frame, u32 draw, std::string path) {
 }
 
 void AuroraBridge::draw_done() {
+    const auto start = std::chrono::steady_clock::now();
     aurora::gx::fifo::publish();
     aurora::gx::fifo::drain();
+    timing_.drain += seconds_since(start);
+    timing_.drains++;
 }
 
 // --- Screenshots -----------------------------------------------------------------------------

@@ -24,20 +24,28 @@ No game code or data is included. You need your own copy of the game.
    build/tools/dtk.exe dol split config/SX3P01/config.yml build/SX3P01
    ```
 
-4. Recompile the DOL and build the runtime (Visual Studio 2022, CMake 3.25+; aurora downloads
-   prebuilt Dawn and SDL3 on first configure):
+4. Recompile the DOL and build the runtime (Visual Studio 2022 with its C++ Clang tools, CMake
+   3.25+; aurora downloads prebuilt Dawn and SDL3 on first configure):
 
    ```sh
    tools/recompile.sh
-   cmake -S . -B build/pandora -G "Visual Studio 17 2022" -A x64
-   cmake --build build/pandora --config Release --target pandora
+   cmd //c tools\build_clang.bat        # clang-cl + Ninja, into build/clang
    ```
+
+   clang compiles the recompiled code into something about 1.8x faster than MSVC does (gameplay
+   runs at ~1.25x real time instead of ~0.7x), so it is the build to play. The MSVC build still
+   works for debugging in Visual Studio:
+   `cmake -S . -B build/pandora -G "Visual Studio 17 2022" -A x64` then
+   `cmake --build build/pandora --config Release --target pandora`.
 
 5. Run:
 
    ```sh
-   build/pandora/Release/pandora.exe --disc "<extracted disc>"
+   build/clang/pandora.exe --disc "<extracted disc>"
    ```
+
+   The game is paced to real time (30 fps) following the audio device's clock; `--unthrottled`
+   runs as fast as possible.
 
    `--background` keeps the window from taking focus (for automated runs);
    `--screenshot <frame>:<file.png>` and `--exit-after <frames>` capture frames from inside the

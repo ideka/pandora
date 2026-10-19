@@ -35,6 +35,18 @@ public:
     }
     u64 frames() const { return frames_; }
 
+    // Host time spent in the bridge (forwarding commands) and waiting for aurora at draw done,
+    // in seconds since the last call (for --profile).
+    struct Timing {
+        double forward = 0, drain = 0;
+        u32 draws = 0, drains = 0;
+    };
+    Timing take_timing() {
+        Timing t = timing_;
+        timing_ = {};
+        return t;
+    }
+
     // Debug screenshots: copy the EFB at the next display copy and write it as a PNG once aurora
     // has read it back (a few frames later; call poll_screenshot() every frame).
     void request_screenshot(std::string path);
@@ -53,6 +65,7 @@ private:
     void put64(u64 v);
     u64 host(u32 phys, u32 len) const;
 
+    void forward(const u8* p, u32 len, const u32* cpreg);
     void cp_reg(u8 reg, u32 value);
     void bp_reg(u32 value);
     void prepare_draw(const u8* p, u32 len, const u32* cpreg);
@@ -61,6 +74,7 @@ private:
     void efb_copy(u32 value);
 
     Runtime& rt_;
+    Timing timing_;
 
     // Vertex arrays 0-15: guest base and stride, and what aurora was last given.
     std::array<u32, 16> array_base_{}, array_stride_{};
