@@ -408,8 +408,11 @@ void SettingsMenu::action(MenuAction a) {
         return;
     }
     switch (a) {
-    case MenuAction::Toggle:
-    case MenuAction::Cancel: close(); break;
+    case MenuAction::Toggle: close(); break;
+    case MenuAction::Cancel:  // back out to the current tab's button (the menu stays open)
+        if (Rml::Element* tab = doc_->GetElementById("tab-" + tab_))
+            tab->Focus(true);
+        break;
     case MenuAction::Accept: navigate(Key::KI_RETURN); break;
     case MenuAction::Up: navigate(Key::KI_UP); break;
     case MenuAction::Down: navigate(Key::KI_DOWN); break;
