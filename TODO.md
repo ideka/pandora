@@ -15,6 +15,8 @@
 
 ## Graphics
 
+- Texgens sourcing binormal/tangent (incl. emboss bump) on vertices without NBT read zero
+  (patches/aurora/0001); hardware uses the last loaded value. Check which models hit this.
 - The GX bridge (`runtime/gpu/aurora_bridge.cpp`) is new; only the boot screens have been checked.
 - Logic ops other than CLEAR/COPY/NOOP are approximated with blending (Dolphin's table) without
   Dolphin's shader-side fixups for CLEAR/INVERT/COPY_INVERTED/SET.

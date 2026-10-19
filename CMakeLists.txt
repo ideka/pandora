@@ -19,6 +19,21 @@ set(AURORA_ENABLE_CARD OFF CACHE BOOL "" FORCE)
 set(AURORA_ENABLE_THP OFF CACHE BOOL "" FORCE)
 set(AURORA_ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(AURORA_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+# Local fixes to aurora live in patches/aurora; apply any that are not applied yet.
+file(GLOB AURORA_PATCHES "${CMAKE_SOURCE_DIR}/patches/aurora/*.patch")
+foreach(patch IN LISTS AURORA_PATCHES)
+    execute_process(COMMAND git apply --reverse --check "${patch}"
+                    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/extern/aurora" RESULT_VARIABLE applied
+                    OUTPUT_QUIET ERROR_QUIET)
+    if(NOT applied EQUAL 0)
+        execute_process(COMMAND git apply "${patch}" WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/extern/aurora"
+                        RESULT_VARIABLE failed)
+        if(failed)
+            message(FATAL_ERROR "failed to apply ${patch}")
+        endif()
+        message(STATUS "applied ${patch}")
+    endif()
+endforeach()
 add_subdirectory(extern/aurora EXCLUDE_FROM_ALL)
 option(PANDORA_AURORA_DIAGNOSTICS "Build aurora's GX library with its debug diagnostics (unhandled registers etc.)" OFF)
 if(PANDORA_AURORA_DIAGNOSTICS AND MSVC)
