@@ -1,76 +1,62 @@
 # TODO
 
+Open work only. How things currently work, and why, is in [NOTES.md](NOTES.md).
+
 ## Audio
 
-- **DSP resampling coefficients.** Dolphin's AX HLE resamples voices with a polyphase filter whose
-  coefficients come from the DSP ROM (`dsp_coef.bin`, 0x1000 bytes). That table is Nintendo's data,
-  so it is not shipped and `AXUCode::LoadResamplingCoefficients` (`runtime/dsp/ax.cpp`) always
-  fails; voices fall back to linear interpolation, as in Dolphin without the file. Add an option to
-  load a user-supplied `dsp_coef.bin` (Dolphin validates it with an Adler-32 checksum) and compare
-  the sound with and without it.
-- Audio plays through SDL (runtime/audio_out.cpp) with an 80 ms prebuffer; emulation is paced to
-  the wall clock and nudged to keep 90-170 ms queued, so it follows the device clock. The DAC rate
-  is fixed at 32 kHz (AICR AIDFR is ignored).
-- Debugging: PANDORA_DSP_TRACE=1 logs audio DMA reloads, AX output buffers and the running voices
-  once a second, and writes the first left-only PCM16 voice's raw reads to voice_left_raw.bin.
-- `__OSInitAudioSystem` / `__OSStopAudioSystem` are skipped by hooks; the DSP init microcode
-  handshake is not emulated.
+- **DSP resampling coefficients.** Add an option to load a user-supplied `dsp_coef.bin` (the DSP
+  ROM's polyphase table, 0x1000 bytes; Dolphin validates it with an Adler-32 checksum) in
+  `AXUCode::LoadResamplingCoefficients` (`runtime/dsp/ax.cpp`), then compare the sound with and
+  without it. Without it voices use linear interpolation.
+- Honour the DAC rate selected in AICR (AIDFR); output is fixed at 32 kHz.
+- Emulate the DSP init microcode handshake instead of skipping `__OSInitAudioSystem` /
+  `__OSStopAudioSystem` with hooks.
 
 ## Graphics
 
-- Upscaling: vertices within half a guest pixel of the viewport edge are snapped onto it
-  (patches/aurora/0003); the game's full-screen quads stop 0.19px short (ortho -92.244..732.244,
-  quads -92..732), which left the outermost physical columns unpainted above 1x. Other sub-pixel
-  coverage differences of upscaled rendering (seams between adjacent quads) are not handled.
-- Texgens sourcing binormal/tangent (incl. emboss bump) on vertices without NBT read zero
-  (patches/aurora/0001); hardware uses the last loaded value. Check which models hit this.
-- The GX bridge (`runtime/gpu/aurora_bridge.cpp`) is new; only the boot screens have been checked.
-- Logic ops other than CLEAR/COPY/NOOP are approximated with blending (Dolphin's table) without
-  Dolphin's shader-side fixups for CLEAR/INVERT/COPY_INVERTED/SET.
-- The BP write mask (BP 0xFE) is not applied to the registers the bridge shadows or rewrites
-  (textures, TLUTs, cmode0, scissor offset).
-- Texture contents are versioned only by texture-cache invalidates (BP 0x66); textures rewritten in
-  place without an invalidate would show stale data. Consider hashing.
-- Vertex array sizes are inferred from the indices each draw uses; arrays written in place between
-  draws without a base change rely on aurora's per-frame re-upload.
-- Display copies (EFB -> XFB) are not forwarded; aurora presents its EFB at the end of each host
-  frame. Interlaced/field-based copies, XFB tricks and the copy's clear flag are not emulated.
-- Aurora decodes the XF viewport with a 340 offset (as its own `GXSetViewport` encodes); confirm
-  against this game's SDK, which may use 342 (2 px shift).
-- Z (depth) EFB copies and EFB peeks/pokes are not bridged.
-- No frame pacing yet: the guest runs as fast as presentation allows.
+- Seams between adjacent quads when upscaled (sub-pixel coverage differs from the hardware's
+  1/12-pixel grid); only the viewport-edge case is handled.
+- Texgens sourcing binormal/tangent on vertices without NBT read zero; find which models hit this
+  and use the last loaded value, as hardware does.
+- Check the GX bridge beyond the screens seen so far (title, menus, the first areas).
+- Logic ops other than CLEAR/COPY/NOOP: add Dolphin's shader-side fixups for
+  CLEAR/INVERT/COPY_INVERTED/SET on top of the blending approximation.
+- Apply the BP write mask (BP 0xFE) to the registers the bridge shadows or rewrites (textures,
+  TLUTs, cmode0, scissor offset).
+- Textures rewritten in place without a texture-cache invalidate (BP 0x66) show stale data;
+  consider hashing contents.
+- Vertex arrays written in place between draws without a base change rely on aurora's per-frame
+  re-upload; verify or track writes.
+- Interlaced/field-based display copies and XFB tricks.
+- Z (depth) EFB copies and EFB peeks/pokes.
 
 ## Input
 
-- WPAD/KPAD are emulated at the API level (`KPADRead`, `WPADProbe`, `WPADGetInfoAsync`): one
-  Wii Remote + Nunchuk on channel 0. Still missing:
-  - `WPADGetInfoAsync` never calls its callback (needs a guest call-back mechanism).
-  - Motion controls: the accelerometer always reads "at rest"; shakes/swings need a mapping.
-  - Pointer is rate-controlled by the right stick/IJKL; consider mouse-absolute mode.
-  - `KPADReadEx`, connect/extension callbacks and rumble (`WPADControlMotor`) are not hooked.
-- `WPADInit`, `WPADRegisterAllocator` and `KPADInit` in `config/SX3P01/names.txt` are provisional
-  (identified from call structure); confirm them.
+- `WPADGetInfoAsync` never calls its callback (needs a way to call back into guest code).
+- Motion controls: the accelerometer always reads "at rest"; map shakes/swings.
+- Pointer: add a mouse-absolute mode (currently rate-controlled by the right stick/IJKL).
+- Hook `KPADReadEx`, the connect/extension callbacks and rumble (`WPADControlMotor`).
+- Confirm the provisional names `WPADInit`, `WPADRegisterAllocator` and `KPADInit` in
+  `config/SX3P01/names.txt` (identified from call structure).
 
 ## System
 
-- Locked cache (16 KB at 0xE0000000) and its DMA are emulated; DMA completes instantly and the
-  queue length in HID2 is never non-zero.
-- ES ioctlv 0x16 (GetConsumption) is unhandled.
+- Handle ES ioctlv 0x16 (GetConsumption).
 - After reopening `/tmp/pac001.aar` the game issues a NAND write on fd 0 ("write on unknown fd 0");
   find out which open it expected to succeed.
-- `/dev/net/*` (WiiConnect24) devices are absent; the game reports errors and continues.
-- The console reports itself as NDEV 2.1 because of the `0x800030E6` flag copied from Dolphin;
-  check whether a retail value changes game behaviour.
-- VI timing assumes a 60 Hz field rate regardless of the selected video mode.
+- Check whether reporting a retail console (instead of NDEV 2.1 from the `0x800030E6` flag copied
+  from Dolphin) changes game behaviour.
+- VI timing assumes a 60 Hz field rate regardless of the selected video mode; handle 50 Hz.
+- Emulate the locked-cache DMA queue length in HID2 if anything waits on it (DMA currently
+  completes instantly).
 
 ## Performance
 
-- Build with clang (tools/build_clang.bat): gameplay ~37 fps unthrottled (1.24x real time) vs
-  ~21 fps with MSVC. Remaining host profile: DolRecomp's FP/paired-single helpers (binary_single,
-  psq_load_value, ...) are out-of-line calls in cpu.c (31k call sites); the memory fast path
-  (pandora_mem_read32) is not always inlined; the bridge costs ~3.7 ms/frame (vertex index scan in
-  prepare_draw, a FIFO publish/worker wake per draw); every instruction stores ctx->pc.
-- Cross-chunk direct calls (patches/dolrecomp/0001, DOLRECOMP_UNSAFE_DIRECT_CALLS) halve
-  dispatches; they bypass dispatch-time checks, which is fine while hooks are in-code markers.
-- About 0.3x real time during boot, dominated by OS alarm/scheduler churn from the game polling
-  with `OSSleepTicks(1)`. Re-measure once frames complete.
+- Inline DolRecomp's FP/paired-single helpers (`binary_single`, `psq_load_value`, ...): they are
+  out-of-line calls into cpu.c from ~31k call sites.
+- Make sure the memory fast path (`pandora_mem_read32` etc.) is inlined everywhere.
+- Bridge (~3.7 ms/frame): the vertex index scan in `prepare_draw`, and a FIFO publish (worker
+  wake-up) per draw.
+- Avoid storing `ctx->pc` at every instruction in the generated code.
+- Re-measure boot speed (was ~0.3x real time, dominated by OS alarm/scheduler churn from
+  `OSSleepTicks(1)` polling, before the pacing and clang changes).
