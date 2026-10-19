@@ -231,6 +231,19 @@ void AuroraBridge::forward(const u8* p, u32 len, const u32* cpreg) {
                       cpreg[0x50], cpreg[0x60], array_base_[0], array_stride_[0],
                       first_position(&rt_.cpu, p, len, cpreg, array_base_.data(), array_stride_.data()).c_str(),
                       bp_[0x00], bp_[0x40], bp_[0x41], bp_[0x42], bp_[0xF3]);
+        // Debugging: list the vertices of small draws with direct f32 xyz positions and a colour.
+        if (frames_ == debug_frame() && be16(p + 1) <= 6 && cpreg[0x50] == 0x2200 &&
+            (cpreg[0x70 + (p[0] & 7)] & 0xF) == 0x9 && vertex_layout(cpreg, p[0] & 7).size == 16) {
+            for (u32 v = 0; v < be16(p + 1); v++) {
+                const u8* q = p + 3 + v * 16;
+                float xyz[3];
+                for (int k = 0; k < 3; k++) {
+                    const u32 bits = be32(q + 4 * k);
+                    std::memcpy(&xyz[k], &bits, 4);
+                }
+                LOG_DEBUG("bridge", "    v%u (%.3f, %.3f, %.3f) colour %08X", v, xyz[0], xyz[1], xyz[2], be32(q + 12));
+            }
+        }
         prepare_draw(p, len, cpreg);
         write(p, len);
         aurora::gx::fifo::publish();
@@ -239,6 +252,19 @@ void AuroraBridge::forward(const u8* p, u32 len, const u32* cpreg) {
         return;  // display lists are inlined by the command processor
     } else if (op == 0x10) {
         stats_.xf++;
+        // Debugging: viewport and projection loads of the debug frame.
+        const u32 addr = be16(p + 3), count = be16(p + 1) + 1;
+        if (frames_ == debug_frame() && (addr == 0x101A || addr == 0x1020) && len >= 5 + count * 4) {
+            char buf[256];
+            int n = std::snprintf(buf, sizeof buf, "  xf %04X:", addr);
+            for (u32 i = 0; i < count && i < 7 && n < (int)sizeof buf - 16; i++) {
+                const u32 bits = be32(p + 5 + 4 * i);
+                float f;
+                std::memcpy(&f, &bits, 4);
+                n += std::snprintf(buf + n, sizeof buf - n, " %.9g", f);
+            }
+            LOG_DEBUG("bridge", "%s", buf);
+        }
     }
     write(p, len);
 }
@@ -415,6 +441,8 @@ void AuroraBridge::efb_copy(u32 control) {
             capture_efb(copy_src_ & 0x3FF, (copy_src_ >> 10) & 0x3FF, (copy_size_ & 0x3FF) + 1,
                         ((copy_size_ >> 10) & 0x3FF) + 1, std::move(frame_shot_path_));
         }
+        if ((control >> 11) & 1)
+            display_clear_ = {true, copy_src_, copy_size_, bp_[0x4F], bp_[0x50], bp_[0x51]};
         frame_end_ = true;
         frames_++;
         frame_copies_ = 0;
@@ -467,6 +495,39 @@ void AuroraBridge::request_copy_shot(u64 frame, u32 index, std::string path) {
 
 void AuroraBridge::request_draw_shot(u64 frame, u32 draw, std::string path) {
     draw_shots_.push_back({frame, draw, std::move(path)});
+}
+
+void AuroraBridge::begin_frame() {
+    if (!display_clear_.pending)
+        return;
+    display_clear_.pending = false;
+    auto bp = [this](u32 reg, u32 value) {
+        u8 b[5] = {0x61, (u8)reg, (u8)(value >> 16), (u8)(value >> 8), (u8)value};
+        write(b, 5);
+    };
+    // Clear through a texture copy (to a small throwaway target) of the display copy's rectangle,
+    // with the clear values it had; then restore the current clear registers.
+    bp(0x4F, display_clear_.clear_ar);
+    bp(0x50, display_clear_.clear_gb);
+    bp(0x51, display_clear_.clear_z);
+    aurora_cmd(LOAD_COPY_SRC);
+    put32(display_clear_.src & 0x3FF);
+    put32((display_clear_.src >> 10) & 0x3FF);
+    put32((display_clear_.size & 0x3FF) + 1);
+    put32(((display_clear_.size >> 10) & 0x3FF) + 1);
+    aurora_cmd(LOAD_COPY_DST);
+    put32(4);
+    put32(4);
+    put32(6);  // GX_TF_RGBA8
+    put8(0);
+    aurora_cmd(LOAD_COPY_DEST);
+    put64(reinterpret_cast<u64>(&display_clear_key_));
+    put8(0x61);
+    put32(0x52000000 | (12u << 3) | (1u << 11));  // texture copy, RGBA8, clear
+    bp(0x4F, bp_[0x4F]);
+    bp(0x50, bp_[0x50]);
+    bp(0x51, bp_[0x51]);
+    aurora::gx::fifo::publish();
 }
 
 void AuroraBridge::draw_done() {

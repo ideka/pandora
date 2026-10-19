@@ -18,11 +18,10 @@
 
 ## Graphics
 
-- Full-screen bars reportedly leave ~1px gaps along the screen edges. Not reproduced in 640x480
-  readbacks; a 2x readback (PANDORA_SHOT_SCALE=2 with --screenshot) of the Load menu shows a 1px dark
-  vertical seam ~2 guest px from the right edge. Candidates: a crack between adjacent quads
-  (subpixel snapping differs from the hardware's 1/12-pixel grid), or aurora's scaling of the
-  640x480 EFB to the window. Needs a screenshot of where it shows.
+- Upscaling: vertices within half a guest pixel of the viewport edge are snapped onto it
+  (patches/aurora/0003); the game's full-screen quads stop 0.19px short (ortho -92.244..732.244,
+  quads -92..732), which left the outermost physical columns unpainted above 1x. Other sub-pixel
+  coverage differences of upscaled rendering (seams between adjacent quads) are not handled.
 - Texgens sourcing binormal/tangent (incl. emboss bump) on vertices without NBT read zero
   (patches/aurora/0001); hardware uses the last loaded value. Check which models hit this.
 - The GX bridge (`runtime/gpu/aurora_bridge.cpp`) is new; only the boot screens have been checked.

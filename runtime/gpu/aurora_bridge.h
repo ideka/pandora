@@ -35,6 +35,10 @@ public:
     }
     u64 frames() const { return frames_; }
 
+    // Start of a host frame (after aurora_begin_frame): applies the EFB clear requested by the
+    // previous frame's display copy.
+    void begin_frame();
+
     // Host time spent in the bridge (forwarding commands) and waiting for aurora at draw done,
     // in seconds since the last call (for --profile).
     struct Timing {
@@ -102,6 +106,13 @@ private:
     u32 copy_src_ = 0, copy_size_ = 0, copy_dest_ = 0;
 
     bool frame_end_ = false;
+    // A display copy's clear, deferred to the next frame: aurora presents the EFB itself, so
+    // clearing at the copy would wipe the frame before it is shown.
+    struct PendingClear {
+        bool pending = false;
+        u32 src = 0, size = 0, clear_ar = 0, clear_gb = 0, clear_z = 0;
+    } display_clear_;
+    u8 display_clear_key_ = 0;  // its address identifies the throwaway copy target
     u64 frames_ = 0;
 
     // Per-interval statistics (logged at debug level every 30 frames).

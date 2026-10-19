@@ -1,0 +1,21 @@
+diff --git a/lib/gx/shader.cpp b/lib/gx/shader.cpp
+index 2d10095..72ea896 100644
+--- a/lib/gx/shader.cpp
++++ b/lib/gx/shader.cpp
+@@ -1007,7 +1007,15 @@ std::string build_shader_source(const ShaderConfig& config, DstAlphaMode dstAlph
+   if (config.lineMode == 0) {
+     vtxXfrAttrsPre += fmt::format(
+         "\n    let mv_pos = vec4f({}, 1.0) * ubuf.postex_mtx[in_pnmtxidx];"
+-        "\n    out.pos = vec4f(mv_pos, 1.0) * ubuf.proj;",
++        "\n    let clip_pos = vec4f(mv_pos, 1.0) * ubuf.proj;"
++        // Snap vertices within half a logical pixel of the viewport edge onto it. At native
++        // resolution they cover the same pixels either way (the first pixel's sample point is
++        // half a pixel in), but when upscaled the sliver between them and the edge would leave
++        // the outermost physical pixels uncovered (e.g. full-screen quads that stop at 0.19px).
++        "\n    let edge_ndc = clip_pos.xy / clip_pos.w;"
++        "\n    let half_px_ndc = 1.0 / max(ubuf.logical_viewport_size, vec2f(1.0));"
++        "\n    let near_edge = (abs(abs(edge_ndc) - 1.0) < half_px_ndc) & vec2<bool>(clip_pos.w > 0.0);"
++        "\n    out.pos = vec4f(select(edge_ndc, sign(edge_ndc), near_edge) * clip_pos.w, clip_pos.zw);",
+         vtx_attr(config, GX_VA_POS));
+   } else if (config.lineMode == 3) {
+     // GX_POINTS: expand single vertex to axis-aligned screen-space square

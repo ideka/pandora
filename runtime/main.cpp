@@ -1,4 +1,5 @@
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -22,7 +23,8 @@ int g_log_level = 1;
 static void usage() {
     std::fprintf(stderr,
                  "usage: pandora --disc <extracted partition> [--headless | --background] [--nand <dir>] [--map <file>]\n"
-                 "               [--max-blocks N] [--audio-dump <wav>] [--mute] [--unthrottled] [--profile] [-v|-vv|-vvv]\n"
+                 "               [--max-blocks N] [--audio-dump <wav>] [--mute] [--unthrottled] [--window <w>x<h>]\n"
+                 "               [--profile] [-v|-vv|-vvv]\n"
                  "               [--screenshot <frame>:<file.png>]... [--exit-after <frames>]\n"
                  "               [--press <button>@<frame>[+<frames>]]...\n"
                  "  debugging: [--watch <symbol>]... [--watch-write <hexaddr>]... [--dump <hexaddr>[:len]]...\n"
@@ -87,7 +89,8 @@ private:
     std::chrono::steady_clock::time_point wall_;
 };
 
-static int run_windowed(Runtime& rt, int argc, char** argv, bool background, bool mute, bool unthrottled) {
+static int run_windowed(Runtime& rt, int argc, char** argv, bool background, bool mute, bool unthrottled, u32 win_w,
+                        u32 win_h) {
     const std::string settings_path = "build/aurora/settings.ini";
     Settings settings;
     settings.load(settings_path);
@@ -97,8 +100,8 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
     config.logCallback = &aurora_log;
     config.logLevel = g_log_level >= 2 ? LOG_DEBUG : LOG_INFO;
     config.vsync = true;
-    config.windowWidth = 1280;
-    config.windowHeight = 720;
+    config.windowWidth = win_w;
+    config.windowHeight = win_h;
     // Keep aurora's caches (compiled pipelines, Dawn cache, imgui.ini) with the build, not in the
     // user profile.
     std::filesystem::create_directories("build/aurora");
@@ -147,6 +150,7 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
         if (!aurora_begin_frame())
             continue;
         AuroraBridge& bridge = *rt.bridge();
+        bridge.begin_frame();
         rt.input().update(bridge.frames(), !background);
         for (const auto& [frame, path] : rt.options().screenshots)
             if (bridge.frames() == frame)
@@ -212,6 +216,7 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
 int main(int argc, char** argv) {
     Options opts;
     bool headless = false, background = false, mute = false, unthrottled = false;
+    u32 win_w = 1280, win_h = 720;
     std::vector<std::string> presses;
     for (int i = 1; i < argc; i++) {
         const char* a = argv[i];
@@ -226,6 +231,12 @@ int main(int argc, char** argv) {
             mute = true;
         else if (!std::strcmp(a, "--unthrottled"))
             unthrottled = true;
+        else if (!std::strcmp(a, "--window") && i + 1 < argc) {
+            if (std::sscanf(next(), "%ux%u", &win_w, &win_h) != 2 || !win_w || !win_h) {
+                usage();
+                return 2;
+            }
+        }
         else if (!std::strcmp(a, "--press") && i + 1 < argc)
             presses.push_back(next());
         else if (!std::strcmp(a, "--nand") && i + 1 < argc)
@@ -300,5 +311,6 @@ int main(int argc, char** argv) {
     // Background (test) runs are silent unless an SDL audio driver is forced, e.g.
     // SDL_AUDIO_DRIVER=disk, which writes the output to a file instead of a device.
     const bool forced_driver = std::getenv("SDL_AUDIO_DRIVER") != nullptr;
-    return headless ? rt.run() : run_windowed(rt, argc, argv, background, mute || (background && !forced_driver), unthrottled);
+    return headless ? rt.run() : run_windowed(rt, argc, argv, background, mute || (background && !forced_driver), unthrottled,
+                                                win_w, win_h);
 }
