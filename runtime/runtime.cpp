@@ -14,6 +14,8 @@
 #include "log.h"
 #include "memory.h"
 
+extern "C" u8* g_pandora_locked_cache = nullptr;
+
 namespace {
 
 constexpr u32 MSR_EE = 0x8000;
@@ -27,6 +29,7 @@ constexpr u64 HW_TICK_BATCH = 64;
 
 constexpr u32 SPR_DEC = 22;
 constexpr u32 SPR_PVR = 287;
+constexpr u32 SPR_DMA_U = 922, SPR_DMA_L = 923;  // locked cache DMA
 constexpr u32 BROADWAY_PVR = 0x00087102;
 
 // First instruction of the SDK exception stub (mtspr SPRG0, r4) as copied to each vector.
@@ -59,6 +62,7 @@ bool cpu_models_spr(u16 spr) {
 Runtime::Runtime(Options opts) : opts_(std::move(opts)) {
     hw_ = std::make_unique<Hardware>(*this);
     ios_ = std::make_unique<Ios>(*this);
+    g_pandora_locked_cache = locked_cache_.data();  // for the recompiled code's fast path
 }
 
 Runtime::~Runtime() {
@@ -154,10 +158,52 @@ bool Runtime::host_call(CPUState* c, u32 addr) {
     return false;
 }
 
-u64 Runtime::external_read(CPUState* c, u32 addr, u8 size) { return self(c)->hw_->read(addr, size); }
+// The locked cache is reached here by accesses that do not take the recompiled code's inline
+// fast path (DolRecomp's own cpu.c, e.g. dcbz_l).
+u64 Runtime::external_read(CPUState* c, u32 addr, u8 size) {
+    Runtime* rt = self(c);
+    if (addr - 0xE0000000u <= rt->locked_cache_.size() - size) {
+        u64 v = 0;
+        for (u32 i = 0; i < size; i++)
+            v = v << 8 | rt->locked_cache_[addr - 0xE0000000u + i];
+        return v;
+    }
+    return rt->hw_->read(addr, size);
+}
 
 void Runtime::external_write(CPUState* c, u32 addr, u64 value, u8 size) {
-    self(c)->hw_->write(addr, value, size);
+    Runtime* rt = self(c);
+    if (addr - 0xE0000000u <= rt->locked_cache_.size() - size) {
+        for (u32 i = 0; i < size; i++)
+            rt->locked_cache_[addr - 0xE0000000u + i] = (u8)(value >> (8 * (size - 1 - i)));
+        return;
+    }
+    rt->hw_->write(addr, value, size);
+}
+
+// DMA between the locked cache and memory, triggered by writing DMA_L with T set (as in Dolphin,
+// it completes instantly). DMA_U: memory address (bits 31-5), length high bits (4-0). DMA_L:
+// cache address (31-5), LD (4: memory -> cache), length low bits (3-2), T (1), F (0).
+void Runtime::locked_cache_dma(u32 dmal) {
+    const u32 dmau = spr_[SPR_DMA_U];
+    const u32 mem_addr = 0x80000000u | (dmau & 0x1FFFFFE0u);
+    const u32 lc_off = (dmal & ~31u) - 0xE0000000u;
+    u32 blocks = (dmau & 0x1F) << 2 | ((dmal >> 2) & 3);
+    if (blocks == 0)
+        blocks = 128;
+    const u32 len = blocks * 32;
+    u8* mem = mem::ptr(&cpu, mem_addr, len);
+    if (!mem || lc_off > locked_cache_.size() - len) {
+        LOG_ERROR("lc", "bad locked cache DMA: mem %08X lc %08X len %u", mem_addr, dmal & ~31u, len);
+        return;
+    }
+    if (dmal & 0x10)
+        std::memcpy(&locked_cache_[lc_off], mem, len);
+    else {
+        std::memcpy(mem, &locked_cache_[lc_off], len);
+        if (mem_addr < 0x81800000u)
+            on_mem1_write(mem_addr - 0x80000000u, len, this);
+    }
 }
 
 u32 Runtime::spr_read(CPUState* c, u16 spr, u32) {
@@ -171,6 +217,10 @@ void Runtime::spr_write(CPUState* c, u16 spr, u32 value, u32) {
     Runtime* rt = self(c);
     if (spr >= 1024)
         return;
+    if (spr == SPR_DMA_L && (value & 2)) {
+        rt->locked_cache_dma(value);
+        value &= ~2u;  // T clears when the transfer is done
+    }
     rt->spr_[spr] = value;
     if (spr == SPR_DEC)
         rt->dec_pending_ = false;

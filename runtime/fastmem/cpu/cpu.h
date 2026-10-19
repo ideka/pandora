@@ -10,6 +10,15 @@
 
 #include "../../../extern/DolRecomp/src/cpu/cpu.h"
 
+/* The locked L1 cache: 16 KB of scratchpad at 0xE0000000, owned by the runtime. */
+#define PANDORA_LC_BASE 0xE0000000u
+#define PANDORA_LC_SIZE 0x4000u
+#ifdef __cplusplus
+extern "C" u8* g_pandora_locked_cache;
+#else
+extern u8* g_pandora_locked_cache;
+#endif
+
 static inline u8* pandora_host(CPUState* c, u32 a, u32 n) {
     u32 off = a - 0x80000000u;
     if (off <= c->ram_size - n)
@@ -17,6 +26,9 @@ static inline u8* pandora_host(CPUState* c, u32 a, u32 n) {
     off = a - 0x90000000u;
     if (off <= c->mem2_size - n)
         return c->mem2 + off;
+    off = a - PANDORA_LC_BASE;
+    if (off <= PANDORA_LC_SIZE - n)
+        return g_pandora_locked_cache + off;
     return NULL;
 }
 

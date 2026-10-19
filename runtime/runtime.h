@@ -46,7 +46,8 @@ struct Options {
         u32 index;
         std::string path;
     };
-    std::vector<CopyShot> copy_shots;        // read back a guest EFB texture copy (debugging)
+    std::vector<CopyShot> copy_shots;
+    std::vector<CopyShot> draw_shots;        // capture the EFB before a draw (debugging)        // read back a guest EFB texture copy (debugging)
 };
 
 class Runtime {
@@ -123,6 +124,8 @@ private:
     std::unordered_map<u32, u32> code_copies_;  // low-memory pc -> original text address
 
     std::array<u32, 1024> spr_{};
+    std::array<u8, 0x4000> locked_cache_{};  // L1 locked cache at 0xE0000000 (16 KB)
+    void locked_cache_dma(u32 dmal);
     bool dec_pending_ = false;
     s64 cycle_carry_ = 0;
     u64 hw_ticks_pending_ = 0;

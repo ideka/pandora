@@ -46,6 +46,8 @@
 
 ## System
 
+- Locked cache (16 KB at 0xE0000000) and its DMA are emulated; DMA completes instantly and the
+  queue length in HID2 is never non-zero.
 - ES ioctlv 0x16 (GetConsumption) is unhandled.
 - After reopening `/tmp/pac001.aar` the game issues a NAND write on fd 0 ("write on unknown fd 0");
   find out which open it expected to succeed.
