@@ -353,19 +353,21 @@ std::vector<SettingsMenu::Edge> SettingsMenu::edges(const in::InputEvent& event)
     return out;
 }
 
-// While rebinding, the next press of the shown device's kind becomes the mapping. Escape or a
-// left click cancels (they cannot be bound here).
+// While rebinding, the next press of the shown device's kind becomes the mapping (including the
+// left mouse button). Escape cancels (it cannot be bound here).
 bool SettingsMenu::capture(const in::InputEvent& event, const std::vector<Edge>& es) {
     if (const auto* k = event.payload.get_if<in::InputEvent::KeyChanged>(); k && k->pressed && k->scancode == SDL_SCANCODE_ESCAPE) {
         cancel_capture();
         return true;
     }
+    const InputDevice device = device_ == "gamepad" ? InputDevice::Gamepad : InputDevice::KeyboardMouse;
+    // edges() leaves the left button to RmlUi; here it can be bound.
     if (const auto* p = event.payload.get_if<in::InputEvent::PointerChanged>();
-        p && p->phase == in::InputEvent::PointerChanged::Phase::Down && p->button == SDL_BUTTON_LEFT) {
-        cancel_capture();
+        p && device == InputDevice::KeyboardMouse && event.source.kind == in::InputSource::Kind::Mouse &&
+        p->phase == in::InputEvent::PointerChanged::Phase::Down && p->button == SDL_BUTTON_LEFT) {
+        finish_capture(PhysicalInput::mouse(SDL_BUTTON_LEFT));
         return true;
     }
-    const InputDevice device = device_ == "gamepad" ? InputDevice::Gamepad : InputDevice::KeyboardMouse;
     for (const Edge& e : es)
         if (e.pressed && e.input.device() == device) {
             finish_capture(e.input);

@@ -77,8 +77,11 @@ aids. Open work is in [TODO.md](TODO.md).
 - WPAD/KPAD are emulated at the API level (`KPADRead`, `WPADProbe`, `WPADGetInfoAsync`): one Wii
   Remote + Nunchuk on channel 0, fed from SDL gamepads, the keyboard and mouse, and scripted
   presses (`--press`).
-- The pointer is rate-controlled by its bound inputs; moving the mouse over the window puts it
-  under the mouse (absolute, -1..1 across the window). The OS cursor is hidden in the game while
+- The pointer is tracked in screen units (-1..1 across the window): rate-controlled by its bound
+  inputs, or put under the mouse when it moves over the window. KPAD values are those scaled by the
+  game's range at the screen edges, measured in 16:9 as about +-1.22 horizontally and +-0.91
+  vertically (a real Wii Remote reports values past +-1 at the screen's sides; at +-1 the cursor
+  stopped short of the side edges). Measured from cursor positions at fixed pointer values. The OS cursor is hidden in the game while
   the mouse aims, and shown in the menu.
 - Rumble: the game starts the motor through `fn_804F1F84` only if `WPADIsMotorEnabled` (the SYSCONF
   setting, read by the stubbed `WPADInit`), which is hooked to return true; `WPADControlMotor` is

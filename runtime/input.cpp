@@ -74,6 +74,13 @@ constexpr MouseName MOUSE_BUTTONS[] = {
 
 constexpr float DEAD_ZONE = 0.2f;
 
+// KPAD pointer values at the screen edges. The pointer is tracked in screen units (-1..1 across
+// the window) and scaled by these: in 16:9 the game puts the cursor 262 px (of 640) from the centre
+// per unit horizontally and 264 px (of 480) vertically, so the edges are at about 1.22 and 0.91
+// (a real Wii Remote reports values past +-1 when it points at the screen's sides).
+constexpr float POINTER_RANGE_X = 320.0f / 262.0f;
+constexpr float POINTER_RANGE_Y = 240.0f / 264.0f;
+
 SDL_Gamepad* first_gamepad() {
     static SDL_Gamepad* pad = nullptr;
     if (pad && SDL_GamepadConnected(pad))
@@ -320,8 +327,8 @@ void Input::update(u64 frame, bool use_devices) {
         px = val(Control::PointerRight) - val(Control::PointerLeft);
         py = val(Control::PointerDown) - val(Control::PointerUp);
     }
-    // The pointer moves at a rate set by its controls and stays where it was left; moving the mouse
-    // over the window puts it under the mouse instead (absolute, -1..1 across the window).
+    // The pointer (in screen units, -1..1 across the window) moves at a rate set by its controls and
+    // stays where it was left; moving the mouse over the window puts it under the mouse instead.
     pointer_x_ = std::clamp(pointer_x_ + px * 0.05f, -1.0f, 1.0f);
     pointer_y_ = std::clamp(pointer_y_ + py * 0.05f, -1.0f, 1.0f);
     if (use_devices && mouse_pointer_) {
@@ -336,8 +343,8 @@ void Input::update(u64 frame, bool use_devices) {
         mouse_x_ = mx;
         mouse_y_ = my;
     }
-    s.pointer_x = pointer_x_;
-    s.pointer_y = pointer_y_;
+    s.pointer_x = pointer_x_ * POINTER_RANGE_X;
+    s.pointer_y = pointer_y_ * POINTER_RANGE_Y;
 
     for (const auto& p : script_)
         if (frame >= p.start && frame < p.start + p.frames)
