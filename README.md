@@ -52,14 +52,18 @@ No game code or data is included. You need your own copy of the game.
    renderer; `--headless` runs without a window. `--press A@300+10` holds a button from a given
    frame (scripted input). See `--help`-style usage for debugging options.
 
-   **Esc** (keyboard) or **Guide** (gamepad) opens the settings menu, which pauses the game:
-   controls can be rebound there (one controller and one keyboard input per Wii button), and volume
-   and fullscreen set. Navigate with the mouse, arrow keys or D-pad/stick; South/Enter selects,
-   East/Start closes, LB/RB switch tabs. Settings are saved to `build/aurora/settings.ini`.
+   **Esc** (keyboard) or **Guide** (gamepad) opens the settings menu. The game keeps running behind
+   it (without input); **F5** pauses and resumes the game. Under Controls, the Gamepad and
+   Keyboard & Mouse sections each give every Wii Remote/Nunchuk control and every menu action
+   (open/close, accept, cancel, directions, previous/next tab) two mappings; select one and press
+   the new input, or clear it with x. Holding a direction in the menu repeats it. Volume and
+   fullscreen are under Sound and General. Settings are saved to `build/aurora/settings.ini`.
 
    Default controls (Wii Remote + Nunchuk): gamepad south/east/west/north = A/B/1/2,
    start/back = +/-, LB = C, LT = Z, left stick = Nunchuk, right stick = pointer. Keyboard:
-   Enter = A, Backspace = B, arrows = D-pad, WASD = stick, IJKL = pointer, Z/C, 1/2, =/-, H = Home.
+   Enter/Space = A, Backspace = B, arrows = D-pad, WASD = stick, IJKL = pointer, Z/C, 1/2, =/-,
+   H = Home. In the menu: D-pad/left stick or arrows/WASD move, South or Enter/Space accept, East or
+   Backspace cancel, LB/RB or PageUp/PageDown (Q/E) switch tabs.
 
    F11 or Alt+Enter toggles fullscreen. Audio plays on the default output device; `--mute`
    disables it. `--background` runs are always muted and never write the settings file.

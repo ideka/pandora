@@ -2,7 +2,6 @@
 
 #include <aurora/input.hpp>
 #include <aurora/rmlui.hpp>
-#include <SDL3/SDL_keyboard.h>
 
 #include <RmlUi/Core.h>
 #include <RmlUi/Core/Elements/ElementFormControlInput.h>
@@ -19,7 +18,16 @@ namespace {
 
 constexpr const char* TABS[] = {"controls", "sound", "general"};
 constexpr auto CAPTURE_TIMEOUT = std::chrono::seconds(5);
-constexpr float NAV_THRESHOLD = 0.5f;  // stick deflection that counts as a navigation press
+// Holding a direction repeats it after REPEAT_DELAY, every REPEAT_INTERVAL.
+constexpr auto REPEAT_DELAY = std::chrono::milliseconds(500);
+constexpr auto REPEAT_INTERVAL = std::chrono::milliseconds(50);
+constexpr float AXIS_PRESS = 0.5f, AXIS_RELEASE = 0.35f;  // stick/trigger deflection, with hysteresis
+
+constexpr int WII_TABLE = 0, MENU_TABLE = 1;
+
+bool is_direction(MenuAction a) {
+    return a == MenuAction::Up || a == MenuAction::Down || a == MenuAction::Left || a == MenuAction::Right;
+}
 
 }  // namespace
 
@@ -44,14 +52,21 @@ bool SettingsMenu::init(const std::string& asset_dir) {
         return false;
     if (auto row = c.RegisterStruct<Row>()) {
         row.RegisterMember("label", &Row::label);
-        row.RegisterMember("controller", &Row::controller);
-        row.RegisterMember("keyboard", &Row::keyboard);
+        row.RegisterMember("first", &Row::first);
+        row.RegisterMember("second", &Row::second);
+        row.RegisterMember("clear_first", &Row::clear_first);
+        row.RegisterMember("clear_second", &Row::clear_second);
         row.RegisterMember("index", &Row::index);
     }
     c.RegisterArray<std::vector<Row>>();
-    c.Bind("controls", &rows_);
+    c.Bind("wii_rows", &wii_rows_);
+    c.Bind("menu_rows", &menu_rows_);
     c.Bind("tab", &tab_);
+    c.Bind("device", &device_);
     c.Bind("capturing", &capturing_);
+    c.BindFunc("prompt", [this](Rml::Variant& v) {
+        v = Rml::String(device_ == "gamepad" ? "Press a button..." : "Press a key...");
+    });
     c.BindFunc(
         "volume", [this](Rml::Variant& v) { v = settings_.volume; },
         [this](const Rml::Variant& v) {
@@ -83,12 +98,32 @@ bool SettingsMenu::init(const std::string& asset_dir) {
             h.DirtyVariable("tab");
         }
     });
+    c.BindEventCallback("set_device", [this](Rml::DataModelHandle h, Rml::Event&, const Rml::VariantList& args) {
+        if (!args.empty()) {
+            cancel_capture();
+            device_ = args[0].Get<Rml::String>();
+            h.DirtyVariable("device");
+            h.DirtyVariable("prompt");
+            refresh_rows();
+        }
+    });
     c.BindEventCallback("bind", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& args) {
-        if (args.size() == 2)
-            start_capture(args[0].Get<int>(), args[1].Get<int>());
+        if (args.size() == 3)
+            start_capture(args[0].Get<int>(), args[1].Get<int>(), args[2].Get<int>());
+    });
+    c.BindEventCallback("clear", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& args) {
+        if (args.size() == 3)
+            clear_mapping(args[0].Get<int>(), args[1].Get<int>(), args[2].Get<int>());
     });
     c.BindEventCallback("reset_controls", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
-        settings_.bindings = Bindings::defaults();
+        // Resets the device shown.
+        const Bindings defaults = Bindings::defaults();
+        const size_t dev = device_ == "gamepad" ? 0 : 1;
+        for (size_t i = 0; i < kControlCount; i++)
+            settings_.bindings.controls[i][dev] = defaults.controls[i][dev];
+        for (size_t i = 0; i < kMenuActionCount; i++)
+            settings_.bindings.menu[i][dev] = defaults.menu[i][dev];
+        cancel_capture();
         refresh_rows();
         changed();
     });
@@ -101,13 +136,15 @@ bool SettingsMenu::init(const std::string& asset_dir) {
         LOG_ERROR("ui", "cannot load %s/ui/menu.rml", asset_dir.c_str());
         return false;
     }
+    pause_doc_ = ctx->LoadDocument(asset_dir + "/ui/pause.rml");
+    // The layer sees every event (to open the menu with its toggle binding); it only captures
+    // sources while the menu is open.
     layer_ = in::register_layer({
         .label = "settings menu",
         .priority = in::kRmlUiLayerPriority,
         .onEvent = &SettingsMenu::on_event,
         .capturesSource = &SettingsMenu::captures,
         .userdata = this,
-        .enabled = false,
     });
     return true;
 }
@@ -116,12 +153,10 @@ void SettingsMenu::open() {
     if (!doc_ || open_)
         return;
     open_ = true;
-    stick_[0] = stick_[1] = 0;
     refresh_rows();
     doc_->Show();
     if (Rml::Element* first = doc_->GetElementById("tab-" + tab_))
         first->Focus(true);
-    in::set_layer_enabled(layer_, true);
     in::reconcile();
 }
 
@@ -131,22 +166,66 @@ void SettingsMenu::close() {
     cancel_capture();
     open_ = false;
     doc_->Hide();
-    in::set_layer_enabled(layer_, false);
     in::reconcile();
 }
 
+void SettingsMenu::refresh() {
+    model_.DirtyAllVariables();
+    refresh_rows();
+}
+
+void SettingsMenu::set_paused(bool paused) {
+    if (!pause_doc_)
+        return;
+    if (paused)
+        pause_doc_->Show(Rml::ModalFlag::None, Rml::FocusFlag::None);
+    else
+        pause_doc_->Hide();
+}
+
 void SettingsMenu::update() {
-    if (capturing_ >= 0 && std::chrono::steady_clock::now() > capture_deadline_)
+    const auto now = Clock::now();
+    if (capturing_ >= 0 && now > capture_deadline_)
         cancel_capture();
+    if (!open_ || capturing_ >= 0)
+        return;
+    for (size_t a = 0; a < kMenuActionCount; a++)
+        if (held_[a] > 0 && is_direction((MenuAction)a) && now >= next_repeat_[a]) {
+            action((MenuAction)a);
+            next_repeat_[a] = std::max(next_repeat_[a] + REPEAT_INTERVAL, now);
+        }
+}
+
+// --- Bindings tables --------------------------------------------------------------------------
+
+Mappings& SettingsMenu::mappings(int table, int index) {
+    return table == MENU_TABLE ? settings_.bindings.menu[index] : settings_.bindings.controls[index];
+}
+
+// A mapping can be removed unless it is the last one of a required action on its device.
+bool SettingsMenu::can_clear(int table, int index, int slot) {
+    const auto& m = mappings(table, index)[device_ == "gamepad" ? 0 : 1];
+    if (!m[slot])
+        return false;
+    const bool required = table == MENU_TABLE && menu_action_info((MenuAction)index).required;
+    return !required || std::count_if(m.begin(), m.end(), [](const PhysicalInput& p) { return (bool)p; }) > 1;
 }
 
 void SettingsMenu::refresh_rows() {
-    rows_.clear();
-    for (size_t c = 0; c < kControlCount; c++) {
-        const auto& b = settings_.bindings.map[c];
-        rows_.push_back({control_info((Control)c).label, b[0].label(), b[1].label(), (int)c});
-    }
-    model_.DirtyVariable("controls");
+    const size_t dev = device_ == "gamepad" ? 0 : 1;
+    auto label = [](const PhysicalInput& p) { return p ? p.label() : Rml::String("-"); };
+    auto build = [&](std::vector<Row>& rows, int table, size_t count) {
+        rows.clear();
+        for (size_t i = 0; i < count; i++) {
+            const auto& m = mappings(table, (int)i)[dev];
+            rows.push_back({table == MENU_TABLE ? menu_action_info((MenuAction)i).label : control_info((Control)i).label,
+                            label(m[0]), label(m[1]), can_clear(table, (int)i, 0), can_clear(table, (int)i, 1), (int)i});
+        }
+    };
+    build(wii_rows_, WII_TABLE, kControlCount);
+    build(menu_rows_, MENU_TABLE, kMenuActionCount);
+    model_.DirtyVariable("wii_rows");
+    model_.DirtyVariable("menu_rows");
 }
 
 void SettingsMenu::changed() {
@@ -154,21 +233,20 @@ void SettingsMenu::changed() {
         on_change_();
 }
 
-// --- Rebinding --------------------------------------------------------------------------------
-
-void SettingsMenu::start_capture(int control, int slot) {
-    if (control < 0 || control >= (int)kControlCount || slot < 0 || slot > 1)
+void SettingsMenu::start_capture(int table, int index, int slot) {
+    const size_t count = table == MENU_TABLE ? kMenuActionCount : kControlCount;
+    if (index < 0 || index >= (int)count || slot < 0 || slot >= (int)kMappingsPerDevice)
         return;
-    capturing_ = control * 2 + slot;
-    LOG_DEBUG("ui", "rebinding %s (%s)", control_info((Control)control).id, slot ? "keyboard" : "controller");
-    capture_deadline_ = std::chrono::steady_clock::now() + CAPTURE_TIMEOUT;
+    capturing_ = table * 1000 + index * 10 + slot;
+    capture_deadline_ = Clock::now() + CAPTURE_TIMEOUT;
     model_.DirtyVariable("capturing");
 }
 
 void SettingsMenu::finish_capture(const PhysicalInput& input) {
-    const int control = capturing_ / 2, slot = capturing_ % 2;
-    settings_.bindings.map[control][slot] = input;
-    LOG_DEBUG("ui", "bound %s (%s) to %s", control_info((Control)control).id, slot ? "keyboard" : "controller",
+    const int table = capturing_ / 1000, index = capturing_ % 1000 / 10, slot = capturing_ % 10;
+    mappings(table, index)[device_ == "gamepad" ? 0 : 1][slot] = input;
+    LOG_DEBUG("ui", "bound %s %s mapping %d to %s", table == MENU_TABLE ? "menu" : "wii",
+              table == MENU_TABLE ? menu_action_info((MenuAction)index).id : control_info((Control)index).id, slot + 1,
               input.to_string().c_str());
     cancel_capture();
     refresh_rows();
@@ -182,35 +260,13 @@ void SettingsMenu::cancel_capture() {
     model_.DirtyVariable("capturing");
 }
 
-// The next press binds: a key for the keyboard column; a button or a stick/trigger direction for
-// the controller column. Escape (or the controller's East button for the keyboard column) cancels.
-bool SettingsMenu::handle_capture(const in::InputEvent& event) {
-    const bool controller_slot = capturing_ % 2 == 0;
-    return event.payload.match(
-        [&](const in::InputEvent::KeyChanged& key) {
-            if (!key.pressed || key.repeat)
-                return true;
-            if (key.scancode == SDL_SCANCODE_ESCAPE)
-                cancel_capture();
-            else if (!controller_slot)
-                finish_capture(PhysicalInput::key(key.scancode));
-            return true;
-        },
-        [&](const in::InputEvent::ButtonChanged& button) {
-            if (!button.pressed)
-                return true;
-            if (controller_slot)
-                finish_capture(PhysicalInput::button(button.button));
-            else if (button.button == SDL_GAMEPAD_BUTTON_EAST)
-                cancel_capture();
-            return true;
-        },
-        [&](const in::InputEvent::AxisChanged& axis) {
-            if (controller_slot && std::fabs(axis.value) >= 0.6f)
-                finish_capture(PhysicalInput::axis(axis.axis, axis.value < 0 ? -1 : 1));
-            return true;
-        },
-        [](const auto&) { return true; });
+void SettingsMenu::clear_mapping(int table, int index, int slot) {
+    if (!can_clear(table, index, slot))
+        return;
+    cancel_capture();
+    mappings(table, index)[device_ == "gamepad" ? 0 : 1][slot] = {};
+    refresh_rows();
+    changed();
 }
 
 // --- Input ------------------------------------------------------------------------------------
@@ -219,57 +275,124 @@ in::EventResult SettingsMenu::on_event(const in::InputEvent& event, void* self) 
     return static_cast<SettingsMenu*>(self)->handle(event);
 }
 
-// While open, the menu takes every source so the paused game sees nothing.
+// While open, the menu takes every source so the game sees nothing through the router.
 bool SettingsMenu::captures(const in::InputSource&, void* self) { return static_cast<SettingsMenu*>(self)->open_; }
 
+std::vector<SettingsMenu::Edge> SettingsMenu::edges(const in::InputEvent& event) {
+    std::vector<Edge> out;
+    event.payload.match(
+        [&](const in::InputEvent::KeyChanged& k) {
+            if (!k.repeat)  // held keys repeat through the menu's own timer
+                out.push_back({PhysicalInput::key(k.scancode), k.pressed});
+        },
+        [&](const in::InputEvent::ButtonChanged& b) { out.push_back({PhysicalInput::button(b.button), b.pressed}); },
+        [&](const in::InputEvent::AxisChanged& a) {
+            if (a.axis < 0 || a.axis >= SDL_GAMEPAD_AXIS_COUNT)
+                return;
+            const float before = axes_[a.axis];
+            axes_[a.axis] = a.value;
+            for (int sign : {-1, 1}) {
+                const bool was = before * sign >= AXIS_PRESS;
+                const bool now = a.value * sign >= (was ? AXIS_RELEASE : AXIS_PRESS);
+                if (now != was)
+                    out.push_back({PhysicalInput::axis(a.axis, sign), now});
+            }
+        },
+        [&](const in::InputEvent::PointerChanged& p) {
+            // The left button stays RmlUi's (clicking); the others can be bound.
+            if (event.source.kind == in::InputSource::Kind::Mouse && p.button != 0 && p.button != SDL_BUTTON_LEFT &&
+                (p.phase == in::InputEvent::PointerChanged::Phase::Down ||
+                 p.phase == in::InputEvent::PointerChanged::Phase::Up))
+                out.push_back({PhysicalInput::mouse(p.button), p.phase == in::InputEvent::PointerChanged::Phase::Down});
+        },
+        [](const auto&) {});
+    return out;
+}
+
+// While rebinding, the next press of the shown device's kind becomes the mapping. Escape or a
+// left click cancels (they cannot be bound here).
+bool SettingsMenu::capture(const in::InputEvent& event, const std::vector<Edge>& es) {
+    if (const auto* k = event.payload.get_if<in::InputEvent::KeyChanged>(); k && k->pressed && k->scancode == SDL_SCANCODE_ESCAPE) {
+        cancel_capture();
+        return true;
+    }
+    if (const auto* p = event.payload.get_if<in::InputEvent::PointerChanged>();
+        p && p->phase == in::InputEvent::PointerChanged::Phase::Down && p->button == SDL_BUTTON_LEFT) {
+        cancel_capture();
+        return true;
+    }
+    const InputDevice device = device_ == "gamepad" ? InputDevice::Gamepad : InputDevice::KeyboardMouse;
+    for (const Edge& e : es)
+        if (e.pressed && e.input.device() == device) {
+            finish_capture(e.input);
+            break;
+        }
+    return true;
+}
+
+// Tracks which actions are held and runs an action when it is first pressed. True if any edge
+// belongs to an action.
+bool SettingsMenu::apply_actions(const std::vector<Edge>& es) {
+    bool matched = false;
+    for (const Edge& e : es)
+        for (size_t a = 0; a < kMenuActionCount; a++) {
+            const auto& m = settings_.bindings.menu[a][(size_t)e.input.device()];
+            if (std::find(m.begin(), m.end(), e.input) == m.end())
+                continue;
+            matched = true;
+            if (e.pressed) {
+                if (held_[a]++ == 0) {
+                    next_repeat_[a] = Clock::now() + REPEAT_DELAY;
+                    action((MenuAction)a);
+                }
+            } else if (held_[a] > 0) {
+                held_[a]--;
+            }
+        }
+    return matched;
+}
+
+void SettingsMenu::action(MenuAction a) {
+    using Key = Rml::Input::KeyIdentifier;
+    if (!open_) {
+        if (a == MenuAction::Toggle)
+            open();
+        return;
+    }
+    switch (a) {
+    case MenuAction::Toggle:
+    case MenuAction::Cancel: close(); break;
+    case MenuAction::Accept: navigate(Key::KI_RETURN); break;
+    case MenuAction::Up: navigate(Key::KI_UP); break;
+    case MenuAction::Down: navigate(Key::KI_DOWN); break;
+    case MenuAction::Left: navigate(Key::KI_LEFT); break;
+    case MenuAction::Right: navigate(Key::KI_RIGHT); break;
+    case MenuAction::PrevTab: switch_tab(-1); break;
+    case MenuAction::NextTab: switch_tab(1); break;
+    case MenuAction::Count: break;
+    }
+}
+
 in::EventResult SettingsMenu::handle(const in::InputEvent& event) {
+    const std::vector<Edge> es = edges(event);
+    if (open_ && capturing_ >= 0) {
+        // Keep held counts consistent (releases), but don't run actions.
+        for (const Edge& e : es)
+            if (!e.pressed)
+                for (size_t a = 0; a < kMenuActionCount; a++) {
+                    const auto& m = settings_.bindings.menu[a][(size_t)e.input.device()];
+                    if (held_[a] > 0 && std::find(m.begin(), m.end(), e.input) != m.end())
+                        held_[a]--;
+                }
+        capture(event, es);
+        return in::EventResult::Consume;
+    }
+    const bool matched = apply_actions(es);
     if (!open_)
         return in::EventResult::Pass;
-    if (capturing_ >= 0 && handle_capture(event))
-        return in::EventResult::Consume;
-    using Key = Rml::Input::KeyIdentifier;
-    event.payload.match(
-        [&](const in::InputEvent::ButtonChanged& b) {
-            if (!b.pressed)
-                return;
-            switch (b.button) {
-            case SDL_GAMEPAD_BUTTON_DPAD_UP: navigate(Key::KI_UP); break;
-            case SDL_GAMEPAD_BUTTON_DPAD_DOWN: navigate(Key::KI_DOWN); break;
-            case SDL_GAMEPAD_BUTTON_DPAD_LEFT: navigate(Key::KI_LEFT); break;
-            case SDL_GAMEPAD_BUTTON_DPAD_RIGHT: navigate(Key::KI_RIGHT); break;
-            case SDL_GAMEPAD_BUTTON_SOUTH: navigate(Key::KI_RETURN); break;
-            case SDL_GAMEPAD_BUTTON_EAST:
-            case SDL_GAMEPAD_BUTTON_START: close(); break;
-            case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: switch_tab(-1); break;
-            case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER: switch_tab(1); break;
-            default: break;  // Guide toggles the menu in the main loop
-            }
-        },
-        [&](const in::InputEvent::AxisChanged& a) {
-            const int i = a.axis == SDL_GAMEPAD_AXIS_LEFTX ? 0 : a.axis == SDL_GAMEPAD_AXIS_LEFTY ? 1 : -1;
-            if (i < 0)
-                return;
-            const float before = stick_[i];
-            stick_[i] = a.value;
-            if (std::fabs(before) < NAV_THRESHOLD && std::fabs(a.value) >= NAV_THRESHOLD)
-                navigate(i == 0 ? (a.value < 0 ? Key::KI_LEFT : Key::KI_RIGHT) : (a.value < 0 ? Key::KI_UP : Key::KI_DOWN));
-        },
-        [&](const in::InputEvent::KeyChanged& k) {
-            if (k.keycode == SDLK_ESCAPE)
-                return;  // toggles the menu in the main loop
-            const int arrow = k.keycode == SDLK_LEFT    ? Key::KI_LEFT
-                              : k.keycode == SDLK_RIGHT ? Key::KI_RIGHT
-                              : k.keycode == SDLK_UP    ? Key::KI_UP
-                              : k.keycode == SDLK_DOWN  ? Key::KI_DOWN
-                                                        : -1;
-            if (arrow >= 0) {
-                if (k.pressed)
-                    navigate(arrow);
-                return;
-            }
-            aurora::rmlui::process_input(event);
-        },
-        [&](const auto&) { aurora::rmlui::process_input(event); });
+    const bool gamepad = event.payload.is<in::InputEvent::ButtonChanged>() || event.payload.is<in::InputEvent::AxisChanged>();
+    if (!gamepad && !matched)
+        aurora::rmlui::process_input(event);  // mouse, text, unbound keys
     return in::EventResult::Consume;
 }
 
@@ -290,13 +413,11 @@ void SettingsMenu::navigate(int key) {
         ctx->ProcessKeyDown((Rml::Input::KeyIdentifier)key, 0);
         ctx->ProcessKeyUp((Rml::Input::KeyIdentifier)key, 0);
     }
-    if (Rml::Element* focus = ctx->GetFocusElement())
-        LOG_DEBUG("ui", "key %d -> focus %s", key, focus->GetAddress(false, false).c_str());
 }
 
-// RmlUi's spatial navigation does not enter or leave scroll containers, so the bindings list
-// (a grid of two columns) is navigated here: up/down by row, left/right by column, and out to the
-// tabs above and the reset button below.
+// RmlUi's spatial navigation does not enter or leave scroll containers, so the bindings tables
+// (rows of four cells: mapping, clear, mapping, clear) are navigated here, and out to the device
+// switch above and the reset button below.
 bool SettingsMenu::navigate_bindings(int key) {
     Rml::Context* ctx = aurora::rmlui::get_context();
     Rml::Element* focus = ctx->GetFocusElement();
@@ -306,10 +427,16 @@ bool SettingsMenu::navigate_bindings(int key) {
     doc_->GetElementsByClassName(rows, "binding");
     if (rows.empty())
         return false;
-    auto bind_button = [](Rml::Element* row, int column) -> Rml::Element* {
-        Rml::ElementList buttons;
-        row->GetElementsByClassName(buttons, "bind");
-        return column < (int)buttons.size() ? buttons[column] : nullptr;
+    auto cell = [](Rml::Element* row, int column) -> Rml::Element* {
+        Rml::ElementList cells;
+        row->GetElementsByClassName(cells, "cell");
+        if (cells.empty())
+            return nullptr;
+        column = std::clamp(column, 0, (int)cells.size() - 1);
+        // A clear button that cannot clear is skipped in favour of its mapping.
+        if (cells[column]->IsClassSet("disabled") && column > 0)
+            column--;
+        return cells[column];
     };
     auto go = [](Rml::Element* target) {
         if (!target)
@@ -319,27 +446,39 @@ bool SettingsMenu::navigate_bindings(int key) {
         return true;
     };
 
-    if (focus->IsClassSet("bind")) {
-        const auto it = std::find(rows.begin(), rows.end(), focus->GetParentNode());
+    if (focus->IsClassSet("cell")) {
+        Rml::Element* row_element = focus->GetParentNode();
+        const auto it = std::find(rows.begin(), rows.end(), row_element);
         if (it == rows.end())
             return false;
         const int row = (int)(it - rows.begin());
-        const int column = bind_button(rows[row], 0) == focus ? 0 : 1;
+        Rml::ElementList cells;
+        row_element->GetElementsByClassName(cells, "cell");
+        const int column = (int)(std::find(cells.begin(), cells.end(), focus) - cells.begin());
         switch (key) {
         case Rml::Input::KI_UP:
-            return row > 0 ? go(bind_button(rows[row - 1], column)) : go(doc_->GetElementById("tab-" + tab_));
+            return row > 0 ? go(cell(rows[row - 1], column)) : go(doc_->GetElementById("dev-" + device_));
         case Rml::Input::KI_DOWN:
-            return row + 1 < (int)rows.size() ? go(bind_button(rows[row + 1], column))
-                                              : go(doc_->GetElementById("reset"));
-        case Rml::Input::KI_LEFT: return column == 1 ? go(bind_button(rows[row], 0)) : true;
-        case Rml::Input::KI_RIGHT: return column == 0 ? go(bind_button(rows[row], 1)) : true;
+            return row + 1 < (int)rows.size() ? go(cell(rows[row + 1], column)) : go(doc_->GetElementById("reset"));
+        case Rml::Input::KI_LEFT:
+            for (int c = column - 1; c >= 0; c--)
+                if (!cells[c]->IsClassSet("disabled"))
+                    return go(cells[c]);
+            return true;
+        case Rml::Input::KI_RIGHT:
+            for (int c = column + 1; c < (int)cells.size(); c++)
+                if (!cells[c]->IsClassSet("disabled"))
+                    return go(cells[c]);
+            return true;
         default: return false;
         }
     }
+    if (key == Rml::Input::KI_DOWN && focus->IsClassSet("device"))
+        return go(cell(rows.front(), 0));
     if (key == Rml::Input::KI_DOWN && focus->IsClassSet("tab"))
-        return go(bind_button(rows.front(), 0));
+        return go(doc_->GetElementById("dev-" + device_));
     if (key == Rml::Input::KI_UP && focus->GetId() == "reset")
-        return go(bind_button(rows.back(), 0));
+        return go(cell(rows.back(), 0));
     return false;
 }
 
@@ -348,6 +487,7 @@ void SettingsMenu::switch_tab(int delta) {
     int i = 0;
     while (i < count && tab_ != TABS[i])
         i++;
+    cancel_capture();
     tab_ = TABS[((i + delta) % count + count) % count];
     model_.DirtyVariable("tab");
     if (Rml::Element* tab = doc_->GetElementById("tab-" + tab_))

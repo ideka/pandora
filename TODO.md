@@ -44,7 +44,7 @@ Open work only. How things currently work, and why, is in [NOTES.md](NOTES.md).
 - Graphics tab (internal resolution/scale, aspect ratio, vsync, MSAA) once aurora exposes them.
 - Per-device controller profiles (by GUID) and more than one gamepad; currently the first one.
 - Show controller glyphs for the connected pad type instead of position names.
-- Autorepeat when holding a direction in the menu; mouse-absolute pointer mode option.
+- Mouse-absolute pointer mode option.
 - Keep the settings file in the user's profile rather than `build/aurora` for distributed builds.
 
 ## System

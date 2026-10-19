@@ -9,28 +9,40 @@
 
 namespace {
 
-constexpr ControlInfo CONTROLS[kControlCount] = {
-    {"a", "A"},
-    {"b", "B"},
-    {"1", "1"},
-    {"2", "2"},
-    {"plus", "+ (Plus)"},
-    {"minus", "- (Minus)"},
-    {"home", "Home"},
-    {"dpad_up", "D-Pad Up"},
-    {"dpad_down", "D-Pad Down"},
-    {"dpad_left", "D-Pad Left"},
-    {"dpad_right", "D-Pad Right"},
-    {"z", "Nunchuk Z"},
-    {"c", "Nunchuk C"},
-    {"stick_up", "Nunchuk Stick Up"},
-    {"stick_down", "Nunchuk Stick Down"},
-    {"stick_left", "Nunchuk Stick Left"},
-    {"stick_right", "Nunchuk Stick Right"},
-    {"pointer_up", "Pointer Up"},
-    {"pointer_down", "Pointer Down"},
-    {"pointer_left", "Pointer Left"},
-    {"pointer_right", "Pointer Right"},
+constexpr BindingInfo CONTROLS[kControlCount] = {
+    {"a", "A", false},
+    {"b", "B", false},
+    {"1", "1", false},
+    {"2", "2", false},
+    {"plus", "+ (Plus)", false},
+    {"minus", "- (Minus)", false},
+    {"home", "Home", false},
+    {"dpad_up", "D-Pad Up", false},
+    {"dpad_down", "D-Pad Down", false},
+    {"dpad_left", "D-Pad Left", false},
+    {"dpad_right", "D-Pad Right", false},
+    {"z", "Nunchuk Z", false},
+    {"c", "Nunchuk C", false},
+    {"stick_up", "Nunchuk Stick Up", false},
+    {"stick_down", "Nunchuk Stick Down", false},
+    {"stick_left", "Nunchuk Stick Left", false},
+    {"stick_right", "Nunchuk Stick Right", false},
+    {"pointer_up", "Pointer Up", false},
+    {"pointer_down", "Pointer Down", false},
+    {"pointer_left", "Pointer Left", false},
+    {"pointer_right", "Pointer Right", false},
+};
+
+constexpr BindingInfo MENU_ACTIONS[kMenuActionCount] = {
+    {"toggle", "Open / Close Menu", true},
+    {"accept", "Accept", true},
+    {"cancel", "Cancel / Back", false},
+    {"up", "Up", false},
+    {"down", "Down", false},
+    {"left", "Left", false},
+    {"right", "Right", false},
+    {"prev_tab", "Previous Tab", false},
+    {"next_tab", "Next Tab", false},
 };
 
 // Wii buttons driven by each button control (the rest are analog).
@@ -50,6 +62,17 @@ constexpr ButtonName SCRIPT_BUTTONS[] = {
     {"C", WPAD_C},
 };
 
+struct MouseName {
+    const char* id;
+    const char* label;
+    int button;
+};
+constexpr MouseName MOUSE_BUTTONS[] = {
+    {"left", "Mouse Left", SDL_BUTTON_LEFT},     {"middle", "Mouse Middle", SDL_BUTTON_MIDDLE},
+    {"right", "Mouse Right", SDL_BUTTON_RIGHT},  {"x1", "Mouse Back", SDL_BUTTON_X1},
+    {"x2", "Mouse Forward", SDL_BUTTON_X2},
+};
+
 constexpr float DEAD_ZONE = 0.2f;
 
 SDL_Gamepad* first_gamepad() {
@@ -65,17 +88,25 @@ SDL_Gamepad* first_gamepad() {
     return pad;
 }
 
+struct DeviceState {
+    const bool* keys;
+    SDL_MouseButtonFlags mouse;
+    SDL_Gamepad* pad;
+};
+
 // 0..1 for one physical input.
-float input_value(const PhysicalInput& in, const bool* keys, SDL_Gamepad* pad) {
+float input_value(const PhysicalInput& in, const DeviceState& d) {
     switch (in.kind) {
     case PhysicalInput::Kind::Key:
-        return keys[in.code] ? 1.0f : 0.0f;
+        return d.keys[in.code] ? 1.0f : 0.0f;
+    case PhysicalInput::Kind::MouseButton:
+        return (d.mouse & SDL_BUTTON_MASK(in.code)) ? 1.0f : 0.0f;
     case PhysicalInput::Kind::Button:
-        return pad && SDL_GetGamepadButton(pad, (SDL_GamepadButton)in.code) ? 1.0f : 0.0f;
+        return d.pad && SDL_GetGamepadButton(d.pad, (SDL_GamepadButton)in.code) ? 1.0f : 0.0f;
     case PhysicalInput::Kind::Axis: {
-        if (!pad)
+        if (!d.pad)
             return 0.0f;
-        const float v = SDL_GetGamepadAxis(pad, (SDL_GamepadAxis)in.code) / 32767.0f * (float)in.sign;
+        const float v = SDL_GetGamepadAxis(d.pad, (SDL_GamepadAxis)in.code) / 32767.0f * (float)in.sign;
         return v < DEAD_ZONE ? 0.0f : std::min(1.0f, (v - DEAD_ZONE) / (1.0f - DEAD_ZONE));
     }
     case PhysicalInput::Kind::None:
@@ -86,12 +117,18 @@ float input_value(const PhysicalInput& in, const bool* keys, SDL_Gamepad* pad) {
 
 }  // namespace
 
-const ControlInfo& control_info(Control c) { return CONTROLS[(size_t)c]; }
+const BindingInfo& control_info(Control c) { return CONTROLS[(size_t)c]; }
+const BindingInfo& menu_action_info(MenuAction a) { return MENU_ACTIONS[(size_t)a]; }
 
 std::string PhysicalInput::to_string() const {
     switch (kind) {
     case Kind::Key:
         return std::string("key:") + SDL_GetScancodeName((SDL_Scancode)code);
+    case Kind::MouseButton:
+        for (const auto& m : MOUSE_BUTTONS)
+            if (m.button == code)
+                return std::string("mouse:") + m.id;
+        break;
     case Kind::Button:
         if (const char* s = SDL_GetGamepadStringForButton((SDL_GamepadButton)code))
             return std::string("button:") + s;
@@ -115,6 +152,12 @@ PhysicalInput PhysicalInput::parse(const std::string& s) {
         const SDL_Scancode sc = SDL_GetScancodeFromName(value.c_str());
         return sc == SDL_SCANCODE_UNKNOWN ? PhysicalInput{} : key(sc);
     }
+    if (kind == "mouse") {
+        for (const auto& m : MOUSE_BUTTONS)
+            if (value == m.id)
+                return mouse(m.button);
+        return {};
+    }
     if (kind == "button") {
         const SDL_GamepadButton b = SDL_GetGamepadButtonFromString(value.c_str());
         return b == SDL_GAMEPAD_BUTTON_INVALID ? PhysicalInput{} : button(b);
@@ -135,6 +178,11 @@ std::string PhysicalInput::label() const {
         const char* name = SDL_GetScancodeName((SDL_Scancode)code);
         return name && *name ? name : "Unknown key";
     }
+    case Kind::MouseButton:
+        for (const auto& m : MOUSE_BUTTONS)
+            if (m.button == code)
+                return m.label;
+        return "Mouse Button " + std::to_string(code);
     case Kind::Button:
         switch ((SDL_GamepadButton)code) {
         case SDL_GAMEPAD_BUTTON_SOUTH: return "South (A/Cross)";
@@ -174,33 +222,56 @@ std::string PhysicalInput::label() const {
 }
 
 Bindings Bindings::defaults() {
-    Bindings b;
-    auto set = [&](Control c, PhysicalInput pad, PhysicalInput key) {
-        b.at(c, BindingSlot::Controller) = pad;
-        b.at(c, BindingSlot::Keyboard) = key;
-    };
     using P = PhysicalInput;
-    set(Control::A, P::button(SDL_GAMEPAD_BUTTON_SOUTH), P::key(SDL_SCANCODE_RETURN));
-    set(Control::B, P::button(SDL_GAMEPAD_BUTTON_EAST), P::key(SDL_SCANCODE_BACKSPACE));
-    set(Control::One, P::button(SDL_GAMEPAD_BUTTON_WEST), P::key(SDL_SCANCODE_1));
-    set(Control::Two, P::button(SDL_GAMEPAD_BUTTON_NORTH), P::key(SDL_SCANCODE_2));
-    set(Control::Plus, P::button(SDL_GAMEPAD_BUTTON_START), P::key(SDL_SCANCODE_EQUALS));
-    set(Control::Minus, P::button(SDL_GAMEPAD_BUTTON_BACK), P::key(SDL_SCANCODE_MINUS));
-    set(Control::Home, P{}, P::key(SDL_SCANCODE_H));  // the gamepad's Guide button opens the menu
-    set(Control::DpadUp, P::button(SDL_GAMEPAD_BUTTON_DPAD_UP), P::key(SDL_SCANCODE_UP));
-    set(Control::DpadDown, P::button(SDL_GAMEPAD_BUTTON_DPAD_DOWN), P::key(SDL_SCANCODE_DOWN));
-    set(Control::DpadLeft, P::button(SDL_GAMEPAD_BUTTON_DPAD_LEFT), P::key(SDL_SCANCODE_LEFT));
-    set(Control::DpadRight, P::button(SDL_GAMEPAD_BUTTON_DPAD_RIGHT), P::key(SDL_SCANCODE_RIGHT));
-    set(Control::Z, P::axis(SDL_GAMEPAD_AXIS_LEFT_TRIGGER, 1), P::key(SDL_SCANCODE_Z));
-    set(Control::C, P::button(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER), P::key(SDL_SCANCODE_C));
-    set(Control::StickUp, P::axis(SDL_GAMEPAD_AXIS_LEFTY, -1), P::key(SDL_SCANCODE_W));
-    set(Control::StickDown, P::axis(SDL_GAMEPAD_AXIS_LEFTY, 1), P::key(SDL_SCANCODE_S));
-    set(Control::StickLeft, P::axis(SDL_GAMEPAD_AXIS_LEFTX, -1), P::key(SDL_SCANCODE_A));
-    set(Control::StickRight, P::axis(SDL_GAMEPAD_AXIS_LEFTX, 1), P::key(SDL_SCANCODE_D));
-    set(Control::PointerUp, P::axis(SDL_GAMEPAD_AXIS_RIGHTY, -1), P::key(SDL_SCANCODE_I));
-    set(Control::PointerDown, P::axis(SDL_GAMEPAD_AXIS_RIGHTY, 1), P::key(SDL_SCANCODE_K));
-    set(Control::PointerLeft, P::axis(SDL_GAMEPAD_AXIS_RIGHTX, -1), P::key(SDL_SCANCODE_J));
-    set(Control::PointerRight, P::axis(SDL_GAMEPAD_AXIS_RIGHTX, 1), P::key(SDL_SCANCODE_L));
+    constexpr size_t GP = (size_t)InputDevice::Gamepad, KBM = (size_t)InputDevice::KeyboardMouse;
+    const P none{};
+    Bindings b;
+    auto set = [&](Mappings& m, P pad1, P pad2, P kbm1, P kbm2) {
+        m[GP] = {pad1, pad2};
+        m[KBM] = {kbm1, kbm2};
+    };
+    auto control = [&](Control c) -> Mappings& { return b.controls[(size_t)c]; };
+    set(control(Control::A), P::button(SDL_GAMEPAD_BUTTON_SOUTH), none, P::key(SDL_SCANCODE_RETURN),
+        P::key(SDL_SCANCODE_SPACE));
+    set(control(Control::B), P::button(SDL_GAMEPAD_BUTTON_EAST), none, P::key(SDL_SCANCODE_BACKSPACE), none);
+    set(control(Control::One), P::button(SDL_GAMEPAD_BUTTON_WEST), none, P::key(SDL_SCANCODE_1), none);
+    set(control(Control::Two), P::button(SDL_GAMEPAD_BUTTON_NORTH), none, P::key(SDL_SCANCODE_2), none);
+    set(control(Control::Plus), P::button(SDL_GAMEPAD_BUTTON_START), none, P::key(SDL_SCANCODE_EQUALS), none);
+    set(control(Control::Minus), P::button(SDL_GAMEPAD_BUTTON_BACK), none, P::key(SDL_SCANCODE_MINUS), none);
+    set(control(Control::Home), none, none, P::key(SDL_SCANCODE_H), none);  // Guide opens the menu
+    set(control(Control::DpadUp), P::button(SDL_GAMEPAD_BUTTON_DPAD_UP), none, P::key(SDL_SCANCODE_UP), none);
+    set(control(Control::DpadDown), P::button(SDL_GAMEPAD_BUTTON_DPAD_DOWN), none, P::key(SDL_SCANCODE_DOWN), none);
+    set(control(Control::DpadLeft), P::button(SDL_GAMEPAD_BUTTON_DPAD_LEFT), none, P::key(SDL_SCANCODE_LEFT), none);
+    set(control(Control::DpadRight), P::button(SDL_GAMEPAD_BUTTON_DPAD_RIGHT), none, P::key(SDL_SCANCODE_RIGHT),
+        none);
+    set(control(Control::Z), P::axis(SDL_GAMEPAD_AXIS_LEFT_TRIGGER, 1), none, P::key(SDL_SCANCODE_Z), none);
+    set(control(Control::C), P::button(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER), none, P::key(SDL_SCANCODE_C), none);
+    set(control(Control::StickUp), P::axis(SDL_GAMEPAD_AXIS_LEFTY, -1), none, P::key(SDL_SCANCODE_W), none);
+    set(control(Control::StickDown), P::axis(SDL_GAMEPAD_AXIS_LEFTY, 1), none, P::key(SDL_SCANCODE_S), none);
+    set(control(Control::StickLeft), P::axis(SDL_GAMEPAD_AXIS_LEFTX, -1), none, P::key(SDL_SCANCODE_A), none);
+    set(control(Control::StickRight), P::axis(SDL_GAMEPAD_AXIS_LEFTX, 1), none, P::key(SDL_SCANCODE_D), none);
+    set(control(Control::PointerUp), P::axis(SDL_GAMEPAD_AXIS_RIGHTY, -1), none, P::key(SDL_SCANCODE_I), none);
+    set(control(Control::PointerDown), P::axis(SDL_GAMEPAD_AXIS_RIGHTY, 1), none, P::key(SDL_SCANCODE_K), none);
+    set(control(Control::PointerLeft), P::axis(SDL_GAMEPAD_AXIS_RIGHTX, -1), none, P::key(SDL_SCANCODE_J), none);
+    set(control(Control::PointerRight), P::axis(SDL_GAMEPAD_AXIS_RIGHTX, 1), none, P::key(SDL_SCANCODE_L), none);
+
+    auto action = [&](MenuAction a) -> Mappings& { return b.menu[(size_t)a]; };
+    set(action(MenuAction::Toggle), P::button(SDL_GAMEPAD_BUTTON_GUIDE), none, P::key(SDL_SCANCODE_ESCAPE), none);
+    set(action(MenuAction::Accept), P::button(SDL_GAMEPAD_BUTTON_SOUTH), none, P::key(SDL_SCANCODE_RETURN),
+        P::key(SDL_SCANCODE_SPACE));
+    set(action(MenuAction::Cancel), P::button(SDL_GAMEPAD_BUTTON_EAST), none, P::key(SDL_SCANCODE_BACKSPACE), none);
+    set(action(MenuAction::Up), P::button(SDL_GAMEPAD_BUTTON_DPAD_UP), P::axis(SDL_GAMEPAD_AXIS_LEFTY, -1),
+        P::key(SDL_SCANCODE_UP), P::key(SDL_SCANCODE_W));
+    set(action(MenuAction::Down), P::button(SDL_GAMEPAD_BUTTON_DPAD_DOWN), P::axis(SDL_GAMEPAD_AXIS_LEFTY, 1),
+        P::key(SDL_SCANCODE_DOWN), P::key(SDL_SCANCODE_S));
+    set(action(MenuAction::Left), P::button(SDL_GAMEPAD_BUTTON_DPAD_LEFT), P::axis(SDL_GAMEPAD_AXIS_LEFTX, -1),
+        P::key(SDL_SCANCODE_LEFT), P::key(SDL_SCANCODE_A));
+    set(action(MenuAction::Right), P::button(SDL_GAMEPAD_BUTTON_DPAD_RIGHT), P::axis(SDL_GAMEPAD_AXIS_LEFTX, 1),
+        P::key(SDL_SCANCODE_RIGHT), P::key(SDL_SCANCODE_D));
+    set(action(MenuAction::PrevTab), P::button(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER), none, P::key(SDL_SCANCODE_PAGEUP),
+        P::key(SDL_SCANCODE_Q));
+    set(action(MenuAction::NextTab), P::button(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER), none,
+        P::key(SDL_SCANCODE_PAGEDOWN), P::key(SDL_SCANCODE_E));
     return b;
 }
 
@@ -229,18 +300,18 @@ void Input::update(u64 frame, bool use_devices) {
     PadState s;
     float px = 0, py = 0;
     if (use_devices) {
-        const bool* keys = SDL_GetKeyboardState(nullptr);
-        SDL_Gamepad* pad = first_gamepad();
+        const DeviceState d{SDL_GetKeyboardState(nullptr), SDL_GetMouseState(nullptr, nullptr), first_gamepad()};
         // Alt+Enter toggles fullscreen; don't let it also press a control bound to Enter.
         const bool alt = SDL_GetModState() & SDL_KMOD_ALT;
         std::array<float, kControlCount> v{};
         for (size_t c = 0; c < kControlCount; c++)
-            for (const PhysicalInput& in : bindings.map[c]) {
-                if (alt && in.kind == PhysicalInput::Kind::Key &&
-                    (in.code == SDL_SCANCODE_RETURN || in.code == SDL_SCANCODE_KP_ENTER))
-                    continue;
-                v[c] = std::max(v[c], input_value(in, keys, pad));
-            }
+            for (const auto& device : bindings.controls[c])
+                for (const PhysicalInput& in : device) {
+                    if (alt && in.kind == PhysicalInput::Kind::Key &&
+                        (in.code == SDL_SCANCODE_RETURN || in.code == SDL_SCANCODE_KP_ENTER))
+                        continue;
+                    v[c] = std::max(v[c], input_value(in, d));
+                }
         for (size_t c = 0; c < kControlCount; c++)
             if (BUTTON_BITS[c] && v[c] >= 0.5f)
                 s.buttons |= BUTTON_BITS[c];

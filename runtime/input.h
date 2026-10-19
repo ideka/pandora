@@ -1,5 +1,6 @@
-// Host input mapped to a Wii Remote + Nunchuk: SDL gamepads and keyboard through remappable
-// bindings, plus scripted presses for automated runs.
+// Host input mapped to a Wii Remote + Nunchuk: SDL gamepads, keyboard and mouse through remappable
+// bindings, plus scripted presses for automated runs. The settings menu's own actions are bound
+// the same way.
 #pragma once
 
 #include <array>
@@ -43,38 +44,51 @@ enum class Control : u8 {
 };
 constexpr size_t kControlCount = (size_t)Control::Count;
 
-struct ControlInfo {
+// The settings menu's actions.
+enum class MenuAction : u8 { Toggle, Accept, Cancel, Up, Down, Left, Right, PrevTab, NextTab, Count };
+constexpr size_t kMenuActionCount = (size_t)MenuAction::Count;
+
+struct BindingInfo {
     const char* id;     // settings file key
     const char* label;  // shown in the menu
+    bool required;      // the last mapping on each device cannot be removed
 };
-const ControlInfo& control_info(Control c);
+const BindingInfo& control_info(Control c);
+const BindingInfo& menu_action_info(MenuAction a);
 
-// One physical input: a keyboard key, a gamepad button, or one direction of a gamepad axis.
+// Bindings are kept per device class; each control has two mappings on each.
+enum class InputDevice : u8 { Gamepad, KeyboardMouse };
+constexpr size_t kDeviceCount = 2;
+constexpr size_t kMappingsPerDevice = 2;
+
+// One physical input: a key, a mouse button, a gamepad button, or one direction of a gamepad axis.
 struct PhysicalInput {
-    enum class Kind : u8 { None, Key, Button, Axis };
+    enum class Kind : u8 { None, Key, MouseButton, Button, Axis };
     Kind kind = Kind::None;
-    int code = 0;  // SDL_Scancode, SDL_GamepadButton or SDL_GamepadAxis
+    int code = 0;  // SDL_Scancode, SDL_BUTTON_*, SDL_GamepadButton or SDL_GamepadAxis
     int sign = 1;  // axis direction: +1 (right/down, or trigger pulled) or -1
 
     bool operator==(const PhysicalInput&) const = default;
+    explicit operator bool() const { return kind != Kind::None; }
     static PhysicalInput key(int scancode) { return {Kind::Key, scancode, 1}; }
+    static PhysicalInput mouse(int b) { return {Kind::MouseButton, b, 1}; }
     static PhysicalInput button(int b) { return {Kind::Button, b, 1}; }
     static PhysicalInput axis(int a, int sign) { return {Kind::Axis, a, sign}; }
 
-    std::string to_string() const;  // "key:Return", "button:a", "axis:lefty-", "" for none
+    InputDevice device() const { return kind == Kind::Button || kind == Kind::Axis ? InputDevice::Gamepad : InputDevice::KeyboardMouse; }
+    std::string to_string() const;  // "key:Return", "mouse:x1", "button:a", "axis:lefty-", "" for none
     static PhysicalInput parse(const std::string& s);
     std::string label() const;  // for display
 };
 
-// Each control has one controller binding and one keyboard binding.
-enum class BindingSlot : u8 { Controller, Keyboard };
+// [device][slot]
+using Mappings = std::array<std::array<PhysicalInput, kMappingsPerDevice>, kDeviceCount>;
 
 struct Bindings {
-    std::array<std::array<PhysicalInput, 2>, kControlCount> map{};
+    std::array<Mappings, kControlCount> controls{};
+    std::array<Mappings, kMenuActionCount> menu{};
 
     static Bindings defaults();
-    PhysicalInput& at(Control c, BindingSlot s) { return map[(size_t)c][(size_t)s]; }
-    const PhysicalInput& at(Control c, BindingSlot s) const { return map[(size_t)c][(size_t)s]; }
 };
 
 class Input {

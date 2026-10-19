@@ -12,22 +12,40 @@
     </div>
 
     <div class="page" data-if="tab == 'controls'">
+        <div id="devices">
+            <button id="dev-gamepad" class="device" data-class-selected="device == 'gamepad'" data-event-click="set_device('gamepad')">Gamepad</button>
+            <button id="dev-kbm" class="device" data-class-selected="device == 'kbm'" data-event-click="set_device('kbm')">Keyboard &amp; Mouse</button>
+        </div>
         <div class="table-header">
-            <span class="name">Wii Remote + Nunchuk</span>
-            <span class="column">Controller</span>
-            <span class="column">Keyboard</span>
+            <span class="name"></span>
+            <span class="column">Mapping 1</span>
+            <span class="column">Mapping 2</span>
         </div>
         <div id="bindings">
-            <div class="binding" data-for="row : controls">
+            <div class="section">Wii Remote + Nunchuk</div>
+            <div class="binding" data-for="row : wii_rows">
                 <span class="name">{{ row.label }}</span>
-                <button class="bind" data-class-capturing="capturing == row.index * 2"
-                        data-event-click="bind(row.index, 0)">{{ capturing == row.index * 2 ? 'Press a button...' : row.controller }}</button>
-                <button class="bind" data-class-capturing="capturing == row.index * 2 + 1"
-                        data-event-click="bind(row.index, 1)">{{ capturing == row.index * 2 + 1 ? 'Press a key...' : row.keyboard }}</button>
+                <button class="cell bind" data-class-capturing="capturing == row.index * 10"
+                        data-event-click="bind(0, row.index, 0)">{{ capturing == row.index * 10 ? prompt : row.first }}</button>
+                <button class="cell clear" data-class-disabled="!row.clear_first" data-event-click="clear(0, row.index, 0)">&#215;</button>
+                <button class="cell bind" data-class-capturing="capturing == row.index * 10 + 1"
+                        data-event-click="bind(0, row.index, 1)">{{ capturing == row.index * 10 + 1 ? prompt : row.second }}</button>
+                <button class="cell clear" data-class-disabled="!row.clear_second" data-event-click="clear(0, row.index, 1)">&#215;</button>
+            </div>
+            <div class="section">Menu</div>
+            <div class="binding" data-for="row : menu_rows">
+                <span class="name">{{ row.label }}</span>
+                <button class="cell bind" data-class-capturing="capturing == 1000 + row.index * 10"
+                        data-event-click="bind(1, row.index, 0)">{{ capturing == 1000 + row.index * 10 ? prompt : row.first }}</button>
+                <button class="cell clear" data-class-disabled="!row.clear_first" data-event-click="clear(1, row.index, 0)">&#215;</button>
+                <button class="cell bind" data-class-capturing="capturing == 1000 + row.index * 10 + 1"
+                        data-event-click="bind(1, row.index, 1)">{{ capturing == 1000 + row.index * 10 + 1 ? prompt : row.second }}</button>
+                <button class="cell clear" data-class-disabled="!row.clear_second" data-event-click="clear(1, row.index, 1)">&#215;</button>
             </div>
         </div>
         <div class="footer">
-            <button id="reset" class="action" data-event-click="reset_controls()">Reset to defaults</button>
+            <span class="note">Esc or left click cancels rebinding</span>
+            <button id="reset" class="action" data-event-click="reset_controls()">Reset {{ device == 'gamepad' ? 'gamepad' : 'keyboard/mouse' }} to defaults</button>
         </div>
     </div>
 
@@ -52,9 +70,9 @@
     </div>
 
     <div id="hints">
-        <span>Esc / Guide: close</span>
-        <span>LB / RB: switch tab</span>
-        <span>Esc while rebinding: cancel</span>
+        <span>F5: pause game</span>
+        <span>F11: fullscreen</span>
+        <span>Menu buttons: Controls &#8250; Menu</span>
         <button class="action" data-event-click="close()">Back to game</button>
     </div>
 </div>

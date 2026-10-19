@@ -44,14 +44,20 @@ aids. Open work is in [TODO.md](TODO.md).
   (data model, input layer, navigation) with the layout in `assets/ui/menu.rml` and the style in
   `assets/ui/menu.rcss`. Assets are copied next to the executable on every build. The font is Lato
   (SIL OFL, `assets/fonts/LICENSE-Lato.txt`), taken from RmlUi's samples.
-- The menu's input layer sits at aurora's RmlUi priority and captures every source while open, so
-  the paused game sees nothing. Gamepad buttons are translated to navigation keys. RmlUi's spatial
-  navigation does not cross scroll containers, so the bindings list is navigated by hand.
-- While the menu is open the guest is not run and `aurora_set_preserve_frame` (patches/aurora/0004)
-  keeps the last EFB on screen, blurred behind the panel; the pacer is re-anchored on resume.
-- `--menu-test <frame>:<png>` (with `--menu-keys`) opens the menu, presses keys through SDL's event
-  queue and captures our own window with `PrintWindow` (the UI is composited after the EFB, so the
-  EFB readback does not see it).
+- The menu's actions are bindings (`Bindings::menu`), handled from aurora input events: every event
+  becomes press/release edges of physical inputs (stick directions with hysteresis; the left mouse
+  button stays RmlUi's), which hold menu actions; directions repeat after 500 ms every 50 ms. The
+  input layer sees events even while the menu is closed (for the toggle) and captures every source
+  while open. Game input is not polled while the menu is open; the game keeps running.
+- RmlUi's spatial navigation does not cross scroll containers, so the bindings tables are navigated
+  by hand (rows of mapping, clear, mapping, clear).
+- Bindings are per device class (gamepad; keyboard and mouse), two mappings each. "Open/Close Menu"
+  and "Accept" keep at least one mapping per device.
+- F5 pauses the game: the guest is not run and `aurora_set_preserve_frame` (patches/aurora/0004)
+  keeps the last EFB on screen; the pacer is re-anchored on resume.
+- `--menu-test <frame>:<png>` (with `--menu-keys a,b,Key*N`) opens the menu, plays keys through
+  SDL's event queue (`*N` holds one for N host frames) and captures our own window with
+  `PrintWindow` (the UI is composited after the EFB, so the EFB readback does not see it).
 
 ## Input
 

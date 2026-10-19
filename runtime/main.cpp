@@ -34,7 +34,7 @@ static void usage() {
                  "  debugging: [--watch <symbol>]... [--watch-write <hexaddr>]... [--dump <hexaddr>[:len]]...\n"
                  "             [--trace] [--shot-copy <frame>:<copy>:<file.png>]... [--shot-draw <frame>:<draw>:<file.png>]...\n"
                  "             [--menu-test <frame>:<file.png>] (open the settings menu, capture the window, exit)\n"
-                 "             [--menu-keys <key>,<key>...] (keys pressed in the menu before the capture)\n"
+                 "             [--menu-keys <key>,<key>...] (keys pressed in the menu before the capture; Key*N holds it N frames)\n"
                  "             (PANDORA_DEBUG_FRAME=<n> with -vv logs every draw and EFB copy of frame n)\n");
 }
 
@@ -142,6 +142,8 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
     config.logCallback = &aurora_log;
     config.logLevel = g_log_level >= 2 ? LOG_DEBUG : LOG_INFO;
     config.vsync = true;
+    config.windowPosX = SDL_WINDOWPOS_CENTERED;  // aurora takes 0, 0 literally (title bar off screen)
+    config.windowPosY = SDL_WINDOWPOS_CENTERED;
     config.windowWidth = win_w;
     config.windowHeight = win_h;
     // Keep aurora's caches (compiled pipelines, Dawn cache, imgui.ini) with the build, not in the
@@ -180,8 +182,15 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
     const char* base = SDL_GetBasePath();
     if (!menu.init(std::string(base ? base : "") + "assets"))
         LOG_ERROR("ui", "settings menu unavailable");
-    bool paused = false;
+    bool paused = false, user_paused = false;
     int menu_test_wait = -1;  // host frames until the --menu-test capture
+    int menu_test_elapsed = 0;
+    struct ScriptedKey {
+        int frame;
+        SDL_Scancode scancode;
+        bool down;
+    };
+    std::vector<ScriptedKey> menu_test_schedule;
 
     // --profile: where host time goes, logged every 60 frames.
     using clock = std::chrono::steady_clock;
@@ -206,11 +215,10 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
                 if (!background)
                     settings.save(settings_path);
                 menu.refresh();
-            } else if (e->type == AURORA_SDL_EVENT && !background &&
-                       ((e->sdl.type == SDL_EVENT_KEY_DOWN && e->sdl.key.key == SDLK_ESCAPE && !e->sdl.key.repeat) ||
-                        (e->sdl.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN &&
-                         e->sdl.gbutton.button == SDL_GAMEPAD_BUTTON_GUIDE))) {
-                menu.toggle();  // Esc / Guide
+            } else if (e->type == AURORA_SDL_EVENT && e->sdl.type == SDL_EVENT_KEY_DOWN && e->sdl.key.key == SDLK_F5 &&
+                       !e->sdl.key.repeat) {
+                user_paused = !user_paused;  // F5 pauses the game (the menu does not)
+                menu.set_paused(user_paused);
             }
         }
         if (!running) {
@@ -220,28 +228,34 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
         AuroraBridge& bridge = *rt.bridge();
         if (menu_test_frame && bridge.frames() >= menu_test_frame && menu_test_wait < 0) {
             menu.open();
-            menu_test_wait = 30 + 8 * (int)menu_test_keys.size();
+            // "Key" taps a key; "Key*N" holds it for N host frames. Steps are at least 8 frames apart.
+            int t = 0;
+            for (const std::string& spec : menu_test_keys) {
+                const size_t star = spec.find('*');
+                const int hold = star == std::string::npos ? 1 : std::max(1, std::atoi(spec.c_str() + star + 1));
+                const SDL_Scancode sc = SDL_GetScancodeFromName(spec.substr(0, star).c_str());
+                menu_test_schedule.push_back({t, sc, true});
+                menu_test_schedule.push_back({t + hold, sc, false});
+                t += std::max(8, hold + 4);
+            }
+            menu_test_wait = t + 30;
         }
-        aurora_set_preserve_frame(menu.is_open());  // keep showing the paused game under the menu
+        aurora_set_preserve_frame(user_paused);  // keep showing the paused game
         if (!aurora_begin_frame())
             continue;
-        // --menu-test: press the scripted keys (one every 8 host frames, through SDL's event queue),
-        // then capture the window and exit.
+        // --menu-test: play the scripted keys through SDL's event queue, then capture the window and exit.
         if (menu_test_wait > 0) {
-            const int key_index = (int)menu_test_keys.size() - (menu_test_wait - 30) / 8;
-            if (menu_test_wait > 30 && (menu_test_wait - 30) % 8 == 0 && key_index >= 0 &&
-                key_index < (int)menu_test_keys.size()) {
-                const SDL_Scancode sc = SDL_GetScancodeFromName(menu_test_keys[key_index].c_str());
-                for (bool down : {true, false}) {
+            for (const auto& k : menu_test_schedule)
+                if (k.frame == menu_test_elapsed) {
                     SDL_Event ev{};
-                    ev.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+                    ev.type = k.down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
                     ev.key.windowID = SDL_GetWindowID(aurora_get_window());
-                    ev.key.scancode = sc;
-                    ev.key.key = SDL_GetKeyFromScancode(sc, SDL_KMOD_NONE, false);
-                    ev.key.down = down;
+                    ev.key.scancode = k.scancode;
+                    ev.key.key = SDL_GetKeyFromScancode(k.scancode, SDL_KMOD_NONE, false);
+                    ev.key.down = k.down;
                     SDL_PushEvent(&ev);
                 }
-            }
+            menu_test_elapsed++;
             if (--menu_test_wait == 0) {
                 if (capture_window(menu_test_path))
                     LOG_INFO("shot", "wrote %s (window)", menu_test_path.c_str());
@@ -253,10 +267,10 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
                 continue;
             }
         }
-        // The game is paused while the menu is open; aurora keeps presenting the last frame under it.
-        if (menu.is_open()) {
+        menu.update();
+        // While paused (F5) the guest does not run; aurora keeps presenting the last frame.
+        if (user_paused) {
             paused = true;
-            menu.update();
             aurora_end_frame();
             continue;
         }
@@ -265,7 +279,7 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
             pacer.reset(rt.cpu.timebase);  // don't try to catch up on the paused time
         }
         bridge.begin_frame();
-        rt.input().update(bridge.frames(), !background);
+        rt.input().update(bridge.frames(), !background && !menu.is_open());  // the menu takes input while open
         for (const auto& [frame, path] : rt.options().screenshots)
             if (bridge.frames() == frame)
                 bridge.request_screenshot(path);
