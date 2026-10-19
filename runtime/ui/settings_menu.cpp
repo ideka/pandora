@@ -154,6 +154,9 @@ void SettingsMenu::open() {
     if (!doc_ || open_)
         return;
     open_ = true;
+    // Nothing held before opening acts in the menu until it is pressed again.
+    down_.clear();
+    held_ = {};
     refresh_rows();
     doc_->Show();
     if (Rml::Element* first = doc_->GetElementById("tab-" + tab_))
@@ -299,13 +302,17 @@ std::vector<SettingsMenu::Edge> SettingsMenu::edges(const in::InputEvent& event)
         [&](const in::InputEvent::AxisChanged& a) {
             if (a.axis < 0 || a.axis >= SDL_GAMEPAD_AXIS_COUNT)
                 return;
-            const float before = axes_[a.axis];
-            axes_[a.axis] = a.value;
-            for (int sign : {-1, 1}) {
-                const bool was = before * sign >= AXIS_PRESS;
-                const bool now = a.value * sign >= (was ? AXIS_RELEASE : AXIS_PRESS);
-                if (now != was)
+            // Each direction keeps its own pressed state: pressed past AXIS_PRESS, released below
+            // AXIS_RELEASE. (Deriving it from the previous value lost releases when the stick came
+            // back slowly through the band between the two.)
+            for (int dir = 0; dir < 2; dir++) {
+                const int sign = dir ? 1 : -1;
+                bool& on = axis_on_[a.axis][dir];
+                const bool now = a.value * (float)sign >= (on ? AXIS_RELEASE : AXIS_PRESS);
+                if (now != on) {
+                    on = now;
                     out.push_back({PhysicalInput::axis(a.axis, sign), now});
+                }
             }
         },
         [&](const in::InputEvent::PointerChanged& p) {
@@ -389,7 +396,7 @@ void SettingsMenu::release_source(in::InputSource::Kind kind) {
         return false;
     });
     if (kind == in::InputSource::Kind::Controller)
-        axes_ = {};
+        axis_on_ = {};
     update_held(false);
 }
 

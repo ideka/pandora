@@ -96,5 +96,5 @@ private:
     std::vector<PhysicalInput> down_;            // physical inputs currently held
     std::array<int, kMenuActionCount> held_{};  // how many of them hold each action
     std::array<Clock::time_point, kMenuActionCount> next_repeat_{};
-    std::array<float, SDL_GAMEPAD_AXIS_COUNT> axes_{};  // last value of each gamepad axis
+    std::array<std::array<bool, 2>, SDL_GAMEPAD_AXIS_COUNT> axis_on_{};  // [axis][negative, positive] pressed
 };
