@@ -19,6 +19,7 @@ set(AURORA_ENABLE_CARD OFF CACHE BOOL "" FORCE)
 set(AURORA_ENABLE_THP OFF CACHE BOOL "" FORCE)
 set(AURORA_ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(AURORA_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+set(AURORA_ENABLE_RMLUI ON CACHE BOOL "" FORCE)  # settings menu (runtime/ui)
 # Local fixes to aurora live in patches/aurora; apply any that are not applied yet.
 file(GLOB AURORA_PATCHES "${CMAKE_SOURCE_DIR}/patches/aurora/*.patch")
 foreach(patch IN LISTS AURORA_PATCHES)
@@ -79,6 +80,7 @@ add_executable(pandora
     runtime/host_profiler.cpp
     runtime/input.cpp
     runtime/settings.cpp
+    runtime/ui/settings_menu.cpp
     runtime/ios_devices.cpp
     runtime/main.cpp
     runtime/nand.cpp
@@ -100,6 +102,10 @@ if(WIN32 AND EXISTS "${DAWN_PREBUILT_BIN}/dxil.dll")
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${DAWN_PREBUILT_BIN}/dxcompiler.dll"
                 "${DAWN_PREBUILT_BIN}/dxil.dll" $<TARGET_FILE_DIR:pandora>)
 endif()
+# UI assets (documents, styles, fonts) next to the executable, refreshed on every build.
+add_custom_target(pandora_assets
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/assets" "$<TARGET_FILE_DIR:pandora>/assets")
+add_dependencies(pandora pandora_assets)
 if(MSVC)
     target_compile_options(pandora PRIVATE /W4 /permissive- /MP /Z7)
     target_link_options(pandora PRIVATE /DEBUG /OPT:REF /OPT:ICF)

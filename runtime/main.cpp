@@ -1,8 +1,10 @@
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <vector>
 
 #include <SDL3/SDL.h>
 #include <aurora/aurora.h>
@@ -16,7 +18,9 @@
 #include "gpu/aurora_bridge.h"
 #include "log.h"
 #include "runtime.h"
+#include "png_write.h"
 #include "settings.h"
+#include "ui/settings_menu.h"
 
 int g_log_level = 1;
 
@@ -29,6 +33,8 @@ static void usage() {
                  "               [--press <button>@<frame>[+<frames>]]...\n"
                  "  debugging: [--watch <symbol>]... [--watch-write <hexaddr>]... [--dump <hexaddr>[:len]]...\n"
                  "             [--trace] [--shot-copy <frame>:<copy>:<file.png>]... [--shot-draw <frame>:<draw>:<file.png>]...\n"
+                 "             [--menu-test <frame>:<file.png>] (open the settings menu, capture the window, exit)\n"
+                 "             [--menu-keys <key>,<key>...] (keys pressed in the menu before the capture)\n"
                  "             (PANDORA_DEBUG_FRAME=<n> with -vv logs every draw and EFB copy of frame n)\n");
 }
 
@@ -52,6 +58,41 @@ static void send_window_to_background() {
         SDL_GetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
     if (hwnd)
         SetWindowPos(hwnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+#endif
+}
+
+// Debugging: capture our own window's contents (including the UI overlay, which the in-process
+// EFB readback does not see). PrintWindow copies only this window, never other screen content.
+static bool capture_window(const std::string& path) {
+#ifdef _WIN32
+    SDL_Window* window = aurora_get_window();
+    auto hwnd = window ? static_cast<HWND>(SDL_GetPointerProperty(SDL_GetWindowProperties(window),
+                                                                  SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr))
+                       : nullptr;
+    RECT rc{};
+    if (!hwnd || !GetClientRect(hwnd, &rc) || rc.right <= 0 || rc.bottom <= 0)
+        return false;
+    const int w = rc.right, h = rc.bottom;
+    HDC wdc = GetDC(hwnd), mdc = CreateCompatibleDC(wdc);
+    HBITMAP bmp = CreateCompatibleBitmap(wdc, w, h);
+    HGDIOBJ old = SelectObject(mdc, bmp);
+    const bool ok = PrintWindow(hwnd, mdc, PW_CLIENTONLY | PW_RENDERFULLCONTENT);
+    BITMAPINFO bi{};
+    bi.bmiHeader = {sizeof(BITMAPINFOHEADER), w, -h, 1, 32, BI_RGB};
+    std::vector<u8> px((size_t)w * h * 4);
+    GetDIBits(mdc, bmp, 0, (UINT)h, px.data(), &bi, DIB_RGB_COLORS);
+    SelectObject(mdc, old);
+    DeleteObject(bmp);
+    DeleteDC(mdc);
+    ReleaseDC(hwnd, wdc);
+    for (size_t i = 0; i < px.size(); i += 4) {
+        std::swap(px[i], px[i + 2]);  // BGRA -> RGBA
+        px[i + 3] = 255;
+    }
+    return ok && write_png_rgba(path, px.data(), (u32)w, (u32)h);
+#else
+    (void)path;
+    return false;
 #endif
 }
 
@@ -90,7 +131,8 @@ private:
 };
 
 static int run_windowed(Runtime& rt, int argc, char** argv, bool background, bool mute, bool unthrottled, u32 win_w,
-                        u32 win_h) {
+                        u32 win_h, u64 menu_test_frame, const std::string& menu_test_path,
+                        const std::vector<std::string>& menu_test_keys) {
     const std::string settings_path = "build/aurora/settings.ini";
     Settings settings;
     settings.load(settings_path);
@@ -120,6 +162,27 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
     if (!mute)
         rt.enable_audio_output();
     rt.start();
+
+    rt.input().set_bindings(&settings.bindings);
+    auto apply_settings = [&] {
+        SDL_Window* window = aurora_get_window();
+        const bool fullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
+        if (!background && fullscreen != settings.fullscreen)
+            SDL_SetWindowFullscreen(window, settings.fullscreen);
+        rt.set_audio_volume(settings.muted ? 0.0f : (float)settings.volume / 100.0f);
+    };
+    apply_settings();
+    SettingsMenu menu(settings, [&] {
+        apply_settings();
+        if (!background)
+            settings.save(settings_path);
+    });
+    const char* base = SDL_GetBasePath();
+    if (!menu.init(std::string(base ? base : "") + "assets"))
+        LOG_ERROR("ui", "settings menu unavailable");
+    bool paused = false;
+    int menu_test_wait = -1;  // host frames until the --menu-test capture
+
     // --profile: where host time goes, logged every 60 frames.
     using clock = std::chrono::steady_clock;
     auto secs = [](clock::time_point a, clock::time_point b) { return std::chrono::duration<double>(b - a).count(); };
@@ -140,16 +203,67 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
             else if (e->type == AURORA_SDL_EVENT && is_fullscreen_toggle(e->sdl) && !background) {
                 settings.fullscreen = !settings.fullscreen;
                 SDL_SetWindowFullscreen(aurora_get_window(), settings.fullscreen);
-                settings.save(settings_path);
+                if (!background)
+                    settings.save(settings_path);
+                menu.refresh();
+            } else if (e->type == AURORA_SDL_EVENT && !background &&
+                       ((e->sdl.type == SDL_EVENT_KEY_DOWN && e->sdl.key.key == SDLK_ESCAPE && !e->sdl.key.repeat) ||
+                        (e->sdl.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN &&
+                         e->sdl.gbutton.button == SDL_GAMEPAD_BUTTON_GUIDE))) {
+                menu.toggle();  // Esc / Guide
             }
         }
         if (!running) {
             rt.halt("quit");
             break;
         }
+        AuroraBridge& bridge = *rt.bridge();
+        if (menu_test_frame && bridge.frames() >= menu_test_frame && menu_test_wait < 0) {
+            menu.open();
+            menu_test_wait = 30 + 8 * (int)menu_test_keys.size();
+        }
+        aurora_set_preserve_frame(menu.is_open());  // keep showing the paused game under the menu
         if (!aurora_begin_frame())
             continue;
-        AuroraBridge& bridge = *rt.bridge();
+        // --menu-test: press the scripted keys (one every 8 host frames, through SDL's event queue),
+        // then capture the window and exit.
+        if (menu_test_wait > 0) {
+            const int key_index = (int)menu_test_keys.size() - (menu_test_wait - 30) / 8;
+            if (menu_test_wait > 30 && (menu_test_wait - 30) % 8 == 0 && key_index >= 0 &&
+                key_index < (int)menu_test_keys.size()) {
+                const SDL_Scancode sc = SDL_GetScancodeFromName(menu_test_keys[key_index].c_str());
+                for (bool down : {true, false}) {
+                    SDL_Event ev{};
+                    ev.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+                    ev.key.windowID = SDL_GetWindowID(aurora_get_window());
+                    ev.key.scancode = sc;
+                    ev.key.key = SDL_GetKeyFromScancode(sc, SDL_KMOD_NONE, false);
+                    ev.key.down = down;
+                    SDL_PushEvent(&ev);
+                }
+            }
+            if (--menu_test_wait == 0) {
+                if (capture_window(menu_test_path))
+                    LOG_INFO("shot", "wrote %s (window)", menu_test_path.c_str());
+                else
+                    LOG_ERROR("shot", "window capture failed");
+                rt.halt("quit");
+                running = false;
+                aurora_end_frame();
+                continue;
+            }
+        }
+        // The game is paused while the menu is open; aurora keeps presenting the last frame under it.
+        if (menu.is_open()) {
+            paused = true;
+            menu.update();
+            aurora_end_frame();
+            continue;
+        }
+        if (paused) {
+            paused = false;
+            pacer.reset(rt.cpu.timebase);  // don't try to catch up on the paused time
+        }
         bridge.begin_frame();
         rt.input().update(bridge.frames(), !background);
         for (const auto& [frame, path] : rt.options().screenshots)
@@ -216,6 +330,9 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
 int main(int argc, char** argv) {
     Options opts;
     bool headless = false, background = false, mute = false, unthrottled = false;
+    u64 menu_test_frame = 0;
+    std::string menu_test_path;
+    std::vector<std::string> menu_test_keys;
     u32 win_w = 1280, win_h = 720;
     std::vector<std::string> presses;
     for (int i = 1; i < argc; i++) {
@@ -231,7 +348,24 @@ int main(int argc, char** argv) {
             mute = true;
         else if (!std::strcmp(a, "--unthrottled"))
             unthrottled = true;
-        else if (!std::strcmp(a, "--window") && i + 1 < argc) {
+        else if (!std::strcmp(a, "--menu-test") && i + 1 < argc) {
+            char* end;
+            menu_test_frame = std::strtoull(next(), &end, 10);
+            if (*end != ':' || !menu_test_frame) {
+                usage();
+                return 2;
+            }
+            menu_test_path = end + 1;
+        } else if (!std::strcmp(a, "--menu-keys") && i + 1 < argc) {
+            // Comma-separated SDL scancode names, e.g. "Right,Down,Return".
+            std::string list = next();
+            for (size_t pos = 0; pos <= list.size();) {
+                const size_t comma = std::min(list.find(',', pos), list.size());
+                if (comma > pos)
+                    menu_test_keys.push_back(list.substr(pos, comma - pos));
+                pos = comma + 1;
+            }
+        } else if (!std::strcmp(a, "--window") && i + 1 < argc) {
             if (std::sscanf(next(), "%ux%u", &win_w, &win_h) != 2 || !win_w || !win_h) {
                 usage();
                 return 2;
@@ -312,5 +446,6 @@ int main(int argc, char** argv) {
     // SDL_AUDIO_DRIVER=disk, which writes the output to a file instead of a device.
     const bool forced_driver = std::getenv("SDL_AUDIO_DRIVER") != nullptr;
     return headless ? rt.run() : run_windowed(rt, argc, argv, background, mute || (background && !forced_driver), unthrottled,
-                                                win_w, win_h);
+                                                win_w, win_h, menu_test_frame, menu_test_path,
+                                                menu_test_keys);
 }

@@ -38,6 +38,21 @@ aids. Open work is in [TODO.md](TODO.md).
 - The game uses the EFB's top-left quadrant as scratch space for small passes and restores it by
   redrawing a full-frame copy, so any offset in viewport mapping shows up there first.
 
+## Settings menu
+
+- RmlUi through aurora's integration (`AURORA_ENABLE_RMLUI`): `runtime/ui/settings_menu.cpp`
+  (data model, input layer, navigation) with the layout in `assets/ui/menu.rml` and the style in
+  `assets/ui/menu.rcss`. Assets are copied next to the executable on every build. The font is Lato
+  (SIL OFL, `assets/fonts/LICENSE-Lato.txt`), taken from RmlUi's samples.
+- The menu's input layer sits at aurora's RmlUi priority and captures every source while open, so
+  the paused game sees nothing. Gamepad buttons are translated to navigation keys. RmlUi's spatial
+  navigation does not cross scroll containers, so the bindings list is navigated by hand.
+- While the menu is open the guest is not run and `aurora_set_preserve_frame` (patches/aurora/0004)
+  keeps the last EFB on screen, blurred behind the panel; the pacer is re-anchored on resume.
+- `--menu-test <frame>:<png>` (with `--menu-keys`) opens the menu, presses keys through SDL's event
+  queue and captures our own window with `PrintWindow` (the UI is composited after the EFB, so the
+  EFB readback does not see it).
+
 ## Input
 
 - WPAD/KPAD are emulated at the API level (`KPADRead`, `WPADProbe`, `WPADGetInfoAsync`): one Wii

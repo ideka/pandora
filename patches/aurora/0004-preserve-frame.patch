@@ -1,0 +1,64 @@
+diff --git a/include/aurora/aurora.h b/include/aurora/aurora.h
+index 92b734f..741f538 100644
+--- a/include/aurora/aurora.h
++++ b/include/aurora/aurora.h
+@@ -138,6 +138,9 @@ void aurora_set_background_input(bool value);
+ void aurora_set_resampler(AuroraSampler sampler);
+ /** Sets the clock timescale. Default 1.0f. 0.0f is paused. Range 0.0f-16.0f. */
+ void aurora_set_timescale(float scale);
++/** Keep the previous frame's EFB contents at the start of each frame instead of clearing them (e.g. to show
++ * the last frame under a pause menu while the game issues no draws). */
++void aurora_set_preserve_frame(bool preserve);
+ 
+ SDL_Window* aurora_get_window();
+ AuroraWindowSize aurora_get_window_size();
+diff --git a/lib/aurora.cpp b/lib/aurora.cpp
+index 3df2b4a..b7b3c6d 100644
+--- a/lib/aurora.cpp
++++ b/lib/aurora.cpp
+@@ -478,4 +478,5 @@ void aurora_set_resampler(AuroraSampler sampler) {
+ #endif
+ }
+ void aurora_set_timescale(float scale) { aurora::time::set_scale(scale); }
++void aurora_set_preserve_frame(bool preserve) { aurora::gfx::g_preserveFrame = preserve; }
+ float aurora_get_timescale() { return aurora::time::scale(); }
+diff --git a/lib/gfx/recording.cpp b/lib/gfx/recording.cpp
+index 190a1f5..8e0eeba 100644
+--- a/lib/gfx/recording.cpp
++++ b/lib/gfx/recording.cpp
+@@ -591,6 +591,13 @@ void begin_recording(FramePacket& packet, size_t frameSlot) {
+   set_efb_targets(pass);
+   pass.colorAttachments[SceneColorAttachmentIndex].clearValue = gx::g_gxState.clearColor;
+   pass.clearDepthValue = gx::clear_depth_value();
++  if (g_preserveFrame) {
++    // Keep the previous frame's EFB (e.g. under a pause menu while the game issues no commands).
++    for (uint32_t i = 0; i < pass.colorAttachmentCount; ++i) {
++      pass.colorAttachments[i].clear = false;
++    }
++    pass.clearDepth = false;
++  }
+   g_recorder.currentRenderPass = 0;
+   g_recorder.cachedViewport = gx::map_logical_viewport(gx::g_gxState.logicalViewport);
+   g_recorder.cachedScissor = gx::map_logical_scissor(gx::g_gxState.logicalScissor);
+@@ -1308,3 +1315,7 @@ void pop_debug_group() {
+   aurora::gfx::g_recorder.debugGroupStack.pop_back();
+ #endif
+ }
++
++namespace aurora::gfx {
++bool g_preserveFrame = false;
++} // namespace aurora::gfx
+diff --git a/lib/gfx/recording.hpp b/lib/gfx/recording.hpp
+index b36d729..916900a 100644
+--- a/lib/gfx/recording.hpp
++++ b/lib/gfx/recording.hpp
+@@ -40,6 +40,9 @@ struct Job;
+ }
+ 
+ namespace aurora::gfx {
++// When set, a frame starts from the previous frame's EFB instead of clearing it.
++extern bool g_preserveFrame;
++
+ struct ColorPassDescriptor {
+   const char* label = nullptr;
+   wgpu::TextureView colorView;

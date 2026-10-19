@@ -1,7 +1,8 @@
-// Host input mapped to a Wii Remote + Nunchuk: SDL gamepads and keyboard, plus scripted presses
-// for automated runs.
+// Host input mapped to a Wii Remote + Nunchuk: SDL gamepads and keyboard through remappable
+// bindings, plus scripted presses for automated runs.
 #pragma once
 
+#include <array>
 #include <string>
 #include <vector>
 
@@ -31,11 +32,58 @@ struct PadState {
     bool pointer_valid = true;
 };
 
+// The emulated controls that can be bound.
+enum class Control : u8 {
+    A, B, One, Two, Plus, Minus, Home,
+    DpadUp, DpadDown, DpadLeft, DpadRight,
+    Z, C,
+    StickUp, StickDown, StickLeft, StickRight,
+    PointerUp, PointerDown, PointerLeft, PointerRight,
+    Count,
+};
+constexpr size_t kControlCount = (size_t)Control::Count;
+
+struct ControlInfo {
+    const char* id;     // settings file key
+    const char* label;  // shown in the menu
+};
+const ControlInfo& control_info(Control c);
+
+// One physical input: a keyboard key, a gamepad button, or one direction of a gamepad axis.
+struct PhysicalInput {
+    enum class Kind : u8 { None, Key, Button, Axis };
+    Kind kind = Kind::None;
+    int code = 0;  // SDL_Scancode, SDL_GamepadButton or SDL_GamepadAxis
+    int sign = 1;  // axis direction: +1 (right/down, or trigger pulled) or -1
+
+    bool operator==(const PhysicalInput&) const = default;
+    static PhysicalInput key(int scancode) { return {Kind::Key, scancode, 1}; }
+    static PhysicalInput button(int b) { return {Kind::Button, b, 1}; }
+    static PhysicalInput axis(int a, int sign) { return {Kind::Axis, a, sign}; }
+
+    std::string to_string() const;  // "key:Return", "button:a", "axis:lefty-", "" for none
+    static PhysicalInput parse(const std::string& s);
+    std::string label() const;  // for display
+};
+
+// Each control has one controller binding and one keyboard binding.
+enum class BindingSlot : u8 { Controller, Keyboard };
+
+struct Bindings {
+    std::array<std::array<PhysicalInput, 2>, kControlCount> map{};
+
+    static Bindings defaults();
+    PhysicalInput& at(Control c, BindingSlot s) { return map[(size_t)c][(size_t)s]; }
+    const PhysicalInput& at(Control c, BindingSlot s) const { return map[(size_t)c][(size_t)s]; }
+};
+
 class Input {
 public:
-    // "A@150+10": hold A from guest frame 150 for 10 frames (default 6). Buttons can be joined
-    // with '+' before the '@' only via separate --press options.
+    // "A@150+10": hold A from guest frame 150 for 10 frames (default 6).
     bool add_script(const std::string& spec);
+
+    // Bindings in effect (owned by the caller, e.g. the settings); defaults when unset.
+    void set_bindings(const Bindings* bindings) { bindings_ = bindings; }
 
     // Poll the host devices (when use_devices) and apply scripted presses for this guest frame.
     void update(u64 frame, bool use_devices);
@@ -47,6 +95,7 @@ private:
         u64 start, frames;
     };
     std::vector<Scripted> script_;
+    const Bindings* bindings_ = nullptr;
     PadState state_;
     float pointer_x_ = 0, pointer_y_ = 0;
 };

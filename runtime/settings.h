@@ -3,8 +3,13 @@
 
 #include <string>
 
+#include "input.h"
+
 struct Settings {
     bool fullscreen = false;
+    int volume = 100;  // percent
+    bool muted = false;
+    Bindings bindings = Bindings::defaults();
 
     // Missing or unreadable files leave the defaults; unknown keys are ignored.
     void load(const std::string& path);

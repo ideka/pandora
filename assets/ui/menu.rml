@@ -1,0 +1,62 @@
+<rml>
+<head>
+    <title>Settings</title>
+    <link type="text/rcss" href="menu.rcss"/>
+</head>
+<body data-model="settings">
+<div id="panel">
+    <div id="tabs">
+        <button id="tab-controls" class="tab" data-class-selected="tab == 'controls'" data-event-click="set_tab('controls')">Controls</button>
+        <button id="tab-sound" class="tab" data-class-selected="tab == 'sound'" data-event-click="set_tab('sound')">Sound</button>
+        <button id="tab-general" class="tab" data-class-selected="tab == 'general'" data-event-click="set_tab('general')">General</button>
+    </div>
+
+    <div class="page" data-if="tab == 'controls'">
+        <div class="table-header">
+            <span class="name">Wii Remote + Nunchuk</span>
+            <span class="column">Controller</span>
+            <span class="column">Keyboard</span>
+        </div>
+        <div id="bindings">
+            <div class="binding" data-for="row : controls">
+                <span class="name">{{ row.label }}</span>
+                <button class="bind" data-class-capturing="capturing == row.index * 2"
+                        data-event-click="bind(row.index, 0)">{{ capturing == row.index * 2 ? 'Press a button...' : row.controller }}</button>
+                <button class="bind" data-class-capturing="capturing == row.index * 2 + 1"
+                        data-event-click="bind(row.index, 1)">{{ capturing == row.index * 2 + 1 ? 'Press a key...' : row.keyboard }}</button>
+            </div>
+        </div>
+        <div class="footer">
+            <button id="reset" class="action" data-event-click="reset_controls()">Reset to defaults</button>
+        </div>
+    </div>
+
+    <div class="page" data-if="tab == 'sound'">
+        <div class="setting">
+            <span class="name">Volume</span>
+            <input type="range" min="0" max="100" step="5" data-value="volume"/>
+            <span class="value">{{ volume }}%</span>
+        </div>
+        <div class="setting">
+            <span class="name">Mute</span>
+            <input type="checkbox" data-checked="muted"/>
+        </div>
+    </div>
+
+    <div class="page" data-if="tab == 'general'">
+        <div class="setting">
+            <span class="name">Fullscreen</span>
+            <input type="checkbox" data-checked="fullscreen"/>
+            <span class="note">F11 or Alt+Enter</span>
+        </div>
+    </div>
+
+    <div id="hints">
+        <span>Esc / Guide: close</span>
+        <span>LB / RB: switch tab</span>
+        <span>Esc while rebinding: cancel</span>
+        <button class="action" data-event-click="close()">Back to game</button>
+    </div>
+</div>
+</body>
+</rml>

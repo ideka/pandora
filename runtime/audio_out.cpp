@@ -2,6 +2,9 @@
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
+#include <cmath>
+
 #include "log.h"
 
 namespace {
@@ -49,9 +52,10 @@ void AudioOut::close() {
 void AudioOut::push(const u8* b) {
     if (!stream_)
         return;
+    auto scale = [this](int v) { return (s16)std::clamp((int)std::lround(v * gain_), -32768, 32767); };
     for (int i = 0; i < 8; i++, b += 4) {
-        pending_.push_back((s16)(b[2] << 8 | b[3]));  // left
-        pending_.push_back((s16)(b[0] << 8 | b[1]));  // right
+        pending_.push_back(scale((s16)(b[2] << 8 | b[3])));  // left
+        pending_.push_back(scale((s16)(b[0] << 8 | b[1])));  // right
     }
     if (pending_.size() < BATCH_FRAMES * 2)
         return;

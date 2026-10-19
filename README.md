@@ -52,12 +52,17 @@ No game code or data is included. You need your own copy of the game.
    renderer; `--headless` runs without a window. `--press A@300+10` holds a button from a given
    frame (scripted input). See `--help`-style usage for debugging options.
 
-   Controls (Wii Remote + Nunchuk): gamepad south/east/west/north = A/B/1/2, start/back = +/-,
-   guide = Home, LB = C, LT = Z, left stick = Nunchuk, right stick = pointer. Keyboard:
-   Enter/Space = A, Backspace = B, arrows = D-pad, WASD = stick, IJKL = pointer, Z/C, 1/2, =/-, H.
+   **Esc** (keyboard) or **Guide** (gamepad) opens the settings menu, which pauses the game:
+   controls can be rebound there (one controller and one keyboard input per Wii button), and volume
+   and fullscreen set. Navigate with the mouse, arrow keys or D-pad/stick; South/Enter selects,
+   East/Start closes, LB/RB switch tabs. Settings are saved to `build/aurora/settings.ini`.
 
-   F11 or Alt+Enter toggles fullscreen (remembered in `build/aurora/settings.ini`). Audio plays
-   on the default output device; `--mute` disables it (`--background` runs are always muted).
+   Default controls (Wii Remote + Nunchuk): gamepad south/east/west/north = A/B/1/2,
+   start/back = +/-, LB = C, LT = Z, left stick = Nunchuk, right stick = pointer. Keyboard:
+   Enter = A, Backspace = B, arrows = D-pad, WASD = stick, IJKL = pointer, Z/C, 1/2, =/-, H = Home.
+
+   F11 or Alt+Enter toggles fullscreen. Audio plays on the default output device; `--mute`
+   disables it. `--background` runs are always muted and never write the settings file.
 
 `orig/` and `build/` are git-ignored. Saves and aurora's caches live in `build/nand` and
 `build/aurora`.

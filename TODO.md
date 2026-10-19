@@ -34,10 +34,18 @@ Open work only. How things currently work, and why, is in [NOTES.md](NOTES.md).
 
 - `WPADGetInfoAsync` never calls its callback (needs a way to call back into guest code).
 - Motion controls: the accelerometer always reads "at rest"; map shakes/swings.
-- Pointer: add a mouse-absolute mode (currently rate-controlled by the right stick/IJKL).
+- Pointer: add a mouse-absolute mode (currently rate-controlled by its bound inputs).
 - Hook `KPADReadEx`, the connect/extension callbacks and rumble (`WPADControlMotor`).
 - Confirm the provisional names `WPADInit`, `WPADRegisterAllocator` and `KPADInit` in
   `config/SX3P01/names.txt` (identified from call structure).
+
+## Settings menu
+
+- Graphics tab (internal resolution/scale, aspect ratio, vsync, MSAA) once aurora exposes them.
+- Per-device controller profiles (by GUID) and more than one gamepad; currently the first one.
+- Show controller glyphs for the connected pad type instead of position names.
+- Autorepeat when holding a direction in the menu; mouse-absolute pointer mode option.
+- Keep the settings file in the user's profile rather than `build/aurora` for distributed builds.
 
 ## System
 

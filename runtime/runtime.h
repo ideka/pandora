@@ -73,6 +73,7 @@ public:
     // Play the guest's audio on the host's default device.
     bool enable_audio_output();
     void disable_audio_output() { audio_out_.close(); }
+    void set_audio_volume(float volume) { audio_out_.set_volume(volume); }
     int audio_queued_ms() const { return audio_out_.queued_ms(); }
     AuroraBridge* bridge() { return bridge_.get(); }
     Input& input() { return input_; }
