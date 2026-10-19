@@ -1,0 +1,7 @@
+# Functions replaced by host code (runtime/hle.cpp). tools/patch_hooks.py marks their entry
+# points before recompiling; the runtime checks this list against its registered hooks.
+OSReport
+OSPanic
+__OSInitAudioSystem
+__OSStopAudioSystem
+OSFatal
