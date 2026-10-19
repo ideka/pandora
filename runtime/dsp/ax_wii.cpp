@@ -8,8 +8,10 @@
 #include "ax_wii.h"
 
 #include <array>
+#include <cstdio>
 
 #include "compat.h"
+#include "../log.h"
 #include "dsp.h"
 #include "dsp.h"
 #include "ax_structs.h"
@@ -457,6 +459,36 @@ void AXWiiUCode::ProcessPBList(u32 pb_addr)
 
     ReadPB(memory, pb_addr, pb);
 
+    // Debugging: describe the running voices once per ~1 s of audio frames.
+    if (dsp_trace() && pb.running && m_trace_frame % 333 == 0)
+      LOG_INFO("dsptrace",
+               "voice pb %08X fmt %u loop %u stream %u cur %08X loop %08X end %08X ratio %08X src %u",
+               pb_addr, pb.audio_addr.sample_format, pb.audio_addr.looping, pb.is_stream,
+               HILO_TO_32(pb.audio_addr.cur_addr), HILO_TO_32(pb.audio_addr.loop_addr),
+               HILO_TO_32(pb.audio_addr.end_addr), HILO_TO_32(pb.src.ratio), pb.src_type);
+    if (dsp_trace() && pb.running && m_trace_frame % 333 == 0)
+      LOG_INFO("dsptrace",
+               "      gain %04X pred_scale %04X yn1 %d yn2 %d coefs %d %d %d %d | mixctl %08X vol L %04X/%d R %04X/%d",
+               pb.adpcm.gain, pb.adpcm.pred_scale, (s16)pb.adpcm.yn1, (s16)pb.adpcm.yn2, pb.adpcm.coefs[0],
+               pb.adpcm.coefs[1], pb.adpcm.coefs[2], pb.adpcm.coefs[3], HILO_TO_32(pb.mixer_control),
+               pb.mixer.main_left.volume, (s16)pb.mixer.main_left.volume_delta, pb.mixer.main_right.volume,
+               (s16)pb.mixer.main_right.volume_delta);
+
+    // Debugging: record what the first left-only PCM16 voice reads from memory each frame
+    // (96 samples from its current address, ignoring loops), before resampling and mixing.
+    if (dsp_trace() && pb.running && pb.audio_addr.sample_format == 0x0A && pb.mixer.main_left.volume &&
+        !pb.mixer.main_right.volume && (!m_trace_voice || m_trace_voice == pb_addr))
+    {
+      m_trace_voice = pb_addr;
+      static std::FILE* raw = std::fopen("voice_left_raw.bin", "wb");
+      const u32 cur = HILO_TO_32(pb.audio_addr.cur_addr);
+      u8 buf[192];
+      for (u32 i = 0; i < 192; i++)
+        buf[i] = m_dsphle->GetSystem().GetDSP().ReadARAM(cur * 2 + i);
+      if (raw)
+        std::fwrite(buf, 1, sizeof buf, raw);
+    }
+
     if (m_old_axwii &&
         (pb.updates.num_updates[0] | pb.updates.num_updates[1] | pb.updates.num_updates[2]))
     {
@@ -485,6 +517,7 @@ void AXWiiUCode::ProcessPBList(u32 pb_addr)
     WritePB(memory, pb_addr, pb);
     pb_addr = HILO_TO_32(pb.next_pb);
   }
+  m_trace_frame++;
 }
 
 void AXWiiUCode::MixAUXSamples(int aux_id, u32 write_addr, u32 read_addr, u16 volume)
@@ -587,6 +620,8 @@ void AXWiiUCode::UploadAUXMixLRSC(int aux_id, u32* addresses, u16 volume)
 
 void AXWiiUCode::OutputSamples(u32 lr_addr, u32 surround_addr, u16 volume, bool upload_auxc)
 {
+  if (dsp_trace())
+    LOG_INFO("dsptrace", "AX output -> %08X", lr_addr);
   std::array<u16, 96> volume_ramp;
   GenerateVolumeRamp(volume_ramp.data(), m_last_main_volume, volume, volume_ramp.size());
   m_last_main_volume = volume;

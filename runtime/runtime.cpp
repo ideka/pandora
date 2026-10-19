@@ -468,7 +468,7 @@ bool Runtime::step() {
     // The OS idle loop (no runnable thread) can only be left by an interrupt: skip ahead to
     // the next timed event instead of spinning.
     if (cpu.pc == idle_pc_ && (cpu.msr & MSR_EE) && mem::read32(&cpu, cpu.gpr[13] - 0x5420) == 0) {
-        u64 ticks = hw_->ticks_to_next_field();
+        u64 ticks = hw_->ticks_to_next_event();
         s32 dec = (s32)spr_[SPR_DEC];
         if (dec >= 0 && (u64)dec + 1 < ticks)
             ticks = (u64)dec + 1;

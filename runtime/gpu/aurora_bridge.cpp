@@ -510,11 +510,19 @@ bool AuroraBridge::capture_copy(const void* src, u32 w, u32 h, u32 format, std::
 // so rendering continues unaffected.
 void AuroraBridge::capture_efb(u32 x, u32 y, u32 w, u32 h, std::string path) {
     auto key = std::make_unique<u8>(0);
+    // PANDORA_SHOT_SCALE=n reads the copy back at n times the guest resolution, closer to the
+    // pixels aurora actually renders (debugging).
+    static const u32 scale = [] {
+        const char* e = std::getenv("PANDORA_SHOT_SCALE");
+        return e ? std::max(1u, (u32)std::strtoul(e, nullptr, 10)) : 1u;
+    }();
     aurora_cmd(LOAD_COPY_SRC);
     put32(x);
     put32(y);
     put32(w);
     put32(h);
+    w *= scale;
+    h *= scale;
     aurora_cmd(LOAD_COPY_DST);
     put32(w);
     put32(h);

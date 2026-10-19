@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "hardware.h"
 
 #include <cstring>
@@ -168,7 +169,10 @@ u32 Hardware::ai_sample_count() const {
     return ai_count_base_ + (u32)((tb_ - ai_count_tb_) * rate / 60750000);
 }
 
-u64 Hardware::ticks_to_next_field() const { return next_field_tb_ > tb_ ? next_field_tb_ - tb_ : 1; }
+u64 Hardware::ticks_to_next_event() const {
+    const u64 field = next_field_tb_ > tb_ ? next_field_tb_ - tb_ : 1;
+    return std::max<u64>(1, std::min(field, dsp_->ticks_to_next_event()));
+}
 
 void Hardware::write_reg(u32 phys, u32 value, u8 size) {
     switch (phys) {

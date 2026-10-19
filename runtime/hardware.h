@@ -46,7 +46,7 @@ public:
 
     // Advance emulated time by timebase ticks (drives video retrace).
     void tick(u64 tb_ticks);
-    u64 ticks_to_next_field() const;
+    u64 ticks_to_next_event() const;
 
     // IPC to the emulated IOS (see ios.cpp).
     void ipc_reply(u32 request);

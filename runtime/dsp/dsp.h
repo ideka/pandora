@@ -102,6 +102,9 @@ public:
     // Advance emulated time (timebase ticks): DSP updates, audio DMA, delayed interrupts.
     void tick(u64 tb_ticks);
     bool interrupt_pending() const;
+    // Ticks until the next thing tick() would do that the CPU may need to react to (an audio DMA
+    // block or a delayed interrupt); idle skipping must not jump past it.
+    u64 ticks_to_next_event() const;
 
     // Used by the HLE microcode.
     u8 ReadARAM(u32 address) const;
@@ -142,3 +145,6 @@ private:
 };
 
 }  // namespace DSP
+
+// Debugging: PANDORA_DSP_TRACE logs audio DMA reloads and AX output writes.
+bool dsp_trace();

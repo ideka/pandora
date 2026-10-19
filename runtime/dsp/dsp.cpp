@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <cstdlib>
 // Register behaviour and HLE glue follow Dolphin's DSP.cpp, DSPHLE.cpp and MailHandler.cpp
 // (tag 2606, GPL-2.0-or-later).
 #include "dsp.h"
@@ -14,9 +16,15 @@ constexpr u16 DSP_CONTROL_MASK = 0x0C07;
 constexpr u16 CR_RESET = 1u << 0, CR_HALT = 1u << 2, CR_INIT = 1u << 11;
 
 constexpr u64 TB_PER_SECOND = 60750000;
+constexpr u64 TB_PER_BLOCK = TB_PER_SECOND * 8 / 32000;  // one audio DMA block
 constexpr u64 CYCLES_PER_TB_TICK = 12;
 
 }  // namespace
+
+bool dsp_trace() {
+    static const bool on = std::getenv("PANDORA_DSP_TRACE") != nullptr;
+    return on;
+}
 
 namespace DSP::HLE {
 
@@ -226,6 +234,15 @@ void DSPManager::do_aram_dma() {
     generate_interrupt(INT_ARAM);
 }
 
+u64 DSPManager::ticks_to_next_event() const {
+    u64 next = ~0ull;
+    for (const auto& d : delayed_)
+        next = std::min<u64>(next, d.first > 0 ? (u64)d.first : 1);
+    if (audio_dma_control_ & 0x8000)
+        next = std::min<u64>(next, TB_PER_BLOCK - audio_dma_carry_);
+    return next;
+}
+
 void DSPManager::tick(u64 ticks) {
     // Delayed interrupts (mail and audio DMA start).
     for (auto it = delayed_.begin(); it != delayed_.end();) {
@@ -246,7 +263,6 @@ void DSPManager::tick(u64 ticks) {
     }
 
     // Audio DMA: one 32-byte block (8 stereo samples) per 8 sample periods at 32 kHz.
-    constexpr u64 TB_PER_BLOCK = TB_PER_SECOND * 8 / 32000;
     if (!(audio_dma_control_ & 0x8000)) {
         audio_dma_carry_ = 0;
         return;
@@ -262,6 +278,9 @@ void DSPManager::tick(u64 ticks) {
             audio_dma_cur_ += 32;
         }
         if (audio_dma_left_ == 0) {
+            if (dsp_trace())
+                LOG_INFO("dsptrace", "tb %llu AI DMA reload: play %08X (%u blocks)", (unsigned long long)rt_.cpu.timebase,
+                         audio_dma_addr_, audio_dma_control_ & 0x7FFF);
             audio_dma_cur_ = audio_dma_addr_;
             audio_dma_left_ = audio_dma_control_ & 0x7FFF;
             generate_interrupt(INT_AID);

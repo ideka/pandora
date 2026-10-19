@@ -70,6 +70,8 @@ protected:
   void OutputWMSamples(u32* addresses);  // 4 addresses
 
 private:
+  u32 m_trace_frame = 0;  // debugging (PANDORA_DSP_TRACE)
+  u32 m_trace_voice = 0;
   void ReadPB(Memory::MemoryManager& memory, u32 addr, AXPBWii& pb);
   void WritePB(Memory::MemoryManager& memory, u32 addr, const AXPBWii& pb);
 

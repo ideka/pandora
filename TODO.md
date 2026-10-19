@@ -11,13 +11,18 @@
 - Audio plays through SDL (runtime/audio_out.cpp) with an 80 ms prebuffer; emulation is paced to
   the wall clock and nudged to keep 90-170 ms queued, so it follows the device clock. The DAC rate
   is fixed at 32 kHz (AICR AIDFR is ignored).
-- Left/right are nearly uncorrelated on the title music: check the SYSCONF sound mode (Dolby Pro
-  Logic II encoding would explain it) and compare with Dolphin.
+- Debugging: PANDORA_DSP_TRACE=1 logs audio DMA reloads, AX output buffers and the running voices
+  once a second, and writes the first left-only PCM16 voice's raw reads to voice_left_raw.bin.
 - `__OSInitAudioSystem` / `__OSStopAudioSystem` are skipped by hooks; the DSP init microcode
   handshake is not emulated.
 
 ## Graphics
 
+- Full-screen bars reportedly leave ~1px gaps along the screen edges. Not reproduced in 640x480
+  readbacks; a 2x readback (PANDORA_SHOT_SCALE=2 with --screenshot) of the Load menu shows a 1px dark
+  vertical seam ~2 guest px from the right edge. Candidates: a crack between adjacent quads
+  (subpixel snapping differs from the hardware's 1/12-pixel grid), or aurora's scaling of the
+  640x480 EFB to the window. Needs a screenshot of where it shows.
 - Texgens sourcing binormal/tangent (incl. emboss bump) on vertices without NBT read zero
   (patches/aurora/0001); hardware uses the last loaded value. Check which models hit this.
 - The GX bridge (`runtime/gpu/aurora_bridge.cpp`) is new; only the boot screens have been checked.
