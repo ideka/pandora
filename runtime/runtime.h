@@ -17,6 +17,7 @@ class Ios;
 
 struct Options {
     std::filesystem::path disc;  // extracted game partition (contains sys/ and files/)
+    std::filesystem::path nand = "build/nand";  // emulated NAND (saves, SYSCONF)
     std::string map = "build/SX3P01.map";
     std::string hooks = "config/SX3P01/hooks.txt";  // functions marked for hooking at recompile time
     u64 max_blocks = 0;          // stop after this many blocks (0 = unlimited)
@@ -67,6 +68,7 @@ private:
     bool run_copied_code(u32 pc);
     void advance(s64 cycles);
     void deliver_interrupts();
+    void find_idle_loop();
     void dump() const;
 
     Options opts_;
@@ -83,6 +85,8 @@ private:
     std::array<u32, 32> recent_{};  // ring of recent block entry pcs
     u32 recent_pos_ = 0;
     u64 blocks_ = 0;
+    u32 idle_pc_ = 0;
+    u64 idle_skips_ = 0;
     bool halted_ = false;
     std::string halt_reason_;
 };

@@ -308,11 +308,35 @@ void Runtime::deliver_interrupts() {
     }
 }
 
+// The SDK idle loop in SelectThread: lwz r0, RunQueueBits(r13); cmpwi r0, 0; beq -8.
+void Runtime::find_idle_loop() {
+    if (auto a = syms_.find("SelectThread")) {
+        u32 pc = *a + 0x150;
+        if (mem::read32(&cpu, pc) == 0x800DABE0 && mem::read32(&cpu, pc + 8) == 0x4182FFF8)
+            idle_pc_ = pc;
+    }
+    if (!idle_pc_)
+        LOG_ERROR("rt", "OS idle loop not found; idle time will be spun");
+}
+
 int Runtime::run() {
+    find_idle_loop();
     while (!halted_) {
         if (opts_.max_blocks && blocks_ >= opts_.max_blocks) {
             halt("block limit reached");
             break;
+        }
+        // The OS idle loop (no runnable thread) can only be left by an interrupt: skip ahead to
+        // the next timed event instead of spinning.
+        if (cpu.pc == idle_pc_ && (cpu.msr & MSR_EE) && mem::read32(&cpu, cpu.gpr[13] - 0x5420) == 0) {
+            u64 ticks = hw_->ticks_to_next_field();
+            s32 dec = (s32)spr_[SPR_DEC];
+            if (dec >= 0 && (u64)dec + 1 < ticks)
+                ticks = (u64)dec + 1;
+            advance((s64)ticks * CYCLES_PER_TB_TICK);
+            deliver_interrupts();
+            idle_skips_++;
+            continue;
         }
         recent_[recent_pos_++ % recent_.size()] = cpu.pc;
         if (opts_.trace_calls)
@@ -341,7 +365,8 @@ int Runtime::run() {
         advance(-cpu.downcount);
         deliver_interrupts();
     }
-    LOG_INFO("rt", "halted after %" PRIu64 " blocks: %s", blocks_, halt_reason_.c_str());
+    LOG_INFO("rt", "halted after %" PRIu64 " blocks (%" PRIu64 " idle skips, %.2f s emulated): %s", blocks_,
+             idle_skips_, (double)cpu.timebase / 60750000.0, halt_reason_.c_str());
     dump();
     return 1;
 }
@@ -352,6 +377,17 @@ void Runtime::dump() const {
     for (int i = 0; i < 32; i += 4)
         std::fprintf(stderr, "r%-2d %08X  r%-2d %08X  r%-2d %08X  r%-2d %08X\n", i, cpu.gpr[i], i + 1,
                      cpu.gpr[i + 1], i + 2, cpu.gpr[i + 2], i + 3, cpu.gpr[i + 3]);
+    // Back-chain: each frame stores the caller's r1 at 0(r1) and the saved LR at 4(caller r1).
+    std::fprintf(stderr, "backtrace:\n");
+    CPUState* c = const_cast<CPUState*>(&cpu);
+    u32 sp = cpu.gpr[1];
+    for (int i = 0; i < 24 && sp && mem::ptr(c, sp, 8); i++) {
+        u32 caller = mem::read32(c, sp);
+        if (!caller || caller <= sp)
+            break;
+        std::fprintf(stderr, "  %s\n", describe(mem::read32(c, caller + 4)).c_str());
+        sp = caller;
+    }
     std::fprintf(stderr, "recent blocks (oldest first):\n");
     for (size_t i = 0; i < recent_.size(); i++) {
         u32 pc = recent_[(recent_pos_ + i) % recent_.size()];

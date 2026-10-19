@@ -7,7 +7,9 @@
 #include <unordered_map>
 #include <vector>
 
+#include "disc.h"
 #include "guest.h"
+#include "nand.h"
 
 class Runtime;
 class Ios;
@@ -58,14 +60,22 @@ public:
     explicit Ios(Runtime& rt);
     ~Ios();
 
+    bool init(const std::filesystem::path& disc_root, const std::filesystem::path& nand_root) {
+        return disc_.open(disc_root) && nand_.open(nand_root);
+    }
+
     void submit(u32 request);
     void reply(const Request& r, s32 result);
     Runtime& rt() { return rt_; }
+    Disc& disc() { return disc_; }
+    Nand& nand() { return nand_; }
 
 private:
-    std::unique_ptr<Device> make_device(const std::string& path);
+    std::unique_ptr<Device> make_device(const std::string& path);  // ios_devices.cpp
 
     Runtime& rt_;
+    Disc disc_;
+    Nand nand_;
     std::unordered_map<s32, std::unique_ptr<Device>> fds_;
     s32 next_fd_ = 3;
 };

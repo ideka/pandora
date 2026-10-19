@@ -8,7 +8,7 @@ int g_log_level = 1;
 
 static void usage() {
     std::fprintf(stderr,
-                 "usage: pandora --disc <extracted partition> [--map <file>] [--max-blocks N] [-v|-vv|-vvv] "
+                 "usage: pandora --disc <extracted partition> [--nand <dir>] [--map <file>] [--max-blocks N] [-v|-vv|-vvv] "
                  "[--trace]\n");
 }
 
@@ -19,6 +19,8 @@ int main(int argc, char** argv) {
         auto next = [&]() -> const char* { return i + 1 < argc ? argv[++i] : nullptr; };
         if (!std::strcmp(a, "--disc") && i + 1 < argc)
             opts.disc = next();
+        else if (!std::strcmp(a, "--nand") && i + 1 < argc)
+            opts.nand = next();
         else if (!std::strcmp(a, "--map") && i + 1 < argc)
             opts.map = next();
         else if (!std::strcmp(a, "--max-blocks") && i + 1 < argc)

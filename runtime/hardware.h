@@ -36,6 +36,7 @@ public:
 
     // Advance emulated time by timebase ticks (drives video retrace).
     void tick(u64 tb_ticks);
+    u64 ticks_to_next_field() const;
 
     // IPC to the emulated IOS (see ios.cpp).
     void ipc_reply(u32 request);
@@ -45,6 +46,10 @@ public:
 private:
     u32 read_reg(u32 addr, u8 size);
     void write_reg(u32 addr, u32 value, u8 size);
+    u32 load(u32 phys, u8 size) const;
+    void store(u32 phys, u32 value, u8 size);
+    void update_vi_irq();
+    u32 ai_sample_count() const;
     void write_ipc_ctrl(u32 value);
     void update_ipc_irq();
     void deliver_next_reply();
@@ -69,6 +74,11 @@ private:
     u64 tb_ = 0;
     u64 next_field_tb_ = 0;
     u32 vi_field_ = 0;
+
+    // AI (audio interface).
+    u32 ai_cr_ = 0;
+    u32 ai_count_base_ = 0;
+    u64 ai_count_tb_ = 0;
 
     u64 wgpipe_bytes_ = 0;
 };

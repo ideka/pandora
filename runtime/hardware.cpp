@@ -77,16 +77,48 @@ u32 Hardware::read_reg(u32 phys, u8 size) {
     case 0x0D000030: return ipc_irq_flags_;
     case 0x0D000034: return ipc_irq_mask_;
     case 0x0D000064: return 0xFFFFFFFF;  // AHBPROT: no access restrictions
+    case 0x0D006C00: return ai_cr_;
+    case 0x0D006C08: return ai_sample_count();
     }
     if (phys >= 0x0D006800 && phys < 0x0D006838)
         return exi_.read(phys - 0x0D006800);
-    auto it = regs_.find(phys);
-    u32 v = it == regs_.end() ? 0 : it->second;
+    u32 v = load(phys, size);
     if (seen_.insert(phys).second)
         LOG_DEBUG("hw", "%s read%u  %08X -> %08X  (%s)", block_name(phys), size * 8, phys, v,
                   rt_.describe_pc().c_str());
     return v;
 }
+
+// Plain register storage, word-backed so 8/16/32-bit accesses to the same register agree.
+u32 Hardware::load(u32 phys, u8 size) const {
+    auto it = regs_.find(phys & ~3u);
+    u32 word = it == regs_.end() ? 0 : it->second;
+    if (size == 4)
+        return word;
+    u32 shift = (4 - size - (phys & 3)) * 8;
+    return (word >> shift) & ((1u << (size * 8)) - 1);
+}
+
+void Hardware::store(u32 phys, u32 value, u8 size) {
+    u32& word = regs_[phys & ~3u];
+    if (size == 4) {
+        word = value;
+        return;
+    }
+    u32 shift = (4 - size - (phys & 3)) * 8, mask = ((1u << (size * 8)) - 1) << shift;
+    word = (word & ~mask) | ((value << shift) & mask);
+}
+
+// AI streaming sample counter: advances at the AIS rate (AISFR: 1 = 48 kHz, 0 = 32 kHz) while
+// PSTAT is set.
+u32 Hardware::ai_sample_count() const {
+    if (!(ai_cr_ & 1))
+        return ai_count_base_;
+    u64 rate = (ai_cr_ & 2) ? 48000 : 32000;
+    return ai_count_base_ + (u32)((tb_ - ai_count_tb_) * rate / 60750000);
+}
+
+u64 Hardware::ticks_to_next_field() const { return next_field_tb_ > tb_ ? next_field_tb_ - tb_ : 1; }
 
 void Hardware::write_reg(u32 phys, u32 value, u8 size) {
     switch (phys) {
@@ -111,25 +143,40 @@ void Hardware::write_reg(u32 phys, u32 value, u8 size) {
         ipc_irq_mask_ = value;
         update_ipc_irq();
         return;
+    case 0x0D006C00: {  // AICR: PSTAT(0) AISFR(1) AIINTMSK(2) AIINT(3) AIINTVLD(4) SCRESET(5) AIDFR(6)
+        u32 count = ai_sample_count();
+        u32 next = (ai_cr_ & 0x08) | (value & 0x57);
+        if (value & 0x08)
+            next &= ~0x08u;  // writing AIINT acknowledges it
+        ai_cr_ = next;
+        ai_count_base_ = (value & 0x20) ? 0 : count;  // SCRESET zeroes the counter
+        ai_count_tb_ = tb_;
+        return;
+    }
+    case 0x0D006C08:
+        ai_count_base_ = value;
+        ai_count_tb_ = tb_;
+        return;
     }
     if (phys >= 0x0D006800 && phys < 0x0D006838) {
         exi_.write(phys - 0x0D006800, value);
         set_pi(PI_INT_EXI, exi_.interrupt_pending());
         return;
     }
-    // VI display interrupt registers: writing bit 31 low acknowledges the interrupt.
-    if (phys >= 0x0C002030 && phys <= 0x0C00203C && size == 4) {
-        regs_[phys] = value;
-        bool any = false;
-        for (u32 r = 0x0C002030; r <= 0x0C00203C; r += 4)
-            any |= (regs_[r] & 0x90000000) == 0x90000000;
-        set_pi(PI_INT_VI, any);
-        return;
-    }
     if (seen_.insert(phys).second)
         LOG_DEBUG("hw", "%s write%u %08X <- %08X  (%s)", block_name(phys), size * 8, phys, value,
                   rt_.describe_pc().c_str());
-    regs_[phys] = value;
+    store(phys, value, size);
+    // VI display interrupt registers (DI0-DI3): writing bit 31 low acknowledges the interrupt.
+    if (phys >= 0x0C002030 && phys < 0x0C002040)
+        update_vi_irq();
+}
+
+void Hardware::update_vi_irq() {
+    bool any = false;
+    for (u32 r = 0x0C002030; r < 0x0C002040; r += 4)
+        any |= (load(r, 4) & 0x90000000) == 0x90000000;
+    set_pi(PI_INT_VI, any);
 }
 
 void Hardware::set_pi(u32 cause, bool asserted) {
@@ -146,14 +193,12 @@ void Hardware::tick(u64 tb_ticks) {
     next_field_tb_ = tb_ + TB_PER_FIELD;
     vi_field_++;
     // Raise every enabled display interrupt once per field.
-    bool any = false;
-    for (u32 r = 0x0C002030; r <= 0x0C00203C; r += 4) {
-        u32& v = regs_[r];
+    for (u32 r = 0x0C002030; r < 0x0C002040; r += 4) {
+        u32 v = load(r, 4);
         if (v & 0x10000000)
-            v |= 0x80000000;
-        any |= (v & 0x90000000) == 0x90000000;
+            store(r, v | 0x80000000, 4);
     }
-    set_pi(PI_INT_VI, any);
+    update_vi_irq();
 }
 
 // PPCCTRL bits: X1 execute (0), Y2 ack (1), Y1 reply (2), X2 relaunch (3), IY1 (4), IY2 (5).

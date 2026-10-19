@@ -45,10 +45,6 @@ s32 Device::ioctlv(const Request&, u32 cmd, const std::vector<IoVec>& in, const 
 Ios::Ios(Runtime& rt) : rt_(rt) {}
 Ios::~Ios() = default;
 
-std::unique_ptr<Device> Ios::make_device(const std::string& /*path*/) {
-    return nullptr;
-}
-
 void Ios::submit(u32 addr) {
     CPUState* c = &rt_.cpu;
     Request r{};

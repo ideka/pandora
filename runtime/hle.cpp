@@ -68,6 +68,10 @@ void Runtime::install_hle() {
     for (const char* name : {"__OSInitAudioSystem", "__OSStopAudioSystem"})
         hook(name, [](Runtime& rt) { rt.ret(0); });
 
+    // No Bluetooth stack: controller input will be provided at the WPAD/KPAD level instead.
+    // TODO: host WPAD/KPAD implementation.
+    hook("WPADInit", [](Runtime& rt) { rt.ret(0); });
+
     // OSReport writes to the (absent) debug UART: print it instead.
     hook("OSReport", [](Runtime& rt) {
         LOG_INFO("guest", "%s", guest_format(rt, rt.cpu.gpr[3], 4).c_str());

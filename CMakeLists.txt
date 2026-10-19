@@ -30,14 +30,18 @@ endif()
 
 add_executable(pandora
     runtime/boot.cpp
+    runtime/disc.cpp
     runtime/exi.cpp
     runtime/hardware.cpp
     runtime/hle.cpp
     runtime/ios.cpp
+    runtime/ios_devices.cpp
     runtime/main.cpp
+    runtime/nand.cpp
     runtime/runtime.cpp
     runtime/symbols.cpp)
 target_link_libraries(pandora PRIVATE guest)
 if(MSVC)
     target_compile_options(pandora PRIVATE /W4 /permissive- /MP)
+    target_compile_definitions(pandora PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif()

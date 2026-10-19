@@ -5,6 +5,7 @@
 #include <fstream>
 #include <vector>
 
+#include "ios.h"
 #include "log.h"
 #include "memory.h"
 #include "runtime.h"
@@ -39,7 +40,7 @@ bool Runtime::boot() {
         LOG_ERROR("boot", "cannot load symbol map %s", opts_.map.c_str());
         return false;
     }
-    if (!cpu_init(&cpu) || !cpu_alloc_mem2(&cpu, MEM2_SIZE))
+    if (!cpu_init(&cpu) || !cpu_alloc_mem2(&cpu, MEM2_SIZE) || !ios_->init(opts_.disc, opts_.nand))
         return false;
     cpu.external_user_data = this;
     cpu.host_call = host_call;
@@ -118,6 +119,7 @@ bool Runtime::boot() {
     mem::write16(c, 0x800030E6, 0x8201);
     mem::write32(c, 0x80003184, 0x80000000);  // game ID address
     mem::write32(c, 0x80003188, IOS56_VERSION);  // IOS the title was launched with (OSInit checks it)
+    mem::write8(c, 0x8000319C, 0x80);         // single-layer disc
     mem::write32(c, 0x80003194, 0);           // data partition type
     mem::write32(c, 0x80003198, GAME_PARTITION_OFFSET >> 2);
 
