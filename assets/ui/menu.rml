@@ -47,7 +47,7 @@
             </div>
         </div>
         <div class="footer">
-            <span class="note">Esc cancels rebinding</span>
+            <span class="note">Esc or Guide cancels rebinding</span>
             <button id="reset" class="action" data-event-click="reset_controls()">Reset {{ device == 'gamepad' ? 'gamepad' : 'keyboard/mouse' }} to defaults</button>
         </div>
     </div>

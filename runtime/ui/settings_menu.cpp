@@ -354,9 +354,15 @@ std::vector<SettingsMenu::Edge> SettingsMenu::edges(const in::InputEvent& event)
 }
 
 // While rebinding, the next press of the shown device's kind becomes the mapping (including the
-// left mouse button). Escape cancels (it cannot be bound here).
+// left mouse button). Escape or the gamepad's Guide button cancels (they cannot be bound here; the
+// reset button restores the defaults that use them).
 bool SettingsMenu::capture(const in::InputEvent& event, const std::vector<Edge>& es) {
     if (const auto* k = event.payload.get_if<in::InputEvent::KeyChanged>(); k && k->pressed && k->scancode == SDL_SCANCODE_ESCAPE) {
+        cancel_capture();
+        return true;
+    }
+    if (const auto* b = event.payload.get_if<in::InputEvent::ButtonChanged>();
+        b && b->pressed && b->button == SDL_GAMEPAD_BUTTON_GUIDE) {
         cancel_capture();
         return true;
     }
