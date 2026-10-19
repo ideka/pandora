@@ -6,3 +6,6 @@ __OSInitAudioSystem
 __OSStopAudioSystem
 OSFatal
 WPADInit  # stubbed until input is HLE'd at the WPAD/KPAD level
+KPADRead
+WPADProbe
+WPADGetInfoAsync

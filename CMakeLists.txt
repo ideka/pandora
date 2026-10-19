@@ -58,6 +58,7 @@ add_executable(pandora
     runtime/hardware.cpp
     runtime/hle.cpp
     runtime/ios.cpp
+    runtime/input.cpp
     runtime/ios_devices.cpp
     runtime/main.cpp
     runtime/nand.cpp

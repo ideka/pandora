@@ -33,7 +33,12 @@
 
 ## Input
 
-- `WPADInit` is stubbed (no Bluetooth). Implement WPAD/KPAD at the API level on top of SDL.
+- WPAD/KPAD are emulated at the API level (`KPADRead`, `WPADProbe`, `WPADGetInfoAsync`): one
+  Wii Remote + Nunchuk on channel 0. Still missing:
+  - `WPADGetInfoAsync` never calls its callback (needs a guest call-back mechanism).
+  - Motion controls: the accelerometer always reads "at rest"; shakes/swings need a mapping.
+  - Pointer is rate-controlled by the right stick/IJKL; consider mouse-absolute mode.
+  - `KPADReadEx`, connect/extension callbacks and rumble (`WPADControlMotor`) are not hooked.
 - `WPADInit`, `WPADRegisterAllocator` and `KPADInit` in `config/SX3P01/names.txt` are provisional
   (identified from call structure); confirm them.
 

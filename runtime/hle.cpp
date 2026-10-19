@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstring>
 
+#include "input.h"
 #include "log.h"
 #include "memory.h"
 #include "runtime.h"
@@ -68,9 +69,80 @@ void Runtime::install_hle() {
     for (const char* name : {"__OSInitAudioSystem", "__OSStopAudioSystem"})
         hook(name, [](Runtime& rt) { rt.ret(0); });
 
-    // No Bluetooth stack: controller input will be provided at the WPAD/KPAD level instead.
-    // TODO: host WPAD/KPAD implementation.
+    // No Bluetooth stack: input is provided at the WPAD/KPAD level from the host's devices.
+    // Channel 0 is a Wii Remote with a Nunchuk; the other channels are empty.
     hook("WPADInit", [](Runtime& rt) { rt.ret(0); });
+
+    // s32 WPADProbe(s32 chan, u32* type): 0 = connected, -1 = no controller.
+    hook("WPADProbe", [](Runtime& rt) {
+        CPUState* c = &rt.cpu;
+        if (c->gpr[3] != 0) {
+            rt.ret((u32)-1);
+            return;
+        }
+        if (c->gpr[4])
+            mem::write32(c, c->gpr[4], 1);  // WPAD_DEV_FREESTYLE (Nunchuk attached)
+        rt.ret(0);
+    });
+
+    // s32 WPADGetInfoAsync(s32 chan, WPADInfo* info, callback): battery/extension info.
+    // TODO: invoke the callback (needs calling back into guest code).
+    hook("WPADGetInfoAsync", [](Runtime& rt) {
+        CPUState* c = &rt.cpu;
+        if (c->gpr[3] != 0) {
+            rt.ret((u32)-1);
+            return;
+        }
+        const u32 info = c->gpr[4];
+        for (u32 i = 0; i < 0x18; i += 4)
+            mem::write32(c, info + i, 0);
+        mem::write32(c, info + 0x00, 1);  // dpd
+        mem::write32(c, info + 0x08, 1);  // extension attached
+        mem::write8(c, info + 0x14, 4);   // battery: full
+        mem::write8(c, info + 0x15, 1);   // player LED 1
+        rt.ret(0);
+    });
+
+    // s32 KPADRead(s32 chan, KPADStatus* samples, u32 length): one sample per call.
+    // KPADStatus (0xF0 bytes, RVL SDK 4.x): hold/trig/release, acc, pointer, horizon, distance,
+    // device type/error/DPD-valid/format at 0x5C, Nunchuk status at 0x60.
+    hook("KPADRead", [](Runtime& rt) {
+        CPUState* c = &rt.cpu;
+        static u32 previous = 0;
+        const u32 chan = c->gpr[3], buf = c->gpr[4], len = c->gpr[5];
+        if (chan != 0 || len == 0) {
+            rt.ret(0);
+            return;
+        }
+        auto f32 = [&](u32 off, float v) {
+            u32 bits;
+            std::memcpy(&bits, &v, 4);
+            mem::write32(c, buf + off, bits);
+        };
+        const PadState& p = rt.input().state();
+        for (u32 i = 0; i < 0xF0; i += 4)
+            mem::write32(c, buf + i, 0);
+        mem::write32(c, buf + 0x00, p.buttons);
+        mem::write32(c, buf + 0x04, p.buttons & ~previous);
+        mem::write32(c, buf + 0x08, previous & ~p.buttons);
+        previous = p.buttons;
+        f32(0x10, -1.0f);  // acc: at rest, gravity along -Y
+        f32(0x18, 1.0f);   // acc_value
+        f32(0x20, p.pointer_x);
+        f32(0x24, p.pointer_y);
+        f32(0x34, 1.0f);   // horizon: level
+        f32(0x48, 2.0f);   // dist: 2 m from the sensor bar
+        f32(0x54, 1.0f);   // acc_vertical
+        mem::write8(c, buf + 0x5C, 1);                         // WPAD_DEV_FREESTYLE
+        mem::write8(c, buf + 0x5D, 0);                         // WPAD_ERR_NONE
+        mem::write8(c, buf + 0x5E, p.pointer_valid ? 2 : 0);   // pointer valid
+        mem::write8(c, buf + 0x5F, 5);                         // WPAD_FMT_FS_BTN_ACC_DPD
+        f32(0x60, p.stick_x);
+        f32(0x64, p.stick_y);
+        f32(0x6C, -1.0f);  // Nunchuk acc
+        f32(0x74, 1.0f);
+        rt.ret(1);
+    });
 
     // OSReport writes to the (absent) debug UART: print it instead.
     hook("OSReport", [](Runtime& rt) {

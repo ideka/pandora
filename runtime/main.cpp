@@ -22,6 +22,7 @@ static void usage() {
                  "usage: pandora --disc <extracted partition> [--headless | --background] [--nand <dir>] [--map <file>]\n"
                  "               [--max-blocks N] [--audio-dump <wav>] [--profile] [-v|-vv|-vvv]\n"
                  "               [--screenshot <frame>:<file.png>]... [--exit-after <frames>]\n"
+                 "               [--press <button>@<frame>[+<frames>]]...\n"
                  "  debugging: [--watch <symbol>]... [--watch-write <hexaddr>]... [--dump <hexaddr>[:len]]...\n"
                  "             [--trace]\n");
 }
@@ -84,6 +85,7 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background) {
         if (!aurora_begin_frame())
             continue;
         AuroraBridge& bridge = *rt.bridge();
+        rt.input().update(bridge.frames(), !background);
         for (const auto& [frame, path] : rt.options().screenshots)
             if (bridge.frames() == frame)
                 bridge.request_screenshot(path);
@@ -113,6 +115,7 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background) {
 int main(int argc, char** argv) {
     Options opts;
     bool headless = false, background = false;
+    std::vector<std::string> presses;
     for (int i = 1; i < argc; i++) {
         const char* a = argv[i];
         auto next = [&]() -> const char* { return i + 1 < argc ? argv[++i] : nullptr; };
@@ -122,6 +125,8 @@ int main(int argc, char** argv) {
             headless = true;
         else if (!std::strcmp(a, "--background"))
             background = true;
+        else if (!std::strcmp(a, "--press") && i + 1 < argc)
+            presses.push_back(next());
         else if (!std::strcmp(a, "--nand") && i + 1 < argc)
             opts.nand = next();
         else if (!std::strcmp(a, "--map") && i + 1 < argc)
@@ -183,6 +188,11 @@ int main(int argc, char** argv) {
     }
 
     Runtime rt(opts);
+    for (const auto& spec : presses)
+        if (!rt.input().add_script(spec)) {
+            std::fprintf(stderr, "bad --press %s (use e.g. A@150+10)\n", spec.c_str());
+            return 2;
+        }
     if (!rt.boot())
         return 1;
     return headless ? rt.run() : run_windowed(rt, argc, argv, background);

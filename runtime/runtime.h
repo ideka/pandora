@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "audio_dump.h"
+#include "input.h"
 #include "guest.h"
 #include "symbols.h"
 
@@ -67,6 +68,7 @@ public:
     // Send GPU commands to aurora for rendering.
     void enable_rendering();
     AuroraBridge* bridge() { return bridge_.get(); }
+    Input& input() { return input_; }
     std::string backtrace(int max_frames) const;
 
     // Replace the guest function at addr (or named) with host code. The hook must leave
@@ -112,6 +114,7 @@ private:
     std::unique_ptr<Hardware> hw_;
     std::unique_ptr<Ios> ios_;
     AudioDump audio_dump_;
+    Input input_;
     std::unique_ptr<AuroraBridge> bridge_;
     std::atomic<bool> profiling_{false};
     std::thread sampler_;

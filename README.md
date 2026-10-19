@@ -41,7 +41,12 @@ No game code or data is included. You need your own copy of the game.
 
    `--background` keeps the window from taking focus (for automated runs);
    `--screenshot <frame>:<file.png>` and `--exit-after <frames>` capture frames from inside the
-   renderer; `--headless` runs without a window. See `--help`-style usage for debugging options.
+   renderer; `--headless` runs without a window. `--press A@300+10` holds a button from a given
+   frame (scripted input). See `--help`-style usage for debugging options.
+
+   Controls (Wii Remote + Nunchuk): gamepad south/east/west/north = A/B/1/2, start/back = +/-,
+   guide = Home, LB = C, LT = Z, left stick = Nunchuk, right stick = pointer. Keyboard:
+   Enter/Space = A, Backspace = B, arrows = D-pad, WASD = stick, IJKL = pointer, Z/C, 1/2, =/-, H.
 
 `orig/` and `build/` are git-ignored. Saves and aurora's caches live in `build/nand` and
 `build/aurora`.
