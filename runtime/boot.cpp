@@ -110,7 +110,7 @@ bool Runtime::boot() {
     mem::write32(c, 0x80000024, 0x00000001);
     mem::write32(c, 0x80000028, MEM1_SIZE);
     mem::write32(c, 0x8000002C, 0x00000023);  // board model: RVL retail 3
-    mem::write32(c, 0x800000CC, 0);           // VI: NTSC
+    mem::write32(c, 0x800000CC, 1);           // VI mode set by the IPL: PAL (SX3P01)
     mem::write32(c, 0x800000F0, MEM1_SIZE);
     mem::write32(c, 0x800000F8, 0x0E7BE2C0);  // bus clock 243 MHz
     mem::write32(c, 0x800000FC, 0x2B73A840);  // CPU clock 729 MHz

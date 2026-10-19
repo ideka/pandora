@@ -1,5 +1,5 @@
 #!/bin/sh
-# Regenerate the recompiled C sources in build/recomp from orig/SX3EXJ/main.dol.
+# Regenerate the recompiled C sources in build/recomp from orig/SX3P01/main.dol.
 # Builds DolRecomp from extern/DolRecomp on first use.
 set -e
 cd "$(dirname "$0")/.."
@@ -10,7 +10,8 @@ if [ ! -x "$DOLRECOMP" ]; then
     cmake --build build/dolrecomp --config Release --target dolrecomp
 fi
 
-python -I tools/export_map.py config/SX3EXJ/symbols.txt build/SX3EXJ.map
-python -I tools/patch_hooks.py orig/SX3EXJ/main.dol config/SX3EXJ/symbols.txt config/SX3EXJ/hooks.txt     build/SX3EXJ/main_hooked.dol
+mkdir -p build/SX3P01
+python -I tools/export_map.py config/SX3P01/symbols.txt build/SX3P01.map
+python -I tools/patch_hooks.py orig/SX3P01/main.dol config/SX3P01/symbols.txt config/SX3P01/hooks.txt     build/SX3P01/main_hooked.dol
 rm -rf build/recomp
-"$DOLRECOMP" --cpu broadway --map build/SX3EXJ.map -j8 build/SX3EXJ/main_hooked.dol SX3EXJ build/recomp
+"$DOLRECOMP" --cpu broadway --map build/SX3P01.map -j8 build/SX3P01/main_hooked.dol SX3P01 build/recomp

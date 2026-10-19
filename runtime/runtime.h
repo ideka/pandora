@@ -17,8 +17,8 @@ class Ios;
 
 struct Options {
     std::filesystem::path disc;  // extracted game partition (contains sys/ and files/)
-    std::string map = "build/SX3EXJ.map";
-    std::string hooks = "config/SX3EXJ/hooks.txt";  // functions marked for hooking at recompile time
+    std::string map = "build/SX3P01.map";
+    std::string hooks = "config/SX3P01/hooks.txt";  // functions marked for hooking at recompile time
     u64 max_blocks = 0;          // stop after this many blocks (0 = unlimited)
     bool trace_calls = false;    // log every block entry
 };

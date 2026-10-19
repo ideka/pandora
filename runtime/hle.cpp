@@ -1,5 +1,5 @@
 // High-level replacements for guest functions whose hardware we do not emulate.
-// Every function hooked here must also be listed in config/SX3EXJ/hooks.txt.
+// Every function hooked here must also be listed in config/SX3P01/hooks.txt.
 #include <algorithm>
 #include <cstring>
 

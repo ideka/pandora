@@ -1,7 +1,0 @@
-# Pandora's Tower (NTSC-U, SX3EXJ) — decomp-toolkit project config
-object: orig/SX3EXJ/main.dol
-hash: bdbd1e9153220a3a0b092f8319127f59093d3c16
-symbols: config/SX3EXJ/symbols.txt
-splits: config/SX3EXJ/splits.txt
-detect_objects: true
-detect_strings: true
