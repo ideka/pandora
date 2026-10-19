@@ -3,6 +3,8 @@
 #include <vector>
 
 #include "../hardware.h"
+#include "aurora_bridge.h"
+#include "vertex_layout.h"
 #include "../log.h"
 #include "../memory.h"
 #include "../runtime.h"
@@ -21,17 +23,6 @@ constexpr s64 PE_EVENT_DELAY_TICKS = 500 / 12 + 1;
 
 u32 be32(const u8* p) { return (u32)p[0] << 24 | (u32)p[1] << 16 | (u32)p[2] << 8 | p[3]; }
 u16 be16(const u8* p) { return (u16)(p[0] << 8 | p[1]); }
-
-// Bytes per component for position/texcoord formats (u8, s8, u16, s16, f32).
-u32 comp_size(u32 fmt) {
-    static const u32 sizes[8] = {1, 1, 2, 2, 4, 0, 0, 0};
-    return sizes[fmt & 7];
-}
-// Bytes per colour for RGB565, RGB888, RGB888x, RGBA4444, RGBA6, RGBA8888.
-u32 color_size(u32 fmt) {
-    static const u32 sizes[8] = {2, 3, 4, 2, 3, 4, 0, 0};
-    return sizes[fmt & 7];
-}
 
 }  // namespace
 
@@ -199,35 +190,7 @@ void CommandProcessor::run() {
     running_ = false;
 }
 
-u32 CommandProcessor::vertex_size(u32 vat) const {
-    u32 vcd_lo = cpreg_[0x50], vcd_hi = cpreg_[0x60];
-    u32 a = cpreg_[0x70 + vat], b = cpreg_[0x80 + vat], cc = cpreg_[0x90 + vat];
-    u32 size = 0;
-    // Matrix indices (PNMTXIDX, TEX0-7MTXIDX): one byte each.
-    for (u32 i = 0; i < 9; i++)
-        size += (vcd_lo >> i) & 1;
-    auto attr = [&](u32 mode, u32 direct_size, u32 index_count = 1) {
-        switch (mode) {
-        case 1: size += direct_size; break;
-        case 2: size += index_count; break;
-        case 3: size += 2 * index_count; break;
-        }
-    };
-    attr((vcd_lo >> 9) & 3, ((a & 1) ? 3 : 2) * comp_size(a >> 1));                           // position
-    bool nbt = (a >> 9) & 1, index3 = (a >> 31) & 1;
-    attr((vcd_lo >> 11) & 3, (nbt ? 9 : 3) * comp_size(a >> 10), nbt && index3 ? 3 : 1);    // normal
-    attr((vcd_lo >> 13) & 3, color_size(a >> 14));                                           // color 0
-    attr((vcd_lo >> 15) & 3, color_size(a >> 18));                                           // color 1
-    // Texture coordinates 0-7: count bit and format field per VAT word.
-    const u32 tex_cnt_fmt[8][2] = {
-        {(a >> 21) & 1, (a >> 22) & 7},  {(b >> 0) & 1, (b >> 1) & 7},   {(b >> 9) & 1, (b >> 10) & 7},
-        {(b >> 18) & 1, (b >> 19) & 7},  {(b >> 27) & 1, (b >> 28) & 7}, {(cc >> 5) & 1, (cc >> 6) & 7},
-        {(cc >> 14) & 1, (cc >> 15) & 7}, {(cc >> 23) & 1, (cc >> 24) & 7},
-    };
-    for (u32 t = 0; t < 8; t++)
-        attr((vcd_hi >> (2 * t)) & 3, (tex_cnt_fmt[t][0] ? 2 : 1) * comp_size(tex_cnt_fmt[t][1]));
-    return size;
-}
+u32 CommandProcessor::vertex_size(u32 vat) const { return vertex_layout(cpreg_.data(), vat).size; }
 
 u32 CommandProcessor::command_length(const u8* p, u32 avail) const {
     u8 op = p[0];
@@ -258,9 +221,12 @@ u32 CommandProcessor::command_length(const u8* p, u32 avail) const {
 
 void CommandProcessor::execute(const u8* p, u32 len) {
     commands_++;
+    if (p[0] == 0x08)
+        cpreg_[p[1]] = be32(p + 2);
+    if (bridge_ && p[0] != 0x40)
+        bridge_->command(p, len, cpreg_.data());
     switch (p[0]) {
     case 0x08:
-        cpreg_[p[1]] = be32(p + 2);
         return;
     case 0x40:
         run_display_list(be32(p + 1), be32(p + 5), 0);
@@ -297,6 +263,8 @@ void CommandProcessor::bp_write(u32 value) {
     case 0x45:  // PE_DONE: draw done
         if ((value & 0xFF) == 0x02) {
             draw_dones_++;
+            if (bridge_)
+                bridge_->draw_done();
             raise_pe(true, false, 0);
         }
         break;

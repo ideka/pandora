@@ -1,3 +1,6 @@
 [submodule "extern/DolRecomp"]
 	path = extern/DolRecomp
 	url = https://github.com/ExpansionPak/DolRecomp
+[submodule "extern/aurora"]
+	path = extern/aurora
+	url = https://github.com/encounter/aurora

@@ -7,6 +7,7 @@
 #include <thread>
 #include <fstream>
 
+#include "gpu/aurora_bridge.h"
 #include "gpu/command_processor.h"
 #include "hardware.h"
 #include "ios.h"
@@ -60,7 +61,17 @@ Runtime::Runtime(Options opts) : opts_(std::move(opts)) {
     ios_ = std::make_unique<Ios>(*this);
 }
 
-Runtime::~Runtime() { cpu_free(&cpu); }
+Runtime::~Runtime() {
+    profiling_ = false;
+    if (sampler_.joinable())
+        sampler_.join();
+    cpu_free(&cpu);
+}
+
+void Runtime::enable_rendering() {
+    bridge_ = std::make_unique<AuroraBridge>(*this);
+    hw_->gpu().set_bridge(bridge_.get());
+}
 
 void Runtime::hook(u32 addr, Hook fn) {
     hooks_[addr] = std::move(fn);
@@ -364,27 +375,17 @@ void Runtime::on_mem1_write(u32 offset, u32 size, void* user) {
     }
 }
 
-int Runtime::run() {
+void Runtime::start() {
     // Sampling profiler: a side thread reads the (racy, but word-sized) guest pc every millisecond.
-    std::atomic<bool> profiling{opts_.profile};
-    std::unordered_map<u32, u32> samples;
-    std::thread sampler;
-    if (opts_.profile)
-        sampler = std::thread([&] {
-            while (profiling) {
-                samples[(u32) * (volatile u32*)&cpu.pc]++;
+    if (opts_.profile) {
+        profiling_ = true;
+        sampler_ = std::thread([this] {
+            while (profiling_) {
+                samples_[(u32) * (volatile u32*)&cpu.pc]++;
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
         });
-    struct StopSampler {
-        std::atomic<bool>& flag;
-        std::thread& t;
-        ~StopSampler() {
-            flag = false;
-            if (t.joinable())
-                t.join();
-        }
-    } stop_sampler{profiling, sampler};
+    }
     find_idle_loop();
     if (!opts_.watch_writes.empty())
         ppc_set_mem_write_journal(&Runtime::on_mem1_write, this);
@@ -394,60 +395,91 @@ int Runtime::run() {
         else
             LOG_ERROR("watch", "unknown symbol %s", name.c_str());
     }
-    while (!halted_) {
-        if (opts_.max_blocks && blocks_ >= opts_.max_blocks) {
-            halt("block limit reached");
-            break;
-        }
-        // The OS idle loop (no runnable thread) can only be left by an interrupt: skip ahead to
-        // the next timed event instead of spinning.
-        if (cpu.pc == idle_pc_ && (cpu.msr & MSR_EE) && mem::read32(&cpu, cpu.gpr[13] - 0x5420) == 0) {
-            u64 ticks = hw_->ticks_to_next_field();
-            s32 dec = (s32)spr_[SPR_DEC];
-            if (dec >= 0 && (u64)dec + 1 < ticks)
-                ticks = (u64)dec + 1;
-            advance((s64)ticks * CYCLES_PER_TB_TICK);
-            deliver_interrupts();
-            idle_skips_++;
-            continue;
-        }
-        recent_[recent_pos_++ % recent_.size()] = cpu.pc;
-        if (!watch_.empty() && watch_.count(cpu.pc))
-            LOG_INFO("watch", "%s(%08X, %08X, %08X) r3=\"%s\" from %s", describe_pc().c_str(), cpu.gpr[3], cpu.gpr[4],
-                     cpu.gpr[5], mem::cstr(&cpu, cpu.gpr[3], 96).c_str(), describe(cpu.lr).c_str());
-        if (opts_.trace_calls)
-            LOG_INFO("trace", "%s", describe_pc().c_str());
+}
 
-        cpu.downcount = 0;
-        if (!guest_dispatch(&cpu)) {
-            halt("no code at " + describe_pc());
-            break;
-        }
-        blocks_++;
-
-        if (u32 e = cpu.exception) {
-            cpu.exception = 0;
-            if (e & PPC_EXC_PROGRAM) {
-                char buf[96];
-                std::snprintf(buf, sizeof buf, "program exception (cause %08X) at ", cpu.program_exception);
-                halt(buf + describe(cpu.srr0));
-            } else if (e & (PPC_EXC_DSI | PPC_EXC_ALIGNMENT | PPC_EXC_MACHINE_CHECK)) {
-                char buf[96];
-                std::snprintf(buf, sizeof buf, "memory exception %X (dar %08X) at ", e, cpu.dar);
-                halt(buf + describe(cpu.srr0));
-            }
-            // System calls and FP-unavailable continue at their vector.
-        }
-        advance(-cpu.downcount);
-        deliver_interrupts();
+bool Runtime::step() {
+    if (halted_)
+        return false;
+    if (opts_.max_blocks && blocks_ >= opts_.max_blocks) {
+        halt("block limit reached");
+        return false;
     }
-    profiling = false;
-    if (sampler.joinable())
-        sampler.join();
+    // The OS idle loop (no runnable thread) can only be left by an interrupt: skip ahead to
+    // the next timed event instead of spinning.
+    if (cpu.pc == idle_pc_ && (cpu.msr & MSR_EE) && mem::read32(&cpu, cpu.gpr[13] - 0x5420) == 0) {
+        u64 ticks = hw_->ticks_to_next_field();
+        s32 dec = (s32)spr_[SPR_DEC];
+        if (dec >= 0 && (u64)dec + 1 < ticks)
+            ticks = (u64)dec + 1;
+        advance((s64)ticks * CYCLES_PER_TB_TICK);
+        deliver_interrupts();
+        idle_skips_++;
+        return true;
+    }
+    recent_[recent_pos_++ % recent_.size()] = cpu.pc;
+    if (!watch_.empty() && watch_.count(cpu.pc))
+        LOG_INFO("watch", "%s(%08X, %08X, %08X) r3=\"%s\" from %s", describe_pc().c_str(), cpu.gpr[3], cpu.gpr[4],
+                 cpu.gpr[5], mem::cstr(&cpu, cpu.gpr[3], 96).c_str(), describe(cpu.lr).c_str());
+    if (opts_.trace_calls)
+        LOG_INFO("trace", "%s", describe_pc().c_str());
+
+    cpu.downcount = 0;
+    if (!guest_dispatch(&cpu)) {
+        halt("no code at " + describe_pc());
+        return false;
+    }
+    blocks_++;
+
+    if (u32 e = cpu.exception) {
+        cpu.exception = 0;
+        if (e & PPC_EXC_PROGRAM) {
+            char buf[96];
+            std::snprintf(buf, sizeof buf, "program exception (cause %08X) at ", cpu.program_exception);
+            halt(buf + describe(cpu.srr0));
+        } else if (e & (PPC_EXC_DSI | PPC_EXC_ALIGNMENT | PPC_EXC_MACHINE_CHECK)) {
+            char buf[96];
+            std::snprintf(buf, sizeof buf, "memory exception %X (dar %08X) at ", e, cpu.dar);
+            halt(buf + describe(cpu.srr0));
+        }
+        // System calls and FP-unavailable continue at their vector.
+    }
+    advance(-cpu.downcount);
+    deliver_interrupts();
+    return !halted_;
+}
+
+// Run until the guest finishes a frame (display copy), or a time cap so the host stays
+// responsive if the guest stops presenting.
+bool Runtime::run_frame() {
+    const u64 deadline = cpu.timebase + 60750000 / 10;  // 100 ms emulated
+    while (step()) {
+        if (bridge_ && bridge_->take_frame_end())
+            return true;
+        if (cpu.timebase >= deadline)
+            return true;
+    }
+    return false;
+}
+
+int Runtime::finish() {
+    for (const auto& d : opts_.file_dumps) {
+        const u8* p = mem::ptr(&cpu, d.addr, d.len);
+        std::FILE* f = p ? std::fopen(d.path.c_str(), "wb") : nullptr;
+        if (f) {
+            std::fwrite(p, 1, d.len, f);
+            std::fclose(f);
+            LOG_INFO("rt", "wrote %08X+%X to %s", d.addr, d.len, d.path.c_str());
+        } else {
+            LOG_ERROR("rt", "cannot dump %08X+%X to %s", d.addr, d.len, d.path.c_str());
+        }
+    }
+    profiling_ = false;
+    if (sampler_.joinable())
+        sampler_.join();
     if (opts_.profile) {
         std::unordered_map<std::string, u32> by_fn;
         u32 total = 0;
-        for (auto [pc, n] : samples) {
+        for (auto [pc, n] : samples_) {
             std::string d = describe(pc);
             by_fn[d.substr(0, d.find('+'))] += n;
             total += n;
@@ -460,10 +492,19 @@ int Runtime::run() {
         for (size_t i = 0; i < top.size() && i < 25; i++)
             std::fprintf(stderr, "  %5.1f%%  %s\n", 100.0 * top[i].first / total, top[i].second.c_str());
     }
-    LOG_INFO("rt", "halted after %" PRIu64 " blocks (%" PRIu64 " idle skips, %.2f s emulated): %s", blocks_,
+    LOG_INFO("rt", "stopped after %" PRIu64 " blocks (%" PRIu64 " idle skips, %.2f s emulated): %s", blocks_,
              idle_skips_, (double)cpu.timebase / 60750000.0, halt_reason_.c_str());
+    if (halt_reason_ == "quit")
+        return 0;
     dump();
     return 1;
+}
+
+int Runtime::run() {
+    start();
+    while (step()) {
+    }
+    return finish();
 }
 
 void Runtime::dump() const {

@@ -270,10 +270,11 @@ public:
             auto p = host(in + 6);
             if (p.empty()) return FS_EINVAL;
             if (std::filesystem::exists(p)) return FS_EEXIST;
+            if (!std::filesystem::is_directory(p.parent_path())) return FS_ENOENT;
             if (cmd == 3)
                 std::filesystem::create_directory(p, ec);
-            else
-                std::ofstream(p, std::ios::binary);
+            else if (!std::ofstream(p, std::ios::binary))
+                return IOS_EACCES;
             LOG_DEBUG("fs", "create %s", mem::cstr(c, in + 6, 64).c_str());
             return ec ? FS_ENOENT : IOS_OK;
         }

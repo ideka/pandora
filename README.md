@@ -24,7 +24,27 @@ No game code or data is included. You need your own copy of the game.
    build/tools/dtk.exe dol split config/SX3P01/config.yml build/SX3P01
    ```
 
-`orig/` and `build/` are git-ignored.
+4. Recompile the DOL and build the runtime (Visual Studio 2022, CMake 3.25+; aurora downloads
+   prebuilt Dawn and SDL3 on first configure):
+
+   ```sh
+   tools/recompile.sh
+   cmake -S . -B build/pandora -G "Visual Studio 17 2022" -A x64
+   cmake --build build/pandora --config Release --target pandora
+   ```
+
+5. Run:
+
+   ```sh
+   build/pandora/Release/pandora.exe --disc "<extracted disc>"
+   ```
+
+   `--background` keeps the window from taking focus (for automated runs);
+   `--screenshot <frame>:<file.png>` and `--exit-after <frames>` capture frames from inside the
+   renderer; `--headless` runs without a window. See `--help`-style usage for debugging options.
+
+`orig/` and `build/` are git-ignored. Saves and aurora's caches live in `build/nand` and
+`build/aurora`.
 
 ## Layout
 

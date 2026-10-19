@@ -13,6 +13,24 @@
 - `__OSInitAudioSystem` / `__OSStopAudioSystem` are skipped by hooks; the DSP init microcode
   handshake is not emulated.
 
+## Graphics
+
+- The GX bridge (`runtime/gpu/aurora_bridge.cpp`) is new; only the boot screens have been checked.
+- Logic ops other than CLEAR/COPY/NOOP are approximated with blending (Dolphin's table) without
+  Dolphin's shader-side fixups for CLEAR/INVERT/COPY_INVERTED/SET.
+- The BP write mask (BP 0xFE) is not applied to the registers the bridge shadows or rewrites
+  (textures, TLUTs, cmode0, scissor offset).
+- Texture contents are versioned only by texture-cache invalidates (BP 0x66); textures rewritten in
+  place without an invalidate would show stale data. Consider hashing.
+- Vertex array sizes are inferred from the indices each draw uses; arrays written in place between
+  draws without a base change rely on aurora's per-frame re-upload.
+- Display copies (EFB -> XFB) are not forwarded; aurora presents its EFB at the end of each host
+  frame. Interlaced/field-based copies, XFB tricks and the copy's clear flag are not emulated.
+- Aurora decodes the XF viewport with a 340 offset (as its own `GXSetViewport` encodes); confirm
+  against this game's SDK, which may use 342 (2 px shift).
+- Z (depth) EFB copies and EFB peeks/pokes are not bridged.
+- No frame pacing yet: the guest runs as fast as presentation allows.
+
 ## Input
 
 - `WPADInit` is stubbed (no Bluetooth). Implement WPAD/KPAD at the API level on top of SDL.

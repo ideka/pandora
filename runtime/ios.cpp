@@ -43,6 +43,21 @@ s32 Device::ioctlv(const Request&, u32 cmd, const std::vector<IoVec>& in, const 
 }
 
 Ios::Ios(Runtime& rt) : rt_(rt) {}
+
+// ES creates a title's data directory when it is installed or launched; the game saves there.
+bool Ios::init(const std::filesystem::path& disc_root, const std::filesystem::path& nand_root) {
+    if (!disc_.open(disc_root) || !nand_.open(nand_root))
+        return false;
+    const auto& t = disc_.ticket();
+    char dir[48];
+    std::snprintf(dir, sizeof dir, "/title/%02x%02x%02x%02x/%02x%02x%02x%02x/data", t[0x1DC], t[0x1DD], t[0x1DE],
+                  t[0x1DF], t[0x1E0], t[0x1E1], t[0x1E2], t[0x1E3]);
+    std::error_code ec;
+    std::filesystem::create_directories(nand_.host_path(dir), ec);
+    if (ec)
+        LOG_ERROR("ios", "cannot create %s: %s", dir, ec.message().c_str());
+    return !ec;
+}
 Ios::~Ios() = default;
 
 void Ios::submit(u32 addr) {
@@ -65,6 +80,8 @@ void Ios::submit(u32 addr) {
             result = next_fd_++;
             LOG_DEBUG("ios", "open %s -> fd %d", path.c_str(), result);
             fds_[result] = std::move(dev);
+        } else {
+            LOG_DEBUG("ios", "open %s failed: %d", path.c_str(), result);
         }
     } else {
         auto it = fds_.find(r.fd);

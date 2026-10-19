@@ -60,9 +60,7 @@ public:
     explicit Ios(Runtime& rt);
     ~Ios();
 
-    bool init(const std::filesystem::path& disc_root, const std::filesystem::path& nand_root) {
-        return disc_.open(disc_root) && nand_.open(nand_root);
-    }
+    bool init(const std::filesystem::path& disc_root, const std::filesystem::path& nand_root);
 
     void submit(u32 request);
     void reply(const Request& r, s32 result);

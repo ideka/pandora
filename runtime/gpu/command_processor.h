@@ -12,6 +12,7 @@
 
 #include "../guest.h"
 
+class AuroraBridge;
 class Runtime;
 class Hardware;
 
@@ -32,6 +33,8 @@ public:
     // PI FIFO registers mirror the CP FIFO while the GP is linked.
     void link_pi_fifo(u32& base, u32& end, u32& wptr) const;
 
+    void set_bridge(AuroraBridge* bridge) { bridge_ = bridge; }
+
     u64 commands() const { return commands_; }
     u64 draws() const { return draws_; }
     u64 draw_dones() const { return draw_dones_; }
@@ -49,6 +52,7 @@ private:
 
     Runtime& rt_;
     Hardware& hw_;
+    AuroraBridge* bridge_ = nullptr;
 
     // CP FIFO state.
     u32 base_ = 0, end_ = 0, hi_wm_ = 0, lo_wm_ = 0, distance_ = 0, wptr_ = 0, rptr_ = 0, bp_ = 0;

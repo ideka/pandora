@@ -13,6 +13,18 @@ endif()
 
 set(DOLRECOMP_DIR "${CMAKE_SOURCE_DIR}/extern/DolRecomp")
 
+# aurora: GX renderer (WebGPU via Dawn) and SDL3 windowing. Only the GX pieces are used.
+set(AURORA_ENABLE_DVD OFF CACHE BOOL "" FORCE)
+set(AURORA_ENABLE_CARD OFF CACHE BOOL "" FORCE)
+set(AURORA_ENABLE_THP OFF CACHE BOOL "" FORCE)
+set(AURORA_ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(AURORA_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+add_subdirectory(extern/aurora EXCLUDE_FROM_ALL)
+option(PANDORA_AURORA_DIAGNOSTICS "Build aurora's GX library with its debug diagnostics (unhandled registers etc.)" OFF)
+if(PANDORA_AURORA_DIAGNOSTICS AND MSVC)
+    target_compile_options(aurora_gx PRIVATE /UNDEBUG)
+endif()
+
 # Recompiled game code plus DolRecomp's CPU helpers. Built separately so the runtime can use
 # its own warning settings.
 file(GLOB PANDORA_CHUNKS CONFIGURE_DEPENDS "${PANDORA_GENERATED_DIR}/chunks/*.c")
@@ -40,16 +52,33 @@ add_executable(pandora
     runtime/dsp/ucode.cpp
     runtime/disc.cpp
     runtime/exi.cpp
+    runtime/gpu/aurora_bridge.cpp
     runtime/gpu/command_processor.cpp
+    runtime/gpu/vertex_layout.cpp
     runtime/hardware.cpp
     runtime/hle.cpp
     runtime/ios.cpp
     runtime/ios_devices.cpp
     runtime/main.cpp
     runtime/nand.cpp
+    runtime/png_write.cpp
     runtime/runtime.cpp
     runtime/symbols.cpp)
-target_link_libraries(pandora PRIVATE guest)
+target_link_libraries(pandora PRIVATE guest aurora::core aurora::gx aurora::vi)
+# The bridge feeds aurora's internal FIFO directly.
+target_include_directories(pandora PRIVATE "${CMAKE_SOURCE_DIR}/extern/aurora/lib")
+
+# Runtime DLLs (Dawn, SDL3) next to the executable.
+add_custom_command(TARGET pandora POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_RUNTIME_DLLS:pandora> $<TARGET_FILE_DIR:pandora>
+    COMMAND_EXPAND_LISTS)
+# Dawn's D3D12 backend loads the DirectX shader compiler at runtime.
+set(DAWN_PREBUILT_BIN "${CMAKE_BINARY_DIR}/_deps/dawn_prebuilt-src/bin")
+if(WIN32 AND EXISTS "${DAWN_PREBUILT_BIN}/dxil.dll")
+    add_custom_command(TARGET pandora POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${DAWN_PREBUILT_BIN}/dxcompiler.dll"
+                "${DAWN_PREBUILT_BIN}/dxil.dll" $<TARGET_FILE_DIR:pandora>)
+endif()
 if(MSVC)
     target_compile_options(pandora PRIVATE /W4 /permissive- /MP)
     target_compile_definitions(pandora PRIVATE _CRT_SECURE_NO_WARNINGS)

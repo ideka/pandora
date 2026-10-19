@@ -2,6 +2,8 @@
 #pragma once
 
 #include <array>
+#include <atomic>
+#include <thread>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -15,6 +17,7 @@
 #include "guest.h"
 #include "symbols.h"
 
+class AuroraBridge;
 class Hardware;
 class Ios;
 
@@ -29,7 +32,20 @@ struct Options {
     std::vector<std::string> watch;  // log arguments when these functions are dispatched
     std::vector<std::pair<u32, u32>> dumps;  // memory ranges to hexdump at halt
     std::vector<u32> watch_writes;           // log every store to these MEM1 addresses
+    struct FileDump {
+        u32 addr, len;
+        std::string path;
+    };
+    std::vector<FileDump> file_dumps;        // guest memory ranges written to files when stopping
     bool profile = false;                    // sample the guest pc and report hot functions
+    std::vector<std::pair<u64, std::string>> screenshots;  // (guest frame, PNG path), windowed only
+    u64 exit_after_frames = 0;               // windowed: quit after this many guest frames
+    struct CopyShot {
+        u64 frame;
+        u32 index;
+        std::string path;
+    };
+    std::vector<CopyShot> copy_shots;        // read back a guest EFB texture copy (debugging)
 };
 
 class Runtime {
@@ -40,7 +56,18 @@ public:
     ~Runtime();
 
     bool boot();  // boot.cpp
-    int run();
+    int run();    // headless: run until halted
+
+    // Windowed: start(), then run_frame() once per host frame, then finish().
+    void start();
+    bool run_frame();
+    int finish();
+    bool step();
+
+    // Send GPU commands to aurora for rendering.
+    void enable_rendering();
+    AuroraBridge* bridge() { return bridge_.get(); }
+    std::string backtrace(int max_frames) const;
 
     // Replace the guest function at addr (or named) with host code. The hook must leave
     // cpu.pc at the next guest address, usually via ret().
@@ -79,13 +106,16 @@ private:
     void find_idle_loop();
     void dump() const;
     static void on_mem1_write(u32 offset, u32 size, void* self);
-    std::string backtrace(int max_frames) const;
 
     Options opts_;
     Symbols syms_;
     std::unique_ptr<Hardware> hw_;
     std::unique_ptr<Ios> ios_;
     AudioDump audio_dump_;
+    std::unique_ptr<AuroraBridge> bridge_;
+    std::atomic<bool> profiling_{false};
+    std::thread sampler_;
+    std::unordered_map<u32, u32> samples_;
     std::unordered_map<u32, Hook> hooks_;
     std::unordered_map<u32, u32> code_copies_;  // low-memory pc -> original text address
 
