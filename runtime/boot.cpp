@@ -150,8 +150,8 @@ bool Runtime::boot() {
             LOG_ERROR("boot", "cannot write %s", opts_.audio_dump.c_str());
             return false;
         }
-        hw_->dsp().set_audio_sink(&AudioDump::sink, &audio_dump_);
     }
+    hw_->dsp().set_audio_sink(&Runtime::audio_sink, this);
     install_hle();
     if (!check_hooks())
         return false;

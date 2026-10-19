@@ -14,13 +14,14 @@
 #include "gpu/aurora_bridge.h"
 #include "log.h"
 #include "runtime.h"
+#include "settings.h"
 
 int g_log_level = 1;
 
 static void usage() {
     std::fprintf(stderr,
                  "usage: pandora --disc <extracted partition> [--headless | --background] [--nand <dir>] [--map <file>]\n"
-                 "               [--max-blocks N] [--audio-dump <wav>] [--profile] [-v|-vv|-vvv]\n"
+                 "               [--max-blocks N] [--audio-dump <wav>] [--mute] [--profile] [-v|-vv|-vvv]\n"
                  "               [--screenshot <frame>:<file.png>]... [--exit-after <frames>]\n"
                  "               [--press <button>@<frame>[+<frames>]]...\n"
                  "  debugging: [--watch <symbol>]... [--watch-write <hexaddr>]... [--dump <hexaddr>[:len]]...\n"
@@ -51,7 +52,20 @@ static void send_window_to_background() {
 #endif
 }
 
-static int run_windowed(Runtime& rt, int argc, char** argv, bool background) {
+// F11 or Alt+Enter toggles fullscreen.
+static bool is_fullscreen_toggle(const SDL_Event& e) {
+    if (e.type != SDL_EVENT_KEY_DOWN || e.key.repeat)
+        return false;
+    if (e.key.key == SDLK_F11)
+        return true;
+    return (e.key.key == SDLK_RETURN || e.key.key == SDLK_KP_ENTER) && (e.key.mod & SDL_KMOD_ALT);
+}
+
+static int run_windowed(Runtime& rt, int argc, char** argv, bool background, bool mute) {
+    const std::string settings_path = "build/aurora/settings.ini";
+    Settings settings;
+    settings.load(settings_path);
+
     AuroraConfig config{};
     config.appName = "Pandora's Tower";
     config.logCallback = &aurora_log;
@@ -66,6 +80,7 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background) {
     config.cachePath = "build/aurora";
     config.mem1Size = 0;  // guest memory lives in the runtime
     config.mem2Size = 0;
+    config.startFullscreen = settings.fullscreen && !background;
     if (background)
         SDL_SetHint(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, "0");
     aurora_initialize(argc, argv, &config);
@@ -73,12 +88,20 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background) {
         send_window_to_background();
 
     rt.enable_rendering();
+    if (!mute)
+        rt.enable_audio_output();
     rt.start();
     bool running = true;
     while (running) {
-        for (const AuroraEvent* e = aurora_update(); e && e->type != AURORA_NONE; ++e)
+        for (const AuroraEvent* e = aurora_update(); e && e->type != AURORA_NONE; ++e) {
             if (e->type == AURORA_EXIT)
                 running = false;
+            else if (e->type == AURORA_SDL_EVENT && is_fullscreen_toggle(e->sdl) && !background) {
+                settings.fullscreen = !settings.fullscreen;
+                SDL_SetWindowFullscreen(aurora_get_window(), settings.fullscreen);
+                settings.save(settings_path);
+            }
+        }
         if (!running) {
             rt.halt("quit");
             break;
@@ -118,7 +141,7 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background) {
 
 int main(int argc, char** argv) {
     Options opts;
-    bool headless = false, background = false;
+    bool headless = false, background = false, mute = false;
     std::vector<std::string> presses;
     for (int i = 1; i < argc; i++) {
         const char* a = argv[i];
@@ -129,6 +152,8 @@ int main(int argc, char** argv) {
             headless = true;
         else if (!std::strcmp(a, "--background"))
             background = true;
+        else if (!std::strcmp(a, "--mute"))
+            mute = true;
         else if (!std::strcmp(a, "--press") && i + 1 < argc)
             presses.push_back(next());
         else if (!std::strcmp(a, "--nand") && i + 1 < argc)
@@ -200,5 +225,8 @@ int main(int argc, char** argv) {
         }
     if (!rt.boot())
         return 1;
-    return headless ? rt.run() : run_windowed(rt, argc, argv, background);
+    // Background (test) runs are silent unless an SDL audio driver is forced, e.g.
+    // SDL_AUDIO_DRIVER=disk, which writes the output to a file instead of a device.
+    const bool forced_driver = std::getenv("SDL_AUDIO_DRIVER") != nullptr;
+    return headless ? rt.run() : run_windowed(rt, argc, argv, background, mute || (background && !forced_driver));
 }

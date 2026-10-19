@@ -8,8 +8,11 @@
   fails; voices fall back to linear interpolation, as in Dolphin without the file. Add an option to
   load a user-supplied `dsp_coef.bin` (Dolphin validates it with an Adler-32 checksum) and compare
   the sound with and without it.
-- Verify AX mixing with real voices once the game plays sound (use `--audio-dump`).
-- Real audio output (SDL) instead of the WAV dump; the DAC rate is fixed at 32 kHz for now.
+- Audio plays through SDL (runtime/audio_out.cpp). The DAC rate is fixed at 32 kHz (AICR AIDFR is
+  ignored), and when the guest runs ahead of real time, blocks beyond 120 ms of queue are dropped
+  rather than slowing the guest; consider pacing emulation from the audio clock.
+- Left/right are nearly uncorrelated on the title music: check the SYSCONF sound mode (Dolby Pro
+  Logic II encoding would explain it) and compare with Dolphin.
 - `__OSInitAudioSystem` / `__OSStopAudioSystem` are skipped by hooks; the DSP init microcode
   handshake is not emulated.
 

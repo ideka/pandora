@@ -69,7 +69,8 @@ void Input::update(u64 frame, bool use_devices) {
             if (k[sc])
                 s.buttons |= bit;
         };
-        key(SDL_SCANCODE_RETURN, WPAD_A);
+        if (!(SDL_GetModState() & SDL_KMOD_ALT))  // Alt+Enter toggles fullscreen
+            key(SDL_SCANCODE_RETURN, WPAD_A);
         key(SDL_SCANCODE_SPACE, WPAD_A);
         key(SDL_SCANCODE_BACKSPACE, WPAD_B);
         key(SDL_SCANCODE_UP, WPAD_UP);

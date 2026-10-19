@@ -48,6 +48,9 @@ No game code or data is included. You need your own copy of the game.
    guide = Home, LB = C, LT = Z, left stick = Nunchuk, right stick = pointer. Keyboard:
    Enter/Space = A, Backspace = B, arrows = D-pad, WASD = stick, IJKL = pointer, Z/C, 1/2, =/-, H.
 
+   F11 or Alt+Enter toggles fullscreen (remembered in `build/aurora/settings.ini`). Audio plays
+   on the default output device; `--mute` disables it (`--background` runs are always muted).
+
 `orig/` and `build/` are git-ignored. Saves and aurora's caches live in `build/nand` and
 `build/aurora`.
 

@@ -72,6 +72,15 @@ Runtime::~Runtime() {
     cpu_free(&cpu);
 }
 
+bool Runtime::enable_audio_output() { return audio_out_.open(); }
+
+// Each audio DMA block goes to the WAV dump and the host output (each is a no-op when not open).
+void Runtime::audio_sink(void* self, const u8* block) {
+    auto* rt = static_cast<Runtime*>(self);
+    AudioDump::sink(&rt->audio_dump_, block);
+    rt->audio_out_.push(block);
+}
+
 void Runtime::enable_rendering() {
     bridge_ = std::make_unique<AuroraBridge>(*this);
     hw_->gpu().set_bridge(bridge_.get());

@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "audio_dump.h"
+#include "audio_out.h"
 #include "input.h"
 #include "guest.h"
 #include "symbols.h"
@@ -68,6 +69,8 @@ public:
 
     // Send GPU commands to aurora for rendering.
     void enable_rendering();
+    // Play the guest's audio on the host's default device.
+    bool enable_audio_output();
     AuroraBridge* bridge() { return bridge_.get(); }
     Input& input() { return input_; }
     std::string backtrace(int max_frames) const;
@@ -115,6 +118,8 @@ private:
     std::unique_ptr<Hardware> hw_;
     std::unique_ptr<Ios> ios_;
     AudioDump audio_dump_;
+    AudioOut audio_out_;
+    static void audio_sink(void* self, const u8* block);
     Input input_;
     std::unique_ptr<AuroraBridge> bridge_;
     std::atomic<bool> profiling_{false};

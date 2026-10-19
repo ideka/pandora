@@ -59,6 +59,7 @@ endif()
 
 add_executable(pandora
     runtime/audio_dump.cpp
+    runtime/audio_out.cpp
     runtime/boot.cpp
     runtime/dsp/accelerator.cpp
     runtime/dsp/ax.cpp
@@ -74,6 +75,7 @@ add_executable(pandora
     runtime/hle.cpp
     runtime/ios.cpp
     runtime/input.cpp
+    runtime/settings.cpp
     runtime/ios_devices.cpp
     runtime/main.cpp
     runtime/nand.cpp
