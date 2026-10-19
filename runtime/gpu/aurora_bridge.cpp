@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <cstring>
+#include <string>
 
 #include <dolphin/gx/GXAurora.h>
 
@@ -86,6 +88,47 @@ u32 approximate_logic_op(u32 value) {
     return value;
 }
 
+// Debugging: decode the position of vertex 0 of a draw (direct or indexed).
+std::string first_position(CPUState* cpu, const u8* p, u32 len, const u32* cpreg, const u32* base, const u32* stride) {
+    const u32 vat = p[0] & 7, vcd = cpreg[0x50], a = cpreg[0x70 + vat];
+    const u32 mode = (vcd >> 9) & 3, fmt = (a >> 1) & 7, frac = (a >> 4) & 0x1F, cnt = (a & 1) ? 3 : 2;
+    u32 off = 3;
+    for (u32 i = 0; i < 9; i++)
+        off += (vcd >> i) & 1;
+    u32 addr = 0;
+    const u8* src = nullptr;
+    if (mode == 1) {
+        src = p + off;
+    } else if (mode >= 2) {
+        if (off + 2 > len)
+            return "?";
+        const u32 idx = mode == 2 ? p[off] : (u32)(p[off] << 8 | p[off + 1]);
+        addr = base[0] + idx * stride[0];
+    } else {
+        return "none";
+    }
+    static const u32 sizes[8] = {1, 1, 2, 2, 4, 0, 0, 0};
+    float v[3] = {};
+    for (u32 k = 0; k < cnt; k++) {
+        const u32 sz = sizes[fmt];
+        u32 raw = 0;
+        for (u32 b = 0; b < sz; b++)
+            raw = raw << 8 | (src ? src[k * sz + b] : mem::read8(cpu, 0x80000000 | (addr + k * sz + b)));
+        float f;
+        switch (fmt) {
+        case 0: f = (float)(u8)raw; break;
+        case 1: f = (float)(s8)raw; break;
+        case 2: f = (float)(u16)raw; break;
+        case 3: f = (float)(s16)raw; break;
+        default: std::memcpy(&f, &raw, 4); break;
+        }
+        v[k] = fmt == 4 ? f : f / (float)(1u << frac);
+    }
+    char buf[96];
+    std::snprintf(buf, sizeof buf, "(%.3g, %.3g, %.3g)", v[0], v[1], v[2]);
+    return buf;
+}
+
 u32 hash3(u32 a, u32 b, u32 c) {
     u32 h = a * 0x9E3779B1u;
     h ^= b + 0x7F4A7C15u + (h << 6) + (h >> 2);
@@ -148,6 +191,12 @@ void AuroraBridge::command(const u8* p, u32 len, const u32* cpreg) {
         u32 idx = be16(p + 1), words = (be16(p + 3) >> 12) + 1;
         ensure_array(array, idx * array_stride_[array] + words * 4);
     } else if (op >= 0x80 && op < 0xC0) {
+        for (auto it = draw_shots_.begin(); it != draw_shots_.end();)
+            if (it->frame == frames_ && it->index == frame_draws_) {
+                capture_efb(0, 0, 640, 480, std::move(it->path));
+                it = draw_shots_.erase(it);
+            } else
+                ++it;
         stats_.draws++;
         frame_draws_++;
         if (len >= 3 + 16 && vertex_layout(cpreg, p[0] & 7).size == 16) {
@@ -158,9 +207,12 @@ void AuroraBridge::command(const u8* p, u32 len, const u32* cpreg) {
         }
         stats_.verts += be16(p + 1);
         if (frames_ == debug_frame())
-            LOG_DEBUG("bridge", "  draw prim %02X vat %u count %u vtxsize %u  gen %06X z %06X cmode0 %06X cmode1 %06X alpha %06X",
-                      p[0] & 0xF8, p[0] & 7, be16(p + 1), vertex_layout(cpreg, p[0] & 7).size, bp_[0x00], bp_[0x40],
-                      bp_[0x41], bp_[0x42], bp_[0xF3]);
+            LOG_DEBUG("bridge", "  draw %u prim %02X vat %u count %u vtxsize %u vcd %05X/%04X pos@%08X/%u v0 %s  gen %06X z %06X "
+                      "cmode0 %06X cmode1 %06X alpha %06X",
+                      frame_draws_ - 1, p[0] & 0xF8, p[0] & 7, be16(p + 1), vertex_layout(cpreg, p[0] & 7).size,
+                      cpreg[0x50], cpreg[0x60], array_base_[0], array_stride_[0],
+                      first_position(&rt_.cpu, p, len, cpreg, array_base_.data(), array_stride_.data()).c_str(),
+                      bp_[0x00], bp_[0x40], bp_[0x41], bp_[0x42], bp_[0xF3]);
         prepare_draw(p, len, cpreg);
         write(p, len);
         aurora::gx::fifo::publish();
@@ -340,8 +392,11 @@ void AuroraBridge::bp_reg(u32 value) {
 
 void AuroraBridge::efb_copy(u32 control) {
     if ((control >> 14) & 1) {
-        if (shot_requested_)
-            capture_frame();
+        if (frame_shot_requested_) {
+            frame_shot_requested_ = false;
+            capture_efb(copy_src_ & 0x3FF, (copy_src_ >> 10) & 0x3FF, (copy_size_ & 0x3FF) + 1,
+                        ((copy_size_ >> 10) & 0x3FF) + 1, std::move(frame_shot_path_));
+        }
         frame_end_ = true;
         frames_++;
         frame_copies_ = 0;
@@ -372,28 +427,28 @@ void AuroraBridge::efb_copy(u32 control) {
     aurora_cmd(LOAD_COPY_DEST);
     const u64 dest = host((copy_dest_ & 0x00FFFFFF) << 5, (u32)(w * h * 4));
     put64(dest);
-    if (frames_ == copy_shot_frame_ && frame_copies_ == copy_shot_index_ && copy_format(control) == 6 && !half) {
+    for (auto it = copy_shots_.begin(); it != copy_shots_.end();) {
+        if (it->frame != frames_ || it->index != frame_copies_) {
+            ++it;
+            continue;
+        }
         // Forward the copy now so the readback sees it, then request its contents.
         u8 b[5] = {0x61, (u8)(control >> 24), (u8)(control >> 16), (u8)(control >> 8), (u8)control};
         write(b, 5);
         aurora::gx::fifo::publish();
-        if (!shot_stream_)
-            shot_stream_ = AuroraReadbackCreateStream();
-        shot_w_ = (u32)w;
-        shot_h_ = (u32)h;
-        shot_src_ = reinterpret_cast<const void*>(dest);
-        const AuroraReadbackCopySrc src{1, shot_src_};
-        shot_in_flight_ = AuroraReadbackCaptureCopies(shot_stream_, &src, 1);
-        shot_polls_ = 0;
-        copy_shot_frame_ = ~0ull;
+        capture_copy(reinterpret_cast<const void*>(dest), half ? (w + 1) / 2 : w, half ? (h + 1) / 2 : h,
+                     copy_format(control), std::move(it->path));
+        it = copy_shots_.erase(it);
     }
     frame_copies_++;
 }
 
 void AuroraBridge::request_copy_shot(u64 frame, u32 index, std::string path) {
-    copy_shot_frame_ = frame;
-    copy_shot_index_ = index;
-    shot_path_ = std::move(path);
+    copy_shots_.push_back({frame, index, std::move(path)});
+}
+
+void AuroraBridge::request_draw_shot(u64 frame, u32 draw, std::string path) {
+    draw_shots_.push_back({frame, draw, std::move(path)});
 }
 
 void AuroraBridge::draw_done() {
@@ -404,75 +459,102 @@ void AuroraBridge::draw_done() {
 // --- Screenshots -----------------------------------------------------------------------------
 
 void AuroraBridge::request_screenshot(std::string path) {
-    shot_path_ = std::move(path);
-    shot_requested_ = true;
+    frame_shot_path_ = std::move(path);
+    frame_shot_requested_ = true;
 }
 
-// At a display copy: copy the EFB region being displayed to a private RGBA8 copy texture and ask
-// aurora to read it back.
-void AuroraBridge::capture_frame() {
-    shot_requested_ = false;
-    if (!shot_stream_)
-        shot_stream_ = AuroraReadbackCreateStream();
-    const u32 x = copy_src_ & 0x3FF, y = (copy_src_ >> 10) & 0x3FF;
-    shot_w_ = (copy_size_ & 0x3FF) + 1;
-    shot_h_ = ((copy_size_ >> 10) & 0x3FF) + 1;
+// Ask aurora to read back a texture copy (identified by its destination) once it is rendered.
+bool AuroraBridge::capture_copy(const void* src, u32 w, u32 h, u32 format, std::string path) {
+    if (format != 6 && format != 4) {
+        LOG_ERROR("shot", "copy format %u not supported; %s skipped", format, path.c_str());
+        return false;
+    }
+    Shot shot;
+    shot.stream = AuroraReadbackCreateStream();
+    shot.w = w;
+    shot.h = h;
+    shot.format = format;
+    shot.path = std::move(path);
+    const AuroraReadbackCopySrc s{1, src};
+    if (!AuroraReadbackCaptureCopies(shot.stream, &s, 1)) {
+        LOG_ERROR("shot", "readback unavailable; %s skipped", shot.path.c_str());
+        AuroraReadbackDestroyStream(shot.stream);
+        return false;
+    }
+    shots_.push_back(std::move(shot));
+    return true;
+}
+
+// Copy an EFB region to a private RGBA8 copy texture and read it back. The copy does not clear,
+// so rendering continues unaffected.
+void AuroraBridge::capture_efb(u32 x, u32 y, u32 w, u32 h, std::string path) {
+    auto key = std::make_unique<u8>(0);
     aurora_cmd(LOAD_COPY_SRC);
     put32(x);
     put32(y);
-    put32(shot_w_);
-    put32(shot_h_);
+    put32(w);
+    put32(h);
     aurora_cmd(LOAD_COPY_DST);
-    put32(shot_w_);
-    put32(shot_h_);
+    put32(w);
+    put32(h);
     put32(6);  // GX_TF_RGBA8
     put8(0);
     aurora_cmd(LOAD_COPY_DEST);
-    put64(reinterpret_cast<u64>(&shot_key_));
+    put64(reinterpret_cast<u64>(key.get()));
     put8(0x61);
     put32(0x52000000 | (12u << 3));  // texture copy, RGBA8 (target format 12), no clear
     aurora::gx::fifo::publish();
-    const AuroraReadbackCopySrc src{1, &shot_key_};
-    shot_in_flight_ = AuroraReadbackCaptureCopies(shot_stream_, &src, 1);
-    shot_polls_ = 0;
-    if (!shot_in_flight_)
-        LOG_ERROR("shot", "readback unavailable; screenshot skipped");
+    if (capture_copy(key.get(), w, h, 6, std::move(path)))
+        shots_.back().key = std::move(key);
 }
 
 void AuroraBridge::poll_screenshot() {
-    if (!shot_in_flight_)
-        return;
-    const u32 bw = (shot_w_ + 3) / 4, bh = (shot_h_ + 3) / 4;
-    std::vector<u8> tiled((size_t)bw * bh * 64);
-    AuroraReadbackDest dest{1, tiled.data(), (u32)tiled.size(), false};
-    if (!AuroraReadbackGet(shot_stream_, &dest, 1) || !dest.found) {
-        if (++shot_polls_ > 120) {
-            LOG_ERROR("shot", "readback never completed");
-            shot_in_flight_ = false;
+    for (auto it = shots_.begin(); it != shots_.end();) {
+        Shot& s = *it;
+        const u32 bw = (s.w + 3) / 4, bh = (s.h + 3) / 4;
+        const u32 block_bytes = s.format == 6 ? 64 : 32;
+        std::vector<u8> tiled((size_t)bw * bh * block_bytes);
+        AuroraReadbackDest dest{1, tiled.data(), (u32)tiled.size(), false};
+        if (!AuroraReadbackGet(s.stream, &dest, 1) || !dest.found) {
+            if (++s.polls > 120) {
+                LOG_ERROR("shot", "readback of %s never completed", s.path.c_str());
+                AuroraReadbackDestroyStream(s.stream);
+                it = shots_.erase(it);
+            } else
+                ++it;
+            continue;
         }
-        return;
-    }
-    shot_in_flight_ = false;
-    // GX RGBA8 tiles: 4x4 pixels, 32 bytes of (A, R) pairs then 32 bytes of (G, B) pairs.
-    std::vector<u8> rgba((size_t)shot_w_ * shot_h_ * 4);
-    for (u32 by = 0; by < bh; by++)
-        for (u32 bx = 0; bx < bw; bx++) {
-            const u8* blk = tiled.data() + ((size_t)by * bw + bx) * 64;
-            for (u32 i = 0; i < 16; i++) {
-                const u32 px = bx * 4 + i % 4, py = by * 4 + i / 4;
-                if (px >= shot_w_ || py >= shot_h_)
-                    continue;
-                u8* o = &rgba[((size_t)py * shot_w_ + px) * 4];
-                o[0] = blk[2 * i + 1];
-                o[1] = blk[32 + 2 * i];
-                o[2] = blk[32 + 2 * i + 1];
-                o[3] = 255;  // EFB alpha is often 0 or unused; keep the image visible
+        // GX RGBA8 tiles: 4x4 pixels, 32 bytes of (A, R) pairs then 32 bytes of (G, B) pairs.
+        // RGB565 tiles: 4x4 big-endian 16-bit pixels.
+        std::vector<u8> rgba((size_t)s.w * s.h * 4);
+        for (u32 by = 0; by < bh; by++)
+            for (u32 bx = 0; bx < bw; bx++) {
+                const u8* blk = tiled.data() + ((size_t)by * bw + bx) * block_bytes;
+                for (u32 i = 0; i < 16; i++) {
+                    const u32 px = bx * 4 + i % 4, py = by * 4 + i / 4;
+                    if (px >= s.w || py >= s.h)
+                        continue;
+                    u8* o = &rgba[((size_t)py * s.w + px) * 4];
+                    if (s.format == 6) {
+                        o[0] = blk[2 * i + 1];
+                        o[1] = blk[32 + 2 * i];
+                        o[2] = blk[32 + 2 * i + 1];
+                    } else {
+                        const u16 v = be16(blk + 2 * i);
+                        o[0] = (u8)((v >> 11) * 255 / 31);
+                        o[1] = (u8)(((v >> 5) & 63) * 255 / 63);
+                        o[2] = (u8)((v & 31) * 255 / 31);
+                    }
+                    o[3] = 255;  // EFB alpha is often 0 or unused; keep the image visible
+                }
             }
-        }
-    if (write_png_rgba(shot_path_, rgba.data(), shot_w_, shot_h_))
-        LOG_INFO("shot", "wrote %s (%ux%u)", shot_path_.c_str(), shot_w_, shot_h_);
-    else
-        LOG_ERROR("shot", "cannot write %s", shot_path_.c_str());
+        if (write_png_rgba(s.path, rgba.data(), s.w, s.h))
+            LOG_INFO("shot", "wrote %s (%ux%u)", s.path.c_str(), s.w, s.h);
+        else
+            LOG_ERROR("shot", "cannot write %s", s.path.c_str());
+        AuroraReadbackDestroyStream(s.stream);
+        it = shots_.erase(it);
+    }
 }
 
 void AuroraBridge::log_stats() {

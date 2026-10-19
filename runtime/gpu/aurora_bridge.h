@@ -8,6 +8,7 @@
 #pragma once
 
 #include <array>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -37,8 +38,10 @@ public:
     // Debug screenshots: copy the EFB at the next display copy and write it as a PNG once aurora
     // has read it back (a few frames later; call poll_screenshot() every frame).
     void request_screenshot(std::string path);
-    // Read back the index-th EFB texture copy of the given frame (RGBA8 copies only).
+    // Read back the index-th EFB texture copy of the given frame (RGBA8 and RGB565 copies).
     void request_copy_shot(u64 frame, u32 index, std::string path);
+    // Capture the EFB just before the given draw of a frame (draws counted from 0).
+    void request_draw_shot(u64 frame, u32 draw, std::string path);
     void poll_screenshot();
 
 private:
@@ -94,16 +97,26 @@ private:
     } stats_;
     u32 clear_ar_ = 0, clear_gb_ = 0;
     u32 last_color_ = 0;
-    std::array<u32, 256> bp_{};  // last value written to each BP register (debug)  // colour of the first vertex of the last 16-byte-vertex draw (debug)
+    std::array<u32, 256> bp_{};  // last value written to each BP register (debug)
     void log_stats();
 
-    void capture_frame();
-    std::string shot_path_;
-    bool shot_requested_ = false, shot_in_flight_ = false;
-    u64 shot_stream_ = 0;
-    u32 shot_w_ = 0, shot_h_ = 0, shot_polls_ = 0;
-    u8 shot_key_ = 0;  // its address identifies our copy to aurora
-    const void* shot_src_ = nullptr;
-    u64 copy_shot_frame_ = ~0ull;
-    u32 copy_shot_index_ = 0, frame_copies_ = 0, frame_draws_ = 0;
+    // Readbacks in flight, each on its own stream (a stream keeps only its latest capture).
+    struct Shot {
+        u64 stream = 0;
+        std::unique_ptr<u8> key;  // its address identifies our own copies to aurora
+        u32 w = 0, h = 0, format = 6, polls = 0;
+        std::string path;
+    };
+    std::vector<Shot> shots_;
+    void capture_efb(u32 x, u32 y, u32 w, u32 h, std::string path);
+    bool capture_copy(const void* src, u32 w, u32 h, u32 format, std::string path);
+    std::string frame_shot_path_;
+    bool frame_shot_requested_ = false;
+    struct Pending {
+        u64 frame;
+        u32 index;
+        std::string path;
+    };
+    std::vector<Pending> copy_shots_, draw_shots_;
+    u32 frame_copies_ = 0, frame_draws_ = 0;
 };

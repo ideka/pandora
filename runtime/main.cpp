@@ -24,7 +24,8 @@ static void usage() {
                  "               [--screenshot <frame>:<file.png>]... [--exit-after <frames>]\n"
                  "               [--press <button>@<frame>[+<frames>]]...\n"
                  "  debugging: [--watch <symbol>]... [--watch-write <hexaddr>]... [--dump <hexaddr>[:len]]...\n"
-                 "             [--trace]\n");
+                 "             [--trace] [--shot-copy <frame>:<copy>:<file.png>]... [--shot-draw <frame>:<draw>:<file.png>]...\n"
+                 "             (PANDORA_DEBUG_FRAME=<n> with -vv logs every draw and EFB copy of frame n)\n");
 }
 
 static void aurora_log(AuroraLogLevel level, const char* module, const char* message, unsigned int len) {
@@ -92,6 +93,9 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background) {
         for (const auto& c : rt.options().copy_shots)
             if (bridge.frames() == c.frame)
                 bridge.request_copy_shot(c.frame, c.index, c.path);
+        for (const auto& c : rt.options().draw_shots)
+            if (bridge.frames() == c.frame)
+                bridge.request_draw_shot(c.frame, c.index, c.path);
         running = rt.run_frame();
         aurora_end_frame();
         bridge.poll_screenshot();
@@ -160,7 +164,8 @@ int main(int argc, char** argv) {
                 return 2;
             }
             opts.screenshots.emplace_back(frame, end + 1);
-        } else if (!std::strcmp(a, "--shot-copy") && i + 1 < argc) {
+        } else if ((!std::strcmp(a, "--shot-copy") || !std::strcmp(a, "--shot-draw")) && i + 1 < argc) {
+            const bool draw = a[7] == 'd';
             char* end;
             u64 frame = std::strtoull(next(), &end, 10);
             u32 index = *end == ':' ? (u32)std::strtoul(end + 1, &end, 10) : 0;
@@ -168,7 +173,7 @@ int main(int argc, char** argv) {
                 usage();
                 return 2;
             }
-            opts.copy_shots.push_back({frame, index, end + 1});
+            (draw ? opts.draw_shots : opts.copy_shots).push_back({frame, index, end + 1});
         } else if (!std::strcmp(a, "--exit-after") && i + 1 < argc)
             opts.exit_after_frames = std::strtoull(next(), nullptr, 10);
         else if (!std::strcmp(a, "--profile"))
