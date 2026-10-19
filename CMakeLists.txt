@@ -20,6 +20,8 @@ add_library(guest STATIC
     ${PANDORA_CHUNKS}
     "${DOLRECOMP_DIR}/src/cpu/cpu.c"
     runtime/dispatch.c)
+# runtime/fastmem shadows cpu/cpu.h for the chunks (inline RAM fast paths); cpu.c includes its own.
+target_include_directories(guest PRIVATE "${CMAKE_SOURCE_DIR}/runtime/fastmem")
 target_include_directories(guest PUBLIC "${DOLRECOMP_DIR}/src" "${PANDORA_GENERATED_DIR}")
 if(MSVC)
     target_compile_options(guest PRIVATE /w /bigobj /MP)
@@ -29,7 +31,13 @@ else()
 endif()
 
 add_executable(pandora
+    runtime/audio_dump.cpp
     runtime/boot.cpp
+    runtime/dsp/accelerator.cpp
+    runtime/dsp/ax.cpp
+    runtime/dsp/ax_wii.cpp
+    runtime/dsp/dsp.cpp
+    runtime/dsp/ucode.cpp
     runtime/disc.cpp
     runtime/exi.cpp
     runtime/hardware.cpp

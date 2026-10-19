@@ -6,10 +6,15 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include <memory>
+
 #include "exi.h"
 #include "guest.h"
 
 class Runtime;
+namespace DSP {
+class DSPManager;
+}
 
 // PI interrupt causes (PI_INTERRUPT_CAUSE bits).
 enum : u32 {
@@ -26,7 +31,10 @@ enum : u32 {
 
 class Hardware {
 public:
-    explicit Hardware(Runtime& rt) : rt_(rt), exi_(rt) {}
+    explicit Hardware(Runtime& rt);
+    ~Hardware();
+
+    DSP::DSPManager& dsp() { return *dsp_; }
 
     u64 read(u32 addr, u8 size);
     void write(u32 addr, u64 value, u8 size);
@@ -56,6 +64,7 @@ private:
 
     Runtime& rt_;
     Exi exi_;
+    std::unique_ptr<DSP::DSPManager> dsp_;
     std::unordered_map<u32, u32> regs_;
     std::unordered_set<u32> seen_;
 
@@ -79,6 +88,12 @@ private:
     u32 ai_cr_ = 0;
     u32 ai_count_base_ = 0;
     u64 ai_count_tb_ = 0;
+
+    // Write-gather pipe and the PI CPU FIFO it drains into.
+    void gather(u64 value, u8 size);
+    u8 gather_[64 + 8] = {};
+    u32 gather_count_ = 0;
+    u32 fifo_base_ = 0, fifo_end_ = 0, fifo_wptr_ = 0;
 
     u64 wgpipe_bytes_ = 0;
 };

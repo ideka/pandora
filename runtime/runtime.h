@@ -8,7 +8,10 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
+#include "audio_dump.h"
 #include "guest.h"
 #include "symbols.h"
 
@@ -22,6 +25,11 @@ struct Options {
     std::string hooks = "config/SX3P01/hooks.txt";  // functions marked for hooking at recompile time
     u64 max_blocks = 0;          // stop after this many blocks (0 = unlimited)
     bool trace_calls = false;    // log every block entry
+    std::string audio_dump;      // write mixed audio to this WAV file
+    std::vector<std::string> watch;  // log arguments when these functions are dispatched
+    std::vector<std::pair<u32, u32>> dumps;  // memory ranges to hexdump at halt
+    std::vector<u32> watch_writes;           // log every store to these MEM1 addresses
+    bool profile = false;                    // sample the guest pc and report hot functions
 };
 
 class Runtime {
@@ -70,22 +78,28 @@ private:
     void deliver_interrupts();
     void find_idle_loop();
     void dump() const;
+    static void on_mem1_write(u32 offset, u32 size, void* self);
+    std::string backtrace(int max_frames) const;
 
     Options opts_;
     Symbols syms_;
     std::unique_ptr<Hardware> hw_;
     std::unique_ptr<Ios> ios_;
+    AudioDump audio_dump_;
     std::unordered_map<u32, Hook> hooks_;
     std::unordered_map<u32, u32> code_copies_;  // low-memory pc -> original text address
 
     std::array<u32, 1024> spr_{};
     bool dec_pending_ = false;
     s64 cycle_carry_ = 0;
+    u64 hw_ticks_pending_ = 0;
+    std::vector<bool> hooked_ = std::vector<bool>(0x01800000 / 4);  // MEM1 word index -> has hook
 
     std::array<u32, 32> recent_{};  // ring of recent block entry pcs
     u32 recent_pos_ = 0;
     u64 blocks_ = 0;
     u32 idle_pc_ = 0;
+    std::unordered_set<u32> watch_;
     u64 idle_skips_ = 0;
     bool halted_ = false;
     std::string halt_reason_;

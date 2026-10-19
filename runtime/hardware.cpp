@@ -1,7 +1,11 @@
 #include "hardware.h"
 
+#include <cstring>
+
+#include "dsp/dsp.h"
 #include "ios.h"
 #include "log.h"
+#include "memory.h"
 #include "runtime.h"
 
 namespace {
@@ -41,7 +45,13 @@ const char* block_name(u32 phys) {
     return "?";
 }
 
+constexpr u32 DSP_BASE = 0x0C005000;
+bool is_dsp(u32 phys) { return (phys & 0xFFFFFF00) == DSP_BASE; }
+
 }  // namespace
+
+Hardware::Hardware(Runtime& rt) : rt_(rt), exi_(rt), dsp_(std::make_unique<DSP::DSPManager>(rt)) {}
+Hardware::~Hardware() = default;
 
 u64 Hardware::read(u32 addr, u8 size) {
     u32 phys = canonical(addr);
@@ -53,7 +63,7 @@ u64 Hardware::read(u32 addr, u8 size) {
 void Hardware::write(u32 addr, u64 value, u8 size) {
     u32 phys = canonical(addr);
     if ((phys & 0xFFFFFFE0) == 0x0C008000) {  // WGPIPE: GX command stream
-        wgpipe_bytes_ += size;
+        gather(value, size);
         return;
     }
     if (size == 8) {
@@ -64,10 +74,32 @@ void Hardware::write(u32 addr, u64 value, u8 size) {
     write_reg(phys, (u32)value, size);
 }
 
+// Write-gather pipe: stores to 0x0C008000 collect in a 32-byte buffer that is flushed to memory at
+// the PI CPU FIFO write pointer, which wraps from the FIFO end back to its base (as in Dolphin's
+// GPFifo.cpp). GX display lists rely on this: GXEndDisplayList measures the pointer's advance.
+void Hardware::gather(u64 value, u8 size) {
+    for (int i = size - 1; i >= 0; i--)
+        gather_[gather_count_++] = (u8)(value >> (8 * i));
+    wgpipe_bytes_ += size;
+    while (gather_count_ >= 32) {
+        if (u8* dst = mem::ptr(&rt_.cpu, fifo_wptr_, 32))
+            std::memcpy(dst, gather_, 32);
+        if (fifo_wptr_ == fifo_end_)
+            fifo_wptr_ = fifo_base_;
+        else
+            fifo_wptr_ += 32;
+        gather_count_ -= 32;
+        std::memmove(gather_, gather_ + 32, gather_count_);
+    }
+}
+
 u32 Hardware::read_reg(u32 phys, u8 size) {
     switch (phys) {
     case 0x0C003000: return pi_cause_;
     case 0x0C003004: return pi_mask_;
+    case 0x0C00300C: return fifo_base_;
+    case 0x0C003010: return fifo_end_;
+    case 0x0C003014: return fifo_wptr_;
     case 0x0C00302C: return PI_FLIPPER_REV_HOLLYWOOD;
     case 0x0C00202C:  // VI vertical beam position (1-based line counter)
         return 1 + (u32)((tb_ % TB_PER_FIELD) * 263 / TB_PER_FIELD);
@@ -82,6 +114,12 @@ u32 Hardware::read_reg(u32 phys, u8 size) {
     }
     if (phys >= 0x0D006800 && phys < 0x0D006838)
         return exi_.read(phys - 0x0D006800);
+    if (is_dsp(phys)) {  // 16-bit registers; wider accesses are split high half first
+        u32 off = phys - DSP_BASE;
+        u32 v = size == 4 ? (u32)dsp_->read16(off) << 16 | dsp_->read16(off + 2) : dsp_->read16(off & ~1u);
+        set_pi(PI_INT_DSP, dsp_->interrupt_pending());
+        return size == 1 ? (v >> ((~off & 1) * 8)) & 0xFF : v;
+    }
     u32 v = load(phys, size);
     if (seen_.insert(phys).second)
         LOG_DEBUG("hw", "%s read%u  %08X -> %08X  (%s)", block_name(phys), size * 8, phys, v,
@@ -128,6 +166,9 @@ void Hardware::write_reg(u32 phys, u32 value, u8 size) {
     case 0x0C003004:
         pi_mask_ = value;
         return;
+    case 0x0C00300C: fifo_base_ = value & 0xFFFFFFE0; return;
+    case 0x0C003010: fifo_end_ = value & 0xFFFFFFE0; return;
+    case 0x0C003014: fifo_wptr_ = value & 0xFFFFFFE0; return;
     case 0x0D000000:
         ipc_ppc_msg_ = value;
         return;
@@ -163,6 +204,17 @@ void Hardware::write_reg(u32 phys, u32 value, u8 size) {
         set_pi(PI_INT_EXI, exi_.interrupt_pending());
         return;
     }
+    if (is_dsp(phys)) {
+        u32 off = phys - DSP_BASE;
+        if (size == 4) {
+            dsp_->write16(off, (u16)(value >> 16));
+            dsp_->write16(off + 2, (u16)value);
+        } else {
+            dsp_->write16(off & ~1u, (u16)value);
+        }
+        set_pi(PI_INT_DSP, dsp_->interrupt_pending());
+        return;
+    }
     if (seen_.insert(phys).second)
         LOG_DEBUG("hw", "%s write%u %08X <- %08X  (%s)", block_name(phys), size * 8, phys, value,
                   rt_.describe_pc().c_str());
@@ -188,6 +240,8 @@ void Hardware::set_pi(u32 cause, bool asserted) {
 
 void Hardware::tick(u64 tb_ticks) {
     tb_ += tb_ticks;
+    dsp_->tick(tb_ticks);
+    set_pi(PI_INT_DSP, dsp_->interrupt_pending());
     if (tb_ < next_field_tb_)
         return;
     next_field_tb_ = tb_ + TB_PER_FIELD;

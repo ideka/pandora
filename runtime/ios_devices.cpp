@@ -111,7 +111,7 @@ private:
     static constexpr u32 ERROR_INVALID_COMMAND = 0x00052000;
 
     Ios& ios_;
-    bool partition_open_ = false;
+    bool partition_open_ = true;  // the system menu/apploader leave the game partition open
     u32 last_error_ = 0;
 };
 

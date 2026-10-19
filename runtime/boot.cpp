@@ -5,6 +5,8 @@
 #include <fstream>
 #include <vector>
 
+#include "dsp/dsp.h"
+#include "hardware.h"
 #include "ios.h"
 #include "log.h"
 #include "memory.h"
@@ -130,6 +132,7 @@ bool Runtime::boot() {
     std::memcpy(mem::ptr(c, bi2_addr, 0x2000), bi2.data(), 0x2000);
     mem::write32(c, 0x80000030, 0);
     mem::write32(c, 0x80000034, bi2_addr);
+    mem::write32(c, 0x80003110, bi2_addr);  // MEM1 arena end: the Wii OS takes ArenaHi from here
     mem::write32(c, 0x80000038, fst_addr);
     mem::write32(c, 0x8000003C, (u32)fst.size());
     mem::write32(c, 0x800000F4, bi2_addr);
@@ -142,6 +145,13 @@ bool Runtime::boot() {
     cpu.gpr[1] = 0x816FFFF0;
     cpu.pc = entry;
 
+    if (!opts_.audio_dump.empty()) {
+        if (!audio_dump_.open(opts_.audio_dump)) {
+            LOG_ERROR("boot", "cannot write %s", opts_.audio_dump.c_str());
+            return false;
+        }
+        hw_->dsp().set_audio_sink(&AudioDump::sink, &audio_dump_);
+    }
     install_hle();
     if (!check_hooks())
         return false;

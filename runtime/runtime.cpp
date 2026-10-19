@@ -1,6 +1,10 @@
 #include "runtime.h"
 
+#include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cinttypes>
+#include <thread>
 #include <fstream>
 
 #include "hardware.h"
@@ -16,6 +20,8 @@ constexpr u32 MSR_IR_DR = 0x30;
 
 // Broadway runs at 729 MHz with a 60.75 MHz timebase.
 constexpr s64 CYCLES_PER_TB_TICK = 12;
+
+constexpr u64 HW_TICK_BATCH = 64;
 
 constexpr u32 SPR_DEC = 22;
 constexpr u32 SPR_PVR = 287;
@@ -55,7 +61,11 @@ Runtime::Runtime(Options opts) : opts_(std::move(opts)) {
 
 Runtime::~Runtime() { cpu_free(&cpu); }
 
-void Runtime::hook(u32 addr, Hook fn) { hooks_[addr] = std::move(fn); }
+void Runtime::hook(u32 addr, Hook fn) {
+    hooks_[addr] = std::move(fn);
+    if (u32 i = (addr - 0x80000000u) >> 2; i < hooked_.size())
+        hooked_[i] = true;
+}
 
 bool Runtime::hook(std::string_view name, Hook fn) {
     auto addr = syms_.find(name);
@@ -113,6 +123,9 @@ void Runtime::halt(std::string reason) {
 
 bool Runtime::host_call(CPUState* c, u32 addr) {
     Runtime* rt = self(c);
+    // Called for every dispatched block: reject ordinary MEM1 code without a hash lookup.
+    if (u32 i = (addr - 0x80000000u) >> 2; i < rt->hooked_.size() && addr >= 0x80004000u && !rt->hooked_[i])
+        return false;
     if (auto it = rt->hooks_.find(addr); it != rt->hooks_.end()) {
         it->second(*rt);
         return true;
@@ -289,7 +302,12 @@ void Runtime::advance(s64 cycles) {
         return;
     cycle_carry_ -= ticks * CYCLES_PER_TB_TICK;
     cpu.timebase += (u64)ticks;
-    hw_->tick((u64)ticks);
+    // Hardware timing (VI, DSP, audio DMA) runs in batches; ~1 us of granularity is plenty.
+    hw_ticks_pending_ += (u64)ticks;
+    if (hw_ticks_pending_ >= HW_TICK_BATCH) {
+        hw_->tick(hw_ticks_pending_);
+        hw_ticks_pending_ = 0;
+    }
     s32 dec = (s32)spr_[SPR_DEC];
     s32 next = dec - (s32)ticks;
     if (dec >= 0 && next < 0)
@@ -319,8 +337,62 @@ void Runtime::find_idle_loop() {
         LOG_ERROR("rt", "OS idle loop not found; idle time will be spun");
 }
 
+std::string Runtime::backtrace(int max_frames) const {
+    CPUState* c = const_cast<CPUState*>(&cpu);
+    std::string out;
+    u32 sp = cpu.gpr[1];
+    for (int i = 0; i < max_frames && sp && mem::ptr(c, sp, 8); i++) {
+        u32 caller = mem::read32(c, sp);
+        if (!caller || caller <= sp)
+            break;
+        out += "    " + describe(mem::read32(c, caller + 4)) + "\n";
+        sp = caller;
+    }
+    return out;
+}
+
+// Write watchpoints (debugging): called by cpu.c before every store to MEM1.
+void Runtime::on_mem1_write(u32 offset, u32 size, void* user) {
+    auto* rt = static_cast<Runtime*>(user);
+    for (u32 w : rt->opts_.watch_writes) {
+        u32 woff = w & 0x01FFFFFF;
+        if (woff < offset + size && offset < woff + 4)
+            LOG_INFO("watch", "store%u to %08X at %s (lr %s) r3=%08X r4=%08X r5=%08X\n%s", size * 8,
+                     0x80000000 | offset, rt->describe_pc().c_str(), rt->describe(rt->cpu.lr).c_str(), rt->cpu.gpr[3],
+                     rt->cpu.gpr[4], rt->cpu.gpr[5], rt->backtrace(10).c_str());
+    }
+}
+
 int Runtime::run() {
+    // Sampling profiler: a side thread reads the (racy, but word-sized) guest pc every millisecond.
+    std::atomic<bool> profiling{opts_.profile};
+    std::unordered_map<u32, u32> samples;
+    std::thread sampler;
+    if (opts_.profile)
+        sampler = std::thread([&] {
+            while (profiling) {
+                samples[(u32) * (volatile u32*)&cpu.pc]++;
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        });
+    struct StopSampler {
+        std::atomic<bool>& flag;
+        std::thread& t;
+        ~StopSampler() {
+            flag = false;
+            if (t.joinable())
+                t.join();
+        }
+    } stop_sampler{profiling, sampler};
     find_idle_loop();
+    if (!opts_.watch_writes.empty())
+        ppc_set_mem_write_journal(&Runtime::on_mem1_write, this);
+    for (const auto& name : opts_.watch) {
+        if (auto a = syms_.find(name))
+            watch_.insert(*a);
+        else
+            LOG_ERROR("watch", "unknown symbol %s", name.c_str());
+    }
     while (!halted_) {
         if (opts_.max_blocks && blocks_ >= opts_.max_blocks) {
             halt("block limit reached");
@@ -339,6 +411,9 @@ int Runtime::run() {
             continue;
         }
         recent_[recent_pos_++ % recent_.size()] = cpu.pc;
+        if (!watch_.empty() && watch_.count(cpu.pc))
+            LOG_INFO("watch", "%s(%08X, %08X, %08X) r3=\"%s\" from %s", describe_pc().c_str(), cpu.gpr[3], cpu.gpr[4],
+                     cpu.gpr[5], mem::cstr(&cpu, cpu.gpr[3], 96).c_str(), describe(cpu.lr).c_str());
         if (opts_.trace_calls)
             LOG_INFO("trace", "%s", describe_pc().c_str());
 
@@ -365,6 +440,25 @@ int Runtime::run() {
         advance(-cpu.downcount);
         deliver_interrupts();
     }
+    profiling = false;
+    if (sampler.joinable())
+        sampler.join();
+    if (opts_.profile) {
+        std::unordered_map<std::string, u32> by_fn;
+        u32 total = 0;
+        for (auto [pc, n] : samples) {
+            std::string d = describe(pc);
+            by_fn[d.substr(0, d.find('+'))] += n;
+            total += n;
+        }
+        std::vector<std::pair<u32, std::string>> top;
+        for (auto& [fn, n] : by_fn)
+            top.emplace_back(n, fn);
+        std::sort(top.rbegin(), top.rend());
+        std::fprintf(stderr, "profile (%u samples):\n", total);
+        for (size_t i = 0; i < top.size() && i < 25; i++)
+            std::fprintf(stderr, "  %5.1f%%  %s\n", 100.0 * top[i].first / total, top[i].second.c_str());
+    }
     LOG_INFO("rt", "halted after %" PRIu64 " blocks (%" PRIu64 " idle skips, %.2f s emulated): %s", blocks_,
              idle_skips_, (double)cpu.timebase / 60750000.0, halt_reason_.c_str());
     dump();
@@ -380,14 +474,33 @@ void Runtime::dump() const {
     // Back-chain: each frame stores the caller's r1 at 0(r1) and the saved LR at 4(caller r1).
     std::fprintf(stderr, "backtrace:\n");
     CPUState* c = const_cast<CPUState*>(&cpu);
-    u32 sp = cpu.gpr[1];
-    for (int i = 0; i < 24 && sp && mem::ptr(c, sp, 8); i++) {
+    u32 sp = cpu.gpr[1], last = 0, repeats = 0;
+    for (int i = 0; i < 4096 && sp && mem::ptr(c, sp, 8); i++) {
         u32 caller = mem::read32(c, sp);
         if (!caller || caller <= sp)
             break;
-        std::fprintf(stderr, "  %s\n", describe(mem::read32(c, caller + 4)).c_str());
+        u32 ret = mem::read32(c, caller + 4);
+        if (ret == last) {
+            repeats++;
+        } else {
+            if (repeats)
+                std::fprintf(stderr, "    ... repeated %u more times\n", repeats);
+            std::fprintf(stderr, "  %s\n", describe(ret).c_str());
+            last = ret;
+            repeats = 0;
+        }
         sp = caller;
     }
+    if (repeats)
+        std::fprintf(stderr, "    ... repeated %u more times\n", repeats);
+    // OS threads: the active-thread queue head is at 0x800000DC; OSThread starts with its
+    // OSContext (saved LR 0x84, SRR0 0x198), then state (0x2C8: 1 ready, 2 running, 4 waiting,
+    // 8 moribund), priority (0x2D0) and the active-queue link (0x2FC).
+    std::fprintf(stderr, "threads (current %08X):\n", mem::read32(c, 0x800000E4));
+    for (u32 t = mem::read32(c, 0x800000DC), n = 0; t && n < 64; t = mem::read32(c, t + 0x2FC), n++)
+        std::fprintf(stderr, "  %08X state %u prio %2u  pc %s  lr %s\n", t, mem::read16(c, t + 0x2C8),
+                     mem::read32(c, t + 0x2D0), describe(mem::read32(c, t + 0x198)).c_str(),
+                     describe(mem::read32(c, t + 0x84)).c_str());
     std::fprintf(stderr, "recent blocks (oldest first):\n");
     for (size_t i = 0; i < recent_.size(); i++) {
         u32 pc = recent_[(recent_pos_ + i) % recent_.size()];
@@ -395,4 +508,13 @@ void Runtime::dump() const {
             std::fprintf(stderr, "  %s\n", describe(pc).c_str());
     }
     std::fprintf(stderr, "GX FIFO bytes written: %" PRIu64 "\n", hw_->wgpipe_bytes());
+    for (auto [addr, len] : opts_.dumps) {
+        std::fprintf(stderr, "memory %08X:\n", addr);
+        for (u32 off = 0; off < len; off += 16) {
+            std::fprintf(stderr, "  %08X ", addr + off);
+            for (u32 i = 0; i < 16 && off + i < len; i += 4)
+                std::fprintf(stderr, " %08X", mem::read32(c, addr + off + i));
+            std::fputc('\n', stderr);
+        }
+    }
 }
