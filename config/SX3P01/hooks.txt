@@ -11,3 +11,4 @@ WPADProbe
 WPADGetInfoAsync
 WPADControlMotor  # rumble, played on the host gamepad
 WPADIsMotorEnabled  # always on: the menu's rumble setting decides
+dynMgrExtraStep  # decides the cloth extra step per tick (60 FPS mode), then runs the original

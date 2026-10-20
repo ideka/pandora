@@ -2,9 +2,16 @@
 # original DOL). Format: <address> <original word> <new word>  # what it does
 # The original word is checked, so a patch never lands on the wrong instruction.
 
-# Skip the Wii Remote strap (safety) screen. Its state machine (fn_8034BA78, state at scene+208)
+# Remove the Wii Remote strap (safety) screen. Its state machine (fn_8034BA78, state at scene+208)
 # fades in (0), waits for the fade (1), waits 60 frames (2), then waits for a button or 20 s (3),
-# fades out and frees the pages (4) and starts the title (5). State 0 now goes straight to 3, and 3
-# sees a press at once, so the strap fades out from (nearly) zero alpha and cleans up as usual.
-8034BAE4 38000001 38000003  # li r0, 1 -> li r0, 3 (state 0 -> 3)
-8034BB68 3BC00000 3BC00001  # li r30, 0 -> li r30, 1 ("button pressed")
+# fades out and frees the pages (4) and starts the title after 10 frames (5). State 0 now branches
+# straight to state 4's cleanup (free the pages, go to 5) without starting the fade-in, so the
+# strap is never drawn.
+8034BA9C 41820030 41820230  # beq 0x8034BACC -> beq 0x8034BCCC (state 0 -> state 4 cleanup)
+
+# 60 FPS: three characters' updates run an extra cloth step (dynMgrExtraStep) only on the second
+# logic tick of a frame, which never happens at 60 FPS. Their tick checks are dropped; the hook on
+# dynMgrExtraStep decides instead (runtime/hle.cpp).
+8001F010 40820050 60000000  # bne 0x8001F060 -> nop (Aeron)
+80188EA8 408200B0 60000000  # bne 0x80188F58 -> nop
+8034DDF0 40820034 60000000  # bne 0x8034DE24 -> nop

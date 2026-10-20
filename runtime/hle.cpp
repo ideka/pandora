@@ -117,6 +117,31 @@ void Runtime::install_hle() {
         rt.ret(0);
     });
 
+    // void dynMgrExtraStep(DynMgr*): an extra cloth step (Aeron's cape and other dynamics) after a
+    // character's update. The game logic always ticks at 60 Hz and runs 60/target ticks per rendered
+    // frame; the callers ran this only on the second tick of a frame (frame manager +0x448 clear),
+    // so at 30 FPS cloth gets 3 steps per 2 ticks and was tuned that way. At 60 FPS (one tick per
+    // frame) there is no second tick and the cape floats. The callers' tick check is patched out
+    // (patches.txt) and decided here: unchanged with several ticks per frame, every other tick with
+    // one.
+    hook("dynMgrExtraStep", [](Runtime& rt) {
+        CPUState* c = &rt.cpu;
+        constexpr u32 FRAME_MANAGER = 0x80774678, TICK_COUNTER = 0x807F04F8;
+        const u32 max_rate = mem::read32(c, FRAME_MANAGER + 0x434), rate = mem::read32(c, FRAME_MANAGER + 0x438);
+        const bool one_tick_per_frame = rate != 0 && max_rate / rate <= 1;
+        const bool run = one_tick_per_frame ? (mem::read32(c, TICK_COUNTER) & 1) != 0
+                                            : mem::read8(c, FRAME_MANAGER + 0x448) == 0;
+        if (!run) {
+            rt.ret(c->gpr[3]);
+            return;
+        }
+        // Run the original: its first instruction (stwu r1, -32(r1)) carries the hook marker.
+        const u32 sp = c->gpr[1] - 32;
+        mem::write32(c, sp, c->gpr[1]);
+        c->gpr[1] = sp;
+        c->pc = 0x802527DC;
+    });
+
     // s32 KPADRead(s32 chan, KPADStatus* samples, u32 length): one sample per call.
     // KPADStatus (0xF0 bytes, RVL SDK 4.x): hold/trig/release, acc, pointer, horizon, distance,
     // device type/error/DPD-valid/format at 0x5C, Nunchuk status at 0x60.

@@ -15,3 +15,12 @@
 805A40D0 WPADGetInfoAsync     # provisional: (chan, WPADInfo* (0x18 bytes), callback), called every 60 frames
 805A43C0 WPADEnableMotor      # stores the SYSCONF rumble setting (set from WPADInit, which is stubbed)
 805A4400 WPADIsMotorEnabled   # returns it; the game checks it before every WPADControlMotor
+804C2844 gameFrame            # runs 60/target logic ticks (60 Hz) per rendered frame, then renders; +0x448 = first tick
+802523CC dynMgrTask           # cloth/dynamics manager task: one step (dynMgrStep) per tick
+80252454 dynMgrStep           # steps each cloth object (up to 32) by 1/60 s (2 substeps)
+802527D8 dynMgrExtraStep      # extra step after a character update, on the 2nd tick of a frame (hooked for 60 FPS)
+8040E584 dynClothStep         # one cloth object's step (accumulates dt at +0xC, substep at +0x10)
+80251618 dynMgrCreate         # builds a 0x248-byte cloth/dynamics manager and registers dynMgrTask
+80251DB0 dynMgrLoadDdb        # loads a .ddb (e.g. chara/end/end_dyn_mantL.ddb) into the manager
+8001EF94 playerDynUpdate      # after the player's update: dynMgrExtraStep on the 2nd tick of a frame
+80495D48 sceneNodeUpdateWorld # world matrices down a node chain, stamped with the frame counter
