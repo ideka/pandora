@@ -85,6 +85,15 @@ bool SettingsMenu::init(const std::string& asset_dir) {
                 changed();
             }
         });
+    c.Bind("remote_status", &remote_status_);
+    c.BindFunc(
+        "sensor_bar_above", [this](Rml::Variant& v) { v = settings_.sensor_bar_above; },
+        [this](const Rml::Variant& v) {
+            if (v.Get<bool>() != settings_.sensor_bar_above) {
+                settings_.sensor_bar_above = v.Get<bool>();
+                changed();
+            }
+        });
     c.BindFunc(
         "rumble", [this](Rml::Variant& v) { v = settings_.rumble; },
         [this](const Rml::Variant& v) {
@@ -175,6 +184,8 @@ void SettingsMenu::open() {
     // Nothing held before opening acts in the menu until it is pressed again.
     down_.clear();
     held_ = {};
+    for (size_t a = 0; a < kMenuActionCount; a++)
+        held_[a] = remote_held_[a] ? 1 : 0;
     refresh_rows();
     doc_->Show();
     if (Rml::Element* first = doc_->GetElementById("tab-" + tab_))
@@ -194,6 +205,29 @@ void SettingsMenu::close() {
 void SettingsMenu::refresh() {
     model_.DirtyAllVariables();
     refresh_rows();
+}
+
+void SettingsMenu::set_remote_buttons(u32 buttons) {
+    static constexpr std::pair<MenuAction, u32> MAP[] = {
+        {MenuAction::Toggle, WPAD_HOME},  {MenuAction::Accept, WPAD_A},   {MenuAction::Cancel, WPAD_B},
+        {MenuAction::Up, WPAD_UP},        {MenuAction::Down, WPAD_DOWN},  {MenuAction::Left, WPAD_LEFT},
+        {MenuAction::Right, WPAD_RIGHT},  {MenuAction::PrevTab, WPAD_MINUS}, {MenuAction::NextTab, WPAD_PLUS},
+    };
+    bool changed = false;
+    for (const auto& [a, bit] : MAP) {
+        const bool held = buttons & bit;
+        changed = changed || held != remote_held_[(size_t)a];
+        remote_held_[(size_t)a] = held;
+    }
+    if (changed && capturing_ < 0)
+        update_held(true);
+}
+
+void SettingsMenu::set_remote_status(std::string status) {
+    if (status != remote_status_) {
+        remote_status_ = std::move(status);
+        model_.DirtyVariable("remote_status");
+    }
 }
 
 void SettingsMenu::set_paused(bool paused) {
@@ -408,6 +442,7 @@ void SettingsMenu::update_held(bool fire) {
             const auto& m = settings_.bindings.menu[a][(size_t)p.device()];
             count += (int)std::count(m.begin(), m.end(), p);
         }
+        count += remote_held_[a] ? 1 : 0;
         const bool pressed = held_[a] == 0 && count > 0;
         held_[a] = count;
         if (pressed && fire) {

@@ -281,6 +281,12 @@ Bindings Bindings::defaults() {
     return b;
 }
 
+void Input::poll_wiimote() {
+    wiimote_.poll();
+    if (SDL_GetTicks() > wiimote_rumble_until_)
+        wiimote_.set_rumble(false);  // the game stopped updating (paused, menu open)
+}
+
 bool Input::add_script(const std::string& spec) {
     const size_t at = spec.find('@');
     if (at == std::string::npos)
@@ -326,6 +332,8 @@ void Input::update(u64 frame, bool use_devices) {
         s.stick_y = std::clamp(val(Control::StickUp) - val(Control::StickDown), -1.0f, 1.0f);
         px = val(Control::PointerRight) - val(Control::PointerLeft);
         py = val(Control::PointerDown) - val(Control::PointerUp);
+        if (px != 0 || py != 0)
+            pointer_input_at_ = SDL_GetTicks();
     }
     // The pointer (in screen units, -1..1 across the window) moves at a rate set by its controls and
     // stays where it was left; moving the mouse over the window puts it under the mouse instead.
@@ -339,9 +347,30 @@ void Input::update(u64 frame, bool use_devices) {
                                                       (mx != mouse_x_ || my != mouse_y_)) {
             pointer_x_ = std::clamp(mx / (float)w * 2.0f - 1.0f, -1.0f, 1.0f);
             pointer_y_ = std::clamp(my / (float)h * 2.0f - 1.0f, -1.0f, 1.0f);
+            pointer_input_at_ = SDL_GetTicks();
         }
         mouse_x_ = mx;
         mouse_y_ = my;
+    }
+    // A real Wii Remote: its buttons (HOME opens the settings menu), Nunchuk, motion and pointer.
+    const Wiimote::State& wm = wiimote_.state();
+    if (use_devices && wm.connected) {
+        s.buttons |= wm.buttons & ~WPAD_HOME;
+        if (wm.nunchuk && (wm.stick_x != 0 || wm.stick_y != 0)) {
+            s.stick_x = wm.stick_x;
+            s.stick_y = wm.stick_y;
+        }
+        s.motion = true;
+        std::copy(std::begin(wm.acc), std::end(wm.acc), s.acc);
+        std::copy(std::begin(wm.nunchuk_acc), std::end(wm.nunchuk_acc), s.nunchuk_acc);
+        if (wm.pointer_valid) {
+            pointer_x_ = wm.pointer_x;
+            pointer_y_ = wm.pointer_y;
+        } else {
+            // Not pointing at the screen: the cursor goes away, unless the mouse or bound inputs
+            // moved it recently.
+            s.pointer_valid = SDL_GetTicks() - pointer_input_at_ < 2000;
+        }
     }
     s.pointer_x = pointer_x_ * POINTER_RANGE_X;
     s.pointer_y = pointer_y_ * POINTER_RANGE_Y;
@@ -363,4 +392,10 @@ void Input::update(u64 frame, bool use_devices) {
             SDL_RumbleGamepad(p, 0, 0, 0);
     }
     rumbling_ = want;
+    if (use_devices && rumble_on_ && rumble_intensity_ > 0.0f && wm.connected) {
+        wiimote_.set_rumble(true);  // on/off only
+        wiimote_rumble_until_ = SDL_GetTicks() + 200;
+    } else {
+        wiimote_.set_rumble(false);
+    }
 }

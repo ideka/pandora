@@ -42,6 +42,14 @@ Open work only. How things currently work, and why, is in [NOTES.md](NOTES.md).
 - Confirm the provisional names `WPADInit`, `WPADRegisterAllocator` and `KPADInit` in
   `config/SX3P01/names.txt` (identified from call structure).
 
+## Real Wii Remote
+
+- Untested with a sensor bar: check the pointer's direction (the camera's y orientation is assumed),
+  scale and the above/below offset; the accelerometer axis mapping is also unverified in game.
+- Motion Plus, Classic Controller and other extensions are not handled; only one remote (player 1).
+- Pointer with one dot visible, distance (KPAD's dist) and smoothing like KPAD's are not emulated.
+- Connecting blocks the main thread briefly (register writes wait for acknowledgements).
+
 ## Settings menu
 
 - Graphics tab (internal resolution/scale, aspect ratio, vsync, MSAA) once aurora exposes them.

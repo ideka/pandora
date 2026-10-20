@@ -1,6 +1,7 @@
 // High-level replacements for guest functions whose hardware we do not emulate.
 // Every function hooked here must also be listed in config/SX3P01/hooks.txt.
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 #include "input.h"
@@ -140,8 +141,11 @@ void Runtime::install_hle() {
         mem::write32(c, buf + 0x04, p.buttons & ~previous);
         mem::write32(c, buf + 0x08, previous & ~p.buttons);
         previous = p.buttons;
-        f32(0x10, -1.0f);  // acc: at rest, gravity along -Y
-        f32(0x18, 1.0f);   // acc_value
+        // acc (x, y, z in g) and its magnitude: a real Wii Remote's, or at rest (gravity along -y).
+        f32(0x0C, p.acc[0]);
+        f32(0x10, p.acc[1]);
+        f32(0x14, p.acc[2]);
+        f32(0x18, std::sqrt(p.acc[0] * p.acc[0] + p.acc[1] * p.acc[1] + p.acc[2] * p.acc[2]));
         f32(0x20, p.pointer_x);
         f32(0x24, p.pointer_y);
         f32(0x34, 1.0f);   // horizon: level
@@ -153,8 +157,11 @@ void Runtime::install_hle() {
         mem::write8(c, buf + 0x5F, 5);                         // WPAD_FMT_FS_BTN_ACC_DPD
         f32(0x60, p.stick_x);
         f32(0x64, p.stick_y);
-        f32(0x6C, -1.0f);  // Nunchuk acc
-        f32(0x74, 1.0f);
+        f32(0x68, p.nunchuk_acc[0]);  // Nunchuk acc and magnitude
+        f32(0x6C, p.nunchuk_acc[1]);
+        f32(0x70, p.nunchuk_acc[2]);
+        f32(0x74, std::sqrt(p.nunchuk_acc[0] * p.nunchuk_acc[0] + p.nunchuk_acc[1] * p.nunchuk_acc[1] +
+                            p.nunchuk_acc[2] * p.nunchuk_acc[2]));
         rt.ret(1);
     });
 

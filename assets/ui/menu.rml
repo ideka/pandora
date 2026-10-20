@@ -76,6 +76,15 @@
             <span class="note">Move the mouse over the window to aim the Wii Remote pointer</span>
         </div>
         <div class="setting">
+            <span class="name">Wii Remote</span>
+            <span class="status">{{ remote_status }}</span>
+        </div>
+        <div class="setting">
+            <span class="name">Sensor bar above screen</span>
+            <input type="checkbox" data-checked="sensor_bar_above"/>
+            <span class="note">Where the sensor bar sits, for a real Wii Remote's pointer</span>
+        </div>
+        <div class="setting">
             <span class="name">Fullscreen</span>
             <input type="checkbox" data-checked="fullscreen"/>
             <span class="note">F11 or Alt+Enter</span>

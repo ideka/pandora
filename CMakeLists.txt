@@ -81,6 +81,7 @@ add_executable(pandora
     runtime/input.cpp
     runtime/settings.cpp
     runtime/ui/settings_menu.cpp
+    runtime/wiimote.cpp
     runtime/ios_devices.cpp
     runtime/main.cpp
     runtime/nand.cpp
@@ -109,6 +110,6 @@ add_dependencies(pandora pandora_assets)
 if(MSVC)
     target_compile_options(pandora PRIVATE /W4 /permissive- /MP /Z7)
     target_link_options(pandora PRIVATE /DEBUG /OPT:REF /OPT:ICF)
-    target_link_libraries(pandora PRIVATE dbghelp)
+    target_link_libraries(pandora PRIVATE dbghelp hid)  # hid: Wii Remote output reports
     target_compile_definitions(pandora PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif()

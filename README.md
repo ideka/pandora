@@ -67,6 +67,11 @@ No game code or data is included. You need your own copy of the game.
    General). The Wii Remote strap screen is skipped and the HOME Menu is disabled. In the menu: D-pad/left stick or arrows/WASD move, South or Enter/Space accept, East or
    Backspace cancel, LB/RB or PageUp/PageDown (Q/E) switch tabs.
 
+   A real **Wii Remote** (with Nunchuk) works too: pair it in Windows' Bluetooth settings (or use a
+   DolphinBar in mode 4) and it is picked up while the game runs; its buttons, Nunchuk, motion,
+   pointer (needs a sensor bar; set whether it sits above or below the screen under General) and
+   rumble go to the game directly. HOME opens the settings menu (D-pad, A, B, -/+ work there).
+
    F11 or Alt+Enter toggles fullscreen. Audio plays on the default output device; `--mute`
    disables it. `--background` runs are always muted and never write the settings file.
 

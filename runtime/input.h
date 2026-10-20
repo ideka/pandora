@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "guest.h"
+#include "wiimote.h"
 
 // KPAD/WPAD core button bits (Nunchuk Z/C as KPAD reports them).
 enum : u32 {
@@ -31,6 +32,8 @@ struct PadState {
     float stick_x = 0, stick_y = 0;      // Nunchuk stick, -1..1 (y up)
     float pointer_x = 0, pointer_y = 0;  // screen pointer, -1..1 (y down), as KPAD reports it
     bool pointer_valid = true;
+    bool motion = false;  // accelerometers from a real Wii Remote (otherwise "at rest")
+    float acc[3] = {0, -1, 0}, nunchuk_acc[3] = {0, -1, 0};
 };
 
 // The emulated controls that can be bound.
@@ -105,6 +108,11 @@ public:
     // Whether the mouse position aims the pointer (absolute, over the window).
     void set_mouse_pointer(bool enabled) { mouse_pointer_ = enabled; }
 
+    // A real Wii Remote, if one is paired: poll every host frame.
+    void poll_wiimote();
+    const Wiimote& wiimote() const { return wiimote_; }
+    void set_sensor_bar_above(bool above) { wiimote_.set_sensor_bar_above(above); }
+
     // Poll the host devices (when use_devices) and apply scripted presses for this guest frame.
     void update(u64 frame, bool use_devices);
     const PadState& state() const { return state_; }
@@ -122,4 +130,7 @@ private:
     bool mouse_pointer_ = true;
     bool rumble_on_ = false, rumbling_ = false;
     float rumble_intensity_ = 1.0f;
+    Wiimote wiimote_;
+    u64 wiimote_rumble_until_ = 0;  // SDL ticks (ms): the remote's motor has no timeout of its own
+    u64 pointer_input_at_ = 0;      // SDL ticks of the last mouse/bound pointer movement
 };

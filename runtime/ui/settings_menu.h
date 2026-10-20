@@ -38,6 +38,11 @@ public:
     void refresh();
     // Shows the "paused" indicator (the game is paused with F5, independently of the menu).
     void set_paused(bool paused);
+    // A real Wii Remote's buttons (WPAD_* bits), every host frame: HOME opens/closes the menu, the
+    // D-pad moves, A accepts, B goes back, -/+ switch tabs.
+    void set_remote_buttons(u32 buttons);
+    // Shown on the General tab (e.g. "Connected, Nunchuk, battery 80%").
+    void set_remote_status(std::string status);
 
     // One row of a bindings table, as the document sees it.
     struct Row {
@@ -96,6 +101,8 @@ private:
 
     std::vector<PhysicalInput> down_;            // physical inputs currently held
     std::array<int, kMenuActionCount> held_{};  // how many of them hold each action
+    std::array<bool, kMenuActionCount> remote_held_{};  // held by a real Wii Remote's buttons
+    Rml::String remote_status_;
     std::array<Clock::time_point, kMenuActionCount> next_repeat_{};
     std::array<std::array<bool, 2>, SDL_GAMEPAD_AXIS_COUNT> axis_on_{};  // [axis][negative, positive] pressed
 };

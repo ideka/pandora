@@ -11,6 +11,7 @@ struct Settings {
     bool muted = false;
     int rumble = 100;          // percent; 0 disables rumble
     bool mouse_pointer = true;  // the mouse aims the Wii Remote pointer
+    bool sensor_bar_above = false;  // real Wii Remote: sensor bar above (or below) the screen
     Bindings bindings = Bindings::defaults();
 
     // Missing or unreadable files leave the defaults; unknown keys are ignored.

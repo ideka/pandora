@@ -88,6 +88,26 @@ aids. Open work is in [TODO.md](TODO.md).
   hooked and drives `SDL_RumbleGamepad`, refreshed every guest frame with a 200 ms duration so it
   stops by itself when the game pauses.
 
+## Real Wii Remote
+
+- `runtime/wiimote.cpp` drives a Wii Remote (057E:0306, and the -TR 057E:0330) through SDL's HID
+  API, with SDL's own Wii joystick driver disabled. It scans when the system's HID device list
+  changes, then: player LED 1, accelerometer calibration (EEPROM 0x16), IR camera in basic mode
+  (Wii sensitivity level 3), the extension unencrypted (0x55 to A400F0, 0x00 to A400FB; a Nunchuk's
+  id ends A4 20 00 00, retried while it reports busy) and continuous report 0x37 (buttons,
+  accelerometer, 10 IR bytes, 6 extension bytes). A status report (extension plugged or unplugged)
+  re-initialises the extension and the reporting mode.
+- Some Windows Bluetooth stacks reject WriteFile on the remote (notably the -TR); output reports
+  then go through HidD_SetOutputReport, as in Dolphin.
+- Core buttons have the WPAD bit layout. Accelerometer axes (remote: x left, y towards the camera,
+  z up) become KPAD's (x right, y down, z towards the camera): (-x, -z, y); the same for the Nunchuk.
+- Pointer: the midpoint of the first two IR dots, rotated by their angle (roll), mirrored, scaled so
+  a ~1.2 m 16:9 screen at 2.5 m is covered, with pointing at the sensor bar at the screen edge next
+  to it. No dots: the pointer is invalid (the game hides its cursor) unless the mouse or bound
+  inputs moved it in the last two seconds.
+- Rumble is on/off on the remote's motor, switched off explicitly when the game stops updating.
+- Background (test) runs do not touch remotes unless PANDORA_POLL_WIIMOTE is set.
+
 ## System
 
 - The locked L1 cache (16 KB at 0xE0000000) and its DMA (DMA_U/DMA_L) are emulated; the game skins

@@ -156,6 +156,7 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
     config.startFullscreen = settings.fullscreen && !background;
     if (background)
         SDL_SetHint(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, "0");
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_WII, "0");  // Wii Remotes are driven directly (runtime/wiimote)
     aurora_initialize(argc, argv, &config);
     if (background)
         send_window_to_background();
@@ -174,6 +175,7 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
         rt.set_audio_volume(settings.muted ? 0.0f : (float)settings.volume / 100.0f);
         rt.input().set_rumble_intensity((float)settings.rumble / 100.0f);
         rt.input().set_mouse_pointer(settings.mouse_pointer);
+        rt.input().set_sensor_bar_above(settings.sensor_bar_above);
     };
     apply_settings();
     SettingsMenu menu(settings, [&] {
@@ -268,6 +270,22 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
                 aurora_end_frame();
                 continue;
             }
+        }
+        // A real Wii Remote: polled every host frame; its buttons also drive the menu. Background
+        // (test) runs leave remotes alone unless PANDORA_POLL_WIIMOTE is set.
+        static const bool poll_in_background = std::getenv("PANDORA_POLL_WIIMOTE") != nullptr;
+        if (!background || poll_in_background) {
+            rt.input().poll_wiimote();
+            const Wiimote::State& wm = rt.input().wiimote().state();
+            menu.set_remote_buttons(wm.connected ? wm.buttons : 0);
+            char status[96];
+            if (!wm.connected)
+                std::snprintf(status, sizeof status, "Not connected (pair it over Bluetooth)");
+            else
+                std::snprintf(status, sizeof status, "Connected%s, battery %d%%%s", wm.nunchuk ? " with Nunchuk" : "",
+                              wm.battery * 100 / 200 > 100 ? 100 : wm.battery * 100 / 200,
+                              wm.pointer_valid ? ", pointing at the screen" : "");
+            menu.set_remote_status(status);
         }
         menu.update();
         // While paused (F5) the guest does not run; aurora keeps presenting the last frame.
