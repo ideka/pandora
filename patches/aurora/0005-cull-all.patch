@@ -1,0 +1,30 @@
+diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
+index 2408c92..f354094 100644
+--- a/lib/gx/command_processor.cpp
++++ b/lib/gx/command_processor.cpp
+@@ -500,6 +500,13 @@ static void draw_prim(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, ByteReader&
+   if (totalVtxBytes > reader.remaining())
+     UNLIKELY { handle_draw_overrun(totalVtxBytes, reader); }
+ 
++  // GX_CULL_ALL culls every triangle (lines and points are never culled): nothing to draw.
++  if (g_gxState.cullMode == GX_CULL_ALL && prim != GX_LINES && prim != GX_LINESTRIP && prim != GX_POINTS)
++    UNLIKELY {
++      reader.take(totalVtxBytes);
++      return;
++    }
++
+   const bool cleanState = g_gxState.dirty == 0 && fmt == sDrawCache.lastDrawFmt && sDrawCache.lineMode == 0 &&
+                           prim != GX_LINES && prim != GX_LINESTRIP && prim != GX_POINTS;
+   auto* lastDraw = cleanState ? gfx::get_last_draw_command<DrawData>() : nullptr;
+diff --git a/lib/gx/gx.cpp b/lib/gx/gx.cpp
+index 490de4c..8427093 100644
+--- a/lib/gx/gx.cpp
++++ b/lib/gx/gx.cpp
+@@ -208,6 +208,7 @@ wgpu::PrimitiveState to_primitive_state(GXCullMode gx_cullMode) {
+     cullMode = wgpu::CullMode::Back;
+     break;
+   case GX_CULL_NONE:
++  case GX_CULL_ALL:  // triangle draws are skipped while culling everything (command_processor)
+     break;
+   }
+   return {

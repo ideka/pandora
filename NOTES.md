@@ -32,6 +32,8 @@ aids. Open work is in [TODO.md](TODO.md).
     which left the outermost physical columns unpainted when upscaled.
 - Aurora's scissor-offset (BP 0x59) convention is the negative of the hardware's; the bridge
   converts it.
+- `GX_CULL_ALL` (patches/aurora/0005): triangle draws are skipped while it is set (lines and points
+  are never culled); aurora aborted on it ("unsupported cull mode 3").
 - Logic ops other than CLEAR/COPY/NOOP are approximated with blending (Dolphin's table).
 - Display copies (EFB -> XFB) are not forwarded: aurora presents its EFB at the end of each host
   frame. The copy's clear is applied at the start of the next host frame.

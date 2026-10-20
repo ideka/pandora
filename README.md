@@ -76,6 +76,11 @@ No game code or data is included. You need your own copy of the game.
    F11 or Alt+Enter toggles fullscreen. Audio plays on the default output device; `--mute`
    disables it. `--background` runs are always muted and never write the settings file.
 
+Each run logs to `build/aurora/pandora.log` (`pandora-background.log` for `--background` runs). On
+a crash or fatal error the log ends with where the game was (guest function and backtrace) and a
+minidump is written to `build/aurora/pandora.dmp` (open it in Visual Studio with the PDB next to
+the executable). Please include both when reporting a crash.
+
 `orig/` and `build/` are git-ignored. Saves and aurora's caches live in `build/nand` and
 `build/aurora`.
 

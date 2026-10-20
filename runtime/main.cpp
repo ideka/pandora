@@ -16,6 +16,7 @@
 #endif
 
 #include "gpu/aurora_bridge.h"
+#include "crash.h"
 #include "log.h"
 #include "runtime.h"
 #include "png_write.h"
@@ -41,8 +42,10 @@ static void usage() {
 static void aurora_log(AuroraLogLevel level, const char* module, const char* message, unsigned int len) {
     static const int ours[] = {2, 1, 1, 0, 0};  // debug, info, warning, error, fatal
     LOG_AT(ours[level], module, "%.*s", (int)len, message);
-    if (level == LOG_FATAL)
+    if (level == LOG_FATAL) {
+        crash::report("fatal error in aurora (above)");
         std::abort();
+    }
 }
 
 // Windowed: aurora owns the window and the WebGPU device; each host frame runs the guest until
@@ -474,7 +477,14 @@ int main(int argc, char** argv) {
         return 2;
     }
 
+    // Everything logged also goes to a file (test runs use their own, to keep the player's).
+    std::filesystem::create_directories("build/aurora");
+    const char* log_path = background ? "build/aurora/pandora-background.log" : "build/aurora/pandora.log";
+    if (!log_open_file(log_path))
+        std::fprintf(stderr, "cannot write %s\n", log_path);
+
     Runtime rt(opts);
+    crash::install("build/aurora", &rt);
     for (const auto& spec : presses)
         if (!rt.input().add_script(spec)) {
             std::fprintf(stderr, "bad --press %s (use e.g. A@150+10)\n", spec.c_str());

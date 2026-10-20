@@ -78,7 +78,9 @@ add_executable(pandora
     runtime/hle.cpp
     runtime/ios.cpp
     runtime/host_profiler.cpp
+    runtime/crash.cpp
     runtime/input.cpp
+    runtime/log.cpp
     runtime/settings.cpp
     runtime/ui/settings_menu.cpp
     runtime/wiimote.cpp
