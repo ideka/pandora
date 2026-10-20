@@ -153,6 +153,7 @@ private:
     std::array<u32, 32> recent_{};  // ring of recent block entry pcs
     u32 recent_pos_ = 0;
     u64 blocks_ = 0;
+    std::unique_ptr<std::unordered_map<u32, u64>> dispatch_hist_;  // PANDORA_DISPATCH_HIST
     u32 idle_pc_ = 0;
     std::unordered_set<u32> watch_;
     u64 idle_skips_ = 0;

@@ -11,6 +11,8 @@
 #include "log.h"
 #include "memory.h"
 #include "guest_memory.h"
+
+extern "C" void pandora_fpscr_updated(CPUState* c);
 #include "runtime.h"
 
 namespace {
@@ -47,6 +49,7 @@ bool Runtime::boot() {
         !ios_->init(opts_.disc, opts_.nand))
         return false;
     cpu.external_user_data = this;
+    pandora_fpscr_updated(&cpu);  // host flush-to-zero mode follows FPSCR[NI]
     cpu.host_call = host_call;
     cpu.external_read = external_read;
     cpu.external_write = external_write;

@@ -10,6 +10,8 @@
 
 #include "memory.h"
 
+extern "C" void pandora_fpscr_updated(CPUState* c);
+
 namespace {
 
 constexpr u32 OS_CURRENT_CONTEXT = 0x800000D4;
@@ -67,6 +69,7 @@ void load_fpu(CPUState* c, u32 ctx) {
     if (!(mem::read16(c, ctx + CTX_STATE) & STATE_FPSAVED))
         return;
     c->fpscr = (u32)mem::read64(c, ctx + CTX_FPSCR);
+    pandora_fpscr_updated(c);
     if (c->hid2 & HID2_PSE)
         for (u32 i = 0; i < 32; i++)
             c->ps1[i] = f32_from(mem::read32(c, ctx + CTX_PSF + 8 * i + 4));
@@ -94,4 +97,14 @@ extern "C" bool pandora_fp_unavailable(CPUState* c, u32 cia) {
     }
     mem::write16(c, ctx + CTX_STATE, mem::read16(c, ctx + CTX_STATE) & ~STATE_EXC);
     return true;
+}
+
+// FPSCR[NI] (non-IEEE mode): denormal results flush to zero (and, as in Dolphin, denormal inputs
+// read as zero). Mirrored to this thread's MXCSR so the fast floating-point code needs no flag
+// test per operation. Called for every FPSCR write in the recompiled code and on context loads.
+#include <immintrin.h>
+extern "C" void pandora_fpscr_updated(CPUState* c) {
+    ppc_fpscr_updated(c);
+    const unsigned csr = _mm_getcsr() & ~0x8040u;  // FTZ (bit 15) | DAZ (bit 6)
+    _mm_setcsr(csr | ((c->fpscr & 0x4u) ? 0x8040u : 0u));
 }

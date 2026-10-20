@@ -439,6 +439,8 @@ void Runtime::on_mem1_write(u32 offset, u32 size, void* user) {
 }
 
 void Runtime::start() {
+    if (std::getenv("PANDORA_DISPATCH_HIST"))
+        dispatch_hist_ = std::make_unique<std::unordered_map<u32, u64>>();
     // Sampling profiler: a side thread reads the (racy, but word-sized) guest pc every millisecond.
     if (opts_.profile) {
         host_profiler_.start();
@@ -489,6 +491,8 @@ bool Runtime::step() {
         LOG_INFO("trace", "%s", describe_pc().c_str());
 
     cpu.downcount = 0;
+    if (dispatch_hist_)
+        (*dispatch_hist_)[cpu.pc]++;
     if (!guest_dispatch(&cpu)) {
         halt("no code at " + describe_pc());
         return false;
@@ -545,6 +549,21 @@ int Runtime::finish() {
     host_profiler_.stop();
     if (opts_.profile)
         host_profiler_.report();
+    if (dispatch_hist_) {
+        // PANDORA_DISPATCH_HIST: where the recompiled code returned to the dispatcher most.
+        std::vector<std::pair<u64, u32>> top(dispatch_hist_->size());
+        size_t k = 0;
+        u64 total = 0;
+        for (auto [pc, n] : *dispatch_hist_) {
+            top[k++] = {n, pc};
+            total += n;
+        }
+        std::sort(top.rbegin(), top.rend());
+        std::fprintf(stderr, "dispatches: %llu total, %zu distinct targets; the most frequent:\n",
+                     (unsigned long long)total, top.size());
+        for (size_t i = 0; i < top.size() && i < 40; i++)
+            std::fprintf(stderr, "  %5.1f%%  %s\n", 100.0 * top[i].first / total, describe(top[i].second).c_str());
+    }
     if (opts_.profile) {
         std::unordered_map<std::string, u32> by_fn;
         u32 total = 0;

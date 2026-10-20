@@ -1,19 +1,26 @@
 /* Fast inline floating-point and paired-single operations for the recompiled chunks (included by
    the shadow cpu/cpu.h, after DolRecomp's declarations; DolRecomp's own cpu.c is untouched).
 
-   DolRecomp's versions are out-of-line calls from ~30k sites that also maintain FPSCR exception,
-   FI/FR and FPRF bits. These produce the same results bit for bit (runtime/fp_selftest.c checks
-   that against cpu.c: run pandora --fp-selftest) without the flag bookkeeping, which games do not
-   read: single rounding with FPSCR[NI] flushing, the 25-bit multiplier of single multiplies,
-   DolRecomp's NaN propagation, fused single multiply-adds, compares (CR and FPSCR[FPCC]), and
-   quantized paired-single loads/stores. */
+   Accuracy: that of Dolphin's JIT with its default settings, which every game is fine with:
+   - results are the host's SSE results: NaNs are whatever SSE produces (a NaN operand quieted,
+     or SSE's default NaN, which has the sign bit set where the Gekko's is clear), with no
+     per-operation NaN checks;
+   - FPSCR[NI] (non-IEEE mode, set by games at boot) is mirrored to the host's MXCSR flush-to-zero
+     and denormals-are-zero bits (runtime/fpu_switch.cpp, via ppc_fpscr_updated), so denormal
+     results flush in hardware instead of a flag test per operation;
+   - fused single multiply-adds are one FMA rounded to single, without correcting the rare
+     double-rounding tie (DolRecomp's cpu.c does; the deviation is one single-precision ulp,
+     about once in 2^29 operations).
+   Everything else is exact: single rounding, the 25-bit multiplier of single multiplies (done in
+   the SIMD domain), compares, quantized paired-single loads and stores. runtime/fp_selftest.c
+   checks all of it against DolRecomp's cpu.c, allowing exactly those deviations. */
 #ifndef PANDORA_FASTFP_H
 #define PANDORA_FASTFP_H
 
+#include <immintrin.h>
 #include <math.h>
 #include <string.h>
 
-/* MSVC's C headers make isnan a call into the CRT (_dtest); this compiles to one compare. */
 #define PANDORA_ISNAN(x) __builtin_isnan(x)
 
 PANDORA_INLINE f64 pandora_f64_from_u64(u64 bits) {
@@ -28,130 +35,44 @@ PANDORA_INLINE u64 pandora_u64_from_f64(f64 v) {
 }
 
 /* The multiplier of single-precision multiplies keeps 25 bits of mantissa, as DolRecomp's (and
-   Dolphin's) force_25_bit: (bits & keep) + (bits & round bit). Denormals out of line. */
-PANDORA_NOINLINE f64 pandora_f25_denormal(u64 bits) {
-    const u64 fraction = bits & 0x000FFFFFFFFFFFFFull;
-    const unsigned shift = (unsigned)__builtin_clzll(fraction) - 11;
-    u64 keep = ~0ull, round = 0;
-    if (shift < 28) {
-        keep = ~((1ull << (27 - shift)) - 1);
-        round = 0x0000000008000000ull >> shift;
-    }
-    return pandora_f64_from_u64((bits & keep) + (bits & round));
-}
+   Dolphin's) force_25_bit: (bits & keep) + (bits & round bit), in the SIMD domain (no GPR round
+   trip). Denormal multipliers are zero under DAZ, so their special rounding does not matter. */
 PANDORA_INLINE f64 pandora_f25(f64 value) {
-    const u64 bits = pandora_u64_from_f64(value);
-    /* denormal (exponent 0, fraction not 0): magnitude - 1 < 2^52 - 1 */
-    if (__builtin_expect((bits & 0x7FFFFFFFFFFFFFFFull) - 1 < 0x000FFFFFFFFFFFFFull, 0))
-        return pandora_f25_denormal(bits);
-    return pandora_f64_from_u64((bits & 0xFFFFFFFFF8000000ull) + (bits & 0x0000000008000000ull));
+    const __m128i b = _mm_castpd_si128(_mm_set_sd(value));
+    const __m128i keep = _mm_set_epi64x(0, (long long)0xFFFFFFFFF8000000ull);
+    const __m128i round = _mm_set_epi64x(0, (long long)0x0000000008000000ull);
+    return _mm_cvtsd_f64(_mm_castsi128_pd(_mm_add_epi64(_mm_and_si128(b, keep), _mm_and_si128(b, round))));
 }
 
 PANDORA_INLINE f64 pandora_single(f64 value) { return (f64)(f32)value; }
 
-/* NaN results as DolRecomp: the first NaN operand, quieted, else the default NaN. */
-PANDORA_INLINE f64 pandora_quiet(f64 v) { return pandora_f64_from_u64(pandora_u64_from_f64(v) | 0x0008000000000000ull); }
-PANDORA_NOINLINE f64 pandora_nan2(f64 a, f64 b) {
-    if (PANDORA_ISNAN(a))
-        return pandora_quiet(a);
-    if (PANDORA_ISNAN(b))
-        return pandora_quiet(b);
-    return pandora_f64_from_u64(0x7FF8000000000000ull);
-}
-PANDORA_NOINLINE f64 pandora_nan3(f64 a, f64 b, f64 c) {
-    if (PANDORA_ISNAN(a))
-        return pandora_quiet(a);
-    if (PANDORA_ISNAN(b))
-        return pandora_quiet(b);
-    if (PANDORA_ISNAN(c))
-        return pandora_quiet(c);
-    return pandora_f64_from_u64(0x7FF8000000000000ull);
-}
-#define PANDORA_NAN2(r, a, b) (__builtin_expect(PANDORA_ISNAN(r), 0) ? pandora_nan2(a, b) : (r))
-#define PANDORA_NAN3(r, a, b, c) (__builtin_expect(PANDORA_ISNAN(r), 0) ? pandora_nan3(a, b, c) : (r))
-
-/* Single-precision results, as DolRecomp's force_single: in non-IEEE mode (FPSCR[NI], which games
-   set) magnitudes below the smallest normal single flush to a signed zero. */
-PANDORA_INLINE f64 pandora_round_single(CPUState* c, f64 value) {
-    if (c->fpscr & 0x4u) { /* FPSCR[NI] */
-        const u64 bits = pandora_u64_from_f64(value);
-        if ((bits & 0x7FFFFFFFFFFFFFFFull) < 0x3810000000000000ull)
-            return pandora_f64_from_u64(bits & 0x8000000000000000ull);
-    }
-    return pandora_single(value);
-}
-/* force_double: NI flushes double denormals. */
-PANDORA_INLINE f64 pandora_round_double(CPUState* c, f64 value) {
-    if ((c->fpscr & 0x4u) && value != 0.0 && __builtin_fabs(value) < 2.2250738585072014e-308)
-        return __builtin_copysign(0.0, value);
-    return value;
-}
-
 PANDORA_INLINE void pandora_write_single(CPUState* c, u8 d, f64 value) {
-    const f64 r = pandora_round_single(c, value);
+    const f64 r = pandora_single(value);
     c->fpr[d] = r;
     c->ps1[d] = r;
 }
 
-PANDORA_INLINE void pandora_fadds(CPUState* c, u8 d, u8 a, u8 b) {
-    const f64 x = c->fpr[a], y = c->fpr[b];
-    pandora_write_single(c, d, PANDORA_NAN2(x + y, x, y));
-}
-PANDORA_INLINE void pandora_fsubs(CPUState* c, u8 d, u8 a, u8 b) {
-    const f64 x = c->fpr[a], y = c->fpr[b];
-    pandora_write_single(c, d, PANDORA_NAN2(x - y, x, y));
-}
+PANDORA_INLINE void pandora_fadds(CPUState* c, u8 d, u8 a, u8 b) { pandora_write_single(c, d, c->fpr[a] + c->fpr[b]); }
+PANDORA_INLINE void pandora_fsubs(CPUState* c, u8 d, u8 a, u8 b) { pandora_write_single(c, d, c->fpr[a] - c->fpr[b]); }
 PANDORA_INLINE void pandora_fmuls(CPUState* c, u8 d, u8 a, u8 b) {
-    const f64 x = c->fpr[a], y = pandora_f25(c->fpr[b]);
-    pandora_write_single(c, d, PANDORA_NAN2(x * y, x, y));
+    pandora_write_single(c, d, c->fpr[a] * pandora_f25(c->fpr[b]));
 }
-PANDORA_INLINE void pandora_fdivs(CPUState* c, u8 d, u8 a, u8 b) {
-    const f64 x = c->fpr[a], y = c->fpr[b];
-    pandora_write_single(c, d, PANDORA_NAN2(x / y, x, y));
-}
-PANDORA_INLINE void pandora_fadd(CPUState* c, u8 d, u8 a, u8 b) {
-    const f64 x = c->fpr[a], y = c->fpr[b];
-    c->fpr[d] = pandora_round_double(c, PANDORA_NAN2(x + y, x, y));
-}
-PANDORA_INLINE void pandora_fsub(CPUState* c, u8 d, u8 a, u8 b) {
-    const f64 x = c->fpr[a], y = c->fpr[b];
-    c->fpr[d] = pandora_round_double(c, PANDORA_NAN2(x - y, x, y));
-}
-PANDORA_INLINE void pandora_fmul(CPUState* c, u8 d, u8 a, u8 b) {
-    const f64 x = c->fpr[a], y = c->fpr[b];
-    c->fpr[d] = pandora_round_double(c, PANDORA_NAN2(x * y, x, y));
-}
-PANDORA_INLINE void pandora_fdiv(CPUState* c, u8 d, u8 a, u8 b) {
-    const f64 x = c->fpr[a], y = c->fpr[b];
-    c->fpr[d] = pandora_round_double(c, PANDORA_NAN2(x / y, x, y));
-}
+PANDORA_INLINE void pandora_fdivs(CPUState* c, u8 d, u8 a, u8 b) { pandora_write_single(c, d, c->fpr[a] / c->fpr[b]); }
+PANDORA_INLINE void pandora_fadd(CPUState* c, u8 d, u8 a, u8 b) { c->fpr[d] = c->fpr[a] + c->fpr[b]; }
+PANDORA_INLINE void pandora_fsub(CPUState* c, u8 d, u8 a, u8 b) { c->fpr[d] = c->fpr[a] - c->fpr[b]; }
+PANDORA_INLINE void pandora_fmul(CPUState* c, u8 d, u8 a, u8 b) { c->fpr[d] = c->fpr[a] * c->fpr[b]; }
+PANDORA_INLINE void pandora_fdiv(CPUState* c, u8 d, u8 a, u8 b) { c->fpr[d] = c->fpr[a] / c->fpr[b]; }
 PANDORA_INLINE void pandora_frsp(CPUState* c, u8 d, u8 b) { pandora_write_single(c, d, c->fpr[b]); }
 
-/* DolRecomp's single_fma_value: fused a * 25-bit c + addend, then (in round-to-nearest) corrected
-   when the double result sits exactly on a single-precision tie (double rounding). */
-PANDORA_NOINLINE f64 pandora_fma_tie(f64 a, f64 c, f64 addend, f64 result) {
-    const u64 bits = pandora_u64_from_f64(result);
-    const f64 a_prime = addend - result;
-    const f64 b_prime = result + a_prime;
-    const f64 error = __builtin_fma(a, c, a_prime) + (addend - b_prime);
-    if (error == 0.0)
-        return result;
-    return pandora_f64_from_u64((error > 0.0) == (result > 0.0) ? bits + 1 : bits - 1);
-}
-PANDORA_INLINE f64 pandora_single_fma(CPUState* cpu, f64 a, f64 c, f64 addend) {
-    const f64 c25 = pandora_f25(c);
-    const f64 r = __builtin_fma(a, c25, addend); /* one instruction: the guest is built with FMA */
-    if ((cpu->fpscr & 3u) == 0 && (pandora_u64_from_f64(r) & 0x1FFFFFFFull) == 0x10000000ull)
-        return pandora_fma_tie(a, c25, addend, r);
-    return r;
-}
+/* Fused single multiply-add: a * (25-bit c) + addend, one FMA (the guest is built with FMA). */
+PANDORA_INLINE f64 pandora_single_fma(f64 a, f64 c, f64 addend) { return __builtin_fma(a, pandora_f25(c), addend); }
 
 /* fmadd family: out = +-(a*c +- b). Always "succeeds" (no enabled exceptions). */
 PANDORA_INLINE bool pandora_fma(CPUState* cpu, f64 a, f64 c, f64 b, bool single, bool subtract, bool negative,
                                 f64* out) {
+    (void)cpu;
     const f64 addend = subtract ? -b : b;
-    f64 r = single ? pandora_single(pandora_single_fma(cpu, a, c, addend)) : __builtin_fma(a, c, addend);
-    r = PANDORA_NAN3(r, a, b, c);
+    f64 r = single ? pandora_single(pandora_single_fma(a, c, addend)) : __builtin_fma(a, c, addend);
     if (negative && !PANDORA_ISNAN(r))
         r = -r;
     *out = r;
@@ -173,30 +94,25 @@ PANDORA_INLINE void pandora_write_paired(CPUState* c, u8 d, f64 ps0, f64 ps1) {
 }
 
 PANDORA_INLINE void pandora_ps_add_op(CPUState* c, u8 d, u8 a, u8 b) {
-    const f64 a0 = c->fpr[a], a1 = c->ps1[a], b0 = c->fpr[b], b1 = c->ps1[b];
-    pandora_write_paired(c, d, PANDORA_NAN2(a0 + b0, a0, b0), PANDORA_NAN2(a1 + b1, a1, b1));
+    pandora_write_paired(c, d, c->fpr[a] + c->fpr[b], c->ps1[a] + c->ps1[b]);
 }
 PANDORA_INLINE void pandora_ps_sub_op(CPUState* c, u8 d, u8 a, u8 b) {
-    const f64 a0 = c->fpr[a], a1 = c->ps1[a], b0 = c->fpr[b], b1 = c->ps1[b];
-    pandora_write_paired(c, d, PANDORA_NAN2(a0 - b0, a0, b0), PANDORA_NAN2(a1 - b1, a1, b1));
+    pandora_write_paired(c, d, c->fpr[a] - c->fpr[b], c->ps1[a] - c->ps1[b]);
 }
 PANDORA_INLINE void pandora_ps_mul_op(CPUState* c, u8 d, u8 a, u8 cc) {
-    const f64 a0 = c->fpr[a], a1 = c->ps1[a], c0 = c->fpr[cc], c1 = c->ps1[cc];
-    pandora_write_paired(c, d, PANDORA_NAN2(a0 * pandora_f25(c0), a0, c0),
-                         PANDORA_NAN2(a1 * pandora_f25(c1), a1, c1));
+    pandora_write_paired(c, d, c->fpr[a] * pandora_f25(c->fpr[cc]), c->ps1[a] * pandora_f25(c->ps1[cc]));
 }
 PANDORA_INLINE void pandora_ps_muls0(CPUState* c, u8 d, u8 a, u8 cc) {
-    const f64 a0 = c->fpr[a], a1 = c->ps1[a], k = c->fpr[cc], s = pandora_f25(k);
-    pandora_write_paired(c, d, PANDORA_NAN2(a0 * s, a0, k), PANDORA_NAN2(a1 * s, a1, k));
+    const f64 s = pandora_f25(c->fpr[cc]);
+    pandora_write_paired(c, d, c->fpr[a] * s, c->ps1[a] * s);
 }
 PANDORA_INLINE void pandora_ps_muls1(CPUState* c, u8 d, u8 a, u8 cc) {
-    const f64 a0 = c->fpr[a], a1 = c->ps1[a], k = c->ps1[cc], s = pandora_f25(k);
-    pandora_write_paired(c, d, PANDORA_NAN2(a0 * s, a0, k), PANDORA_NAN2(a1 * s, a1, k));
+    const f64 s = pandora_f25(c->ps1[cc]);
+    pandora_write_paired(c, d, c->fpr[a] * s, c->ps1[a] * s);
 }
 PANDORA_INLINE void pandora_ps_madd_op(CPUState* c, u8 d, u8 a, u8 cc, u8 b, bool subtract, bool negative) {
-    const f64 a0 = c->fpr[a], a1 = c->ps1[a], c0 = c->fpr[cc], c1 = c->ps1[cc], b0 = c->fpr[b], b1 = c->ps1[b];
-    f64 ps0 = PANDORA_NAN3(pandora_single_fma(c, a0, c0, subtract ? -b0 : b0), a0, b0, c0);
-    f64 ps1 = PANDORA_NAN3(pandora_single_fma(c, a1, c1, subtract ? -b1 : b1), a1, b1, c1);
+    f64 ps0 = pandora_single_fma(c->fpr[a], c->fpr[cc], subtract ? -c->fpr[b] : c->fpr[b]);
+    f64 ps1 = pandora_single_fma(c->ps1[a], c->ps1[cc], subtract ? -c->ps1[b] : c->ps1[b]);
     if (negative) {
         ps0 = pandora_single(ps0);
         ps1 = pandora_single(ps1);
@@ -208,22 +124,18 @@ PANDORA_INLINE void pandora_ps_madd_op(CPUState* c, u8 d, u8 a, u8 cc, u8 b, boo
     pandora_write_paired(c, d, ps0, ps1);
 }
 PANDORA_INLINE void pandora_ps_madds0(CPUState* c, u8 d, u8 a, u8 cc, u8 b) {
-    const f64 a0 = c->fpr[a], a1 = c->ps1[a], k = c->fpr[cc], b0 = c->fpr[b], b1 = c->ps1[b];
-    pandora_write_paired(c, d, PANDORA_NAN3(pandora_single_fma(c, a0, k, b0), a0, b0, k),
-                         PANDORA_NAN3(pandora_single_fma(c, a1, k, b1), a1, b1, k));
+    const f64 s = pandora_f25(c->fpr[cc]);
+    pandora_write_paired(c, d, __builtin_fma(c->fpr[a], s, c->fpr[b]), __builtin_fma(c->ps1[a], s, c->ps1[b]));
 }
 PANDORA_INLINE void pandora_ps_madds1(CPUState* c, u8 d, u8 a, u8 cc, u8 b) {
-    const f64 a0 = c->fpr[a], a1 = c->ps1[a], k = c->ps1[cc], b0 = c->fpr[b], b1 = c->ps1[b];
-    pandora_write_paired(c, d, PANDORA_NAN3(pandora_single_fma(c, a0, k, b0), a0, b0, k),
-                         PANDORA_NAN3(pandora_single_fma(c, a1, k, b1), a1, b1, k));
+    const f64 s = pandora_f25(c->ps1[cc]);
+    pandora_write_paired(c, d, __builtin_fma(c->fpr[a], s, c->fpr[b]), __builtin_fma(c->ps1[a], s, c->ps1[b]));
 }
 PANDORA_INLINE void pandora_ps_sum0(CPUState* c, u8 d, u8 a, u8 cc, u8 b) {
-    const f64 a0 = c->fpr[a], b1 = c->ps1[b];
-    pandora_write_paired(c, d, PANDORA_NAN2(a0 + b1, a0, b1), c->ps1[cc]);
+    pandora_write_paired(c, d, c->fpr[a] + c->ps1[b], c->ps1[cc]);
 }
 PANDORA_INLINE void pandora_ps_sum1(CPUState* c, u8 d, u8 a, u8 cc, u8 b) {
-    const f64 a0 = c->fpr[a], b1 = c->ps1[b];
-    pandora_write_paired(c, d, c->fpr[cc], PANDORA_NAN2(a0 + b1, a0, b1));
+    pandora_write_paired(c, d, c->fpr[cc], c->fpr[a] + c->ps1[b]);
 }
 
 /* Paired-single quantized loads/stores. GQR: load type/scale in bits 16-18/24-29, store in 0-2/8-13.
@@ -375,10 +287,6 @@ PANDORA_NOINLINE f64 pandora_f32_from_bits_slow(u32 bits) {
     return pandora_f64_from_u64(result);
 }
 PANDORA_INLINE f64 pandora_f32_from_bits(u32 bits) {
-    /* The hardware conversion is exact for every value but NaNs (it quiets them); those keep their
-       bits through the slow path. Denormals convert exactly (no DAZ). */
-    if (__builtin_expect((bits & 0x7FFFFFFFu) > 0x7F800000u, 0))
-        return pandora_f32_from_bits_slow(bits);
     f32 f;
     memcpy(&f, &bits, sizeof f);
     return (f64)f;

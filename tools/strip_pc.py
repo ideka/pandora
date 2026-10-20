@@ -11,6 +11,11 @@
 - The chunks' lfs/stfs bit conversions point at the inline versions in fastfp.h.
 - The cycle downcount lives in a local (PANDORA_DOWNCOUNT_MEM=1 keeps it in ctx).
 - Chunk functions use the System V calling convention (PANDORA_MS_ABI=1 keeps the MS one).
+- bctrl/blrl call their target's chunk function directly (PANDORA_INDIRECT_DISPATCH=1 keeps the
+  dispatcher round trip).
+- Cache and barrier instructions (dcbf, dcbst, dcbi, icbi, sync, isync, eieio, ...) are no-ops
+  inline and dcbz zeroes its line inline, instead of a "fallback" call that returns to the
+  dispatcher after every one (half of all dispatches were the OS's cache-flush loops).
 """
 import os
 import re
@@ -25,6 +30,13 @@ LOOP_HEAD = re.compile(r'^(static void loop_[0-9A-F]{8}\(CPUState\* ctx\) \{)(?=
 # a loop helper's closing brace: the line after its last "ctx->pc = ...;" statement at one indent
 LOOP_END = re.compile(r'^(    ctx->pc = 0x[0-9A-F]{8}u;\r?\n)\}(?=\r?\n)', re.M)
 FUNC_DECL = re.compile(r'\bvoid (func_[0-9A-F]{8})\(CPUState\*( __restrict)? ctx\)')
+INDIRECT_CALL = re.compile(r'^(\s+)ctx->lr = 0x([0-9A-F]{8})u;\r?\n\s+ctx->pc = target;\r?\n\s+\{ ctx->downcount = dc; return; \}(?=\r?\n)',
+                           re.M)
+# A fallback instruction site: optional pc store, the disassembly comment, the call, the return.
+FALLBACK_SITE = re.compile(r'^(?:    ctx->pc = 0x[0-9A-F]{8}u;\r?\n)?(    // [0-9A-F]{8}: (\S+)[^\r\n]*)\r?\n'
+                           r'    ppc_fallback_instruction\(ctx, 0x([0-9A-F]{8})u, 0x[0-9A-F]{8}u\);\r?\n'
+                           r'    (?:\{ ctx->downcount = dc; return; \}|return;)(?=\r?\n)', re.M)
+NOOP_INSNS = {'dcbf', 'dcbst', 'dcbi', 'icbi', 'dcbt', 'dcbtst', 'sync', 'lwsync', 'isync', 'eieio'}
 
 
 def strip(text):
@@ -62,6 +74,11 @@ def strip(text):
         text = downcount_local(text, eol)
     if not os.environ.get('PANDORA_MS_ABI'):
         text = sysv_abi(text)
+    if not os.environ.get('PANDORA_INDIRECT_DISPATCH'):
+        labels = set(re.findall(r'^label_([0-9A-F]{8}):', text, re.M))
+        text = INDIRECT_CALL.sub(lambda m: indirect_call(m, labels), text)
+    if not os.environ.get('PANDORA_FALLBACK_CACHE_OPS'):
+        text = FALLBACK_SITE.sub(inline_fallback, text)
     return text, removed, total
 
 
@@ -78,14 +95,17 @@ def downcount_local(text, eol):
     text = text.replace('ctx->downcount <= ', 'dc <= ')
     text = CALL_SITE.sub(lambda m: m.group(1) + 'ctx->downcount = dc; ' + m.group(2) + ' dc = ctx->downcount;', text)
     text = text.replace('return;', '{ ctx->downcount = dc; return; }')
-    if not os.environ.get('PANDORA_INDIRECT_DISPATCH'):
-        labels = set(re.findall(r'^label_([0-9A-F]{8}):', text, re.M))
-        text = INDIRECT_CALL.sub(lambda m: indirect_call(m, labels), text)
     return text
 
 
-INDIRECT_CALL = re.compile(r'^(\s+)ctx->lr = 0x([0-9A-F]{8})u;\r?\n\s+ctx->pc = target;\r?\n\s+\{ ctx->downcount = dc; return; \}(?=\r?\n)',
-                           re.M)
+def sysv_abi(text):
+    """Chunk functions use the System V calling convention: all XMM registers are caller-saved, so
+    a chunk's prologue does not spill seven of them on every entry (the MS ABI's callee-saved
+    xmm6-15), and the hot paths rarely call out."""
+    text = FUNC_DECL.sub(lambda m: '__attribute__((sysv_abi)) void ' + m.group(1) + '(CPUState*' + (m.group(2) or '') + ' ctx)', text)
+    # The dispatcher's function-pointer type (generated.h) must carry the same convention.
+    return text.replace('typedef void (*DolRecompFunction)(CPUState* ctx);',
+                        'typedef __attribute__((sysv_abi)) void (*DolRecompFunction)(CPUState* ctx);')
 
 
 def indirect_call(m, labels):
@@ -109,11 +129,13 @@ def indirect_call(m, labels):
     return eol.join(indent + l for l in lines)
 
 
-def sysv_abi(text):
-    """Chunk functions use the System V calling convention: all XMM registers are caller-saved, so
-    a chunk's prologue does not spill seven of them on every entry (the MS ABI's callee-saved
-    xmm6-15), and the hot paths rarely call out."""
-    text = FUNC_DECL.sub(lambda m: '__attribute__((sysv_abi)) void ' + m.group(1) + '(CPUState*' + (m.group(2) or '') + ' ctx)', text)
-    # The dispatcher's function-pointer type (generated.h) must carry the same convention.
-    return text.replace('typedef void (*DolRecompFunction)(CPUState* ctx);',
-                        'typedef __attribute__((sysv_abi)) void (*DolRecompFunction)(CPUState* ctx);')
+def inline_fallback(m):
+    """Cache/barrier instructions do nothing here (no cache is emulated, one thread); dcbz zeroes
+    the 32-byte line at (rA|0) + rB. Everything else (SPR moves, hook markers) stays a fallback."""
+    comment, mnemonic, raw = m.group(1), m.group(2), int(m.group(3), 16)
+    if mnemonic in NOOP_INSNS:
+        return comment + ' (no-op)'
+    if mnemonic == 'dcbz':
+        ra, rb = (raw >> 16) & 31, (raw >> 11) & 31
+        return comment + '\n    pandora_dcbz(ctx, ' + ('ctx->gpr[%d]' % ra if ra else '0u') + ', ctx->gpr[%d]);' % rb
+    return m.group(0)

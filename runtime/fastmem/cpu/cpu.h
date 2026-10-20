@@ -211,6 +211,19 @@ PANDORA_INLINE void pandora_mem_write64(CPUState* c, u32 a, u64 v) {
     }
 }
 
+/* dcbz: zero the 32-byte cache line containing (rA|0) + rB (tools/strip_pc.py emits this inline
+   instead of a fallback call that returns to the dispatcher). */
+PANDORA_INLINE void pandora_dcbz(CPUState* c, u32 a, u32 b) {
+    const u32 ea = (a + b) & ~31u;
+    u8* p = pandora_fast_host(ea, 32);
+    if (p && !g_mem_write_journal) {
+        memset(p, 0, 32);
+        return;
+    }
+    for (u32 i = 0; i < 32; i += 4)
+        pandora_mem_write32_full(c, ea + i, 0);
+}
+
 #define mem_read8 pandora_mem_read8
 #define mem_read16 pandora_mem_read16
 #define mem_read32 pandora_mem_read32
@@ -233,6 +246,15 @@ PANDORA_INLINE bool pandora_fp_available(CPUState* c, u32 cia) {
     return (c->msr & 0x00002000u) || pandora_fp_unavailable(c, cia);
 }
 #define ppc_fp_available_inline pandora_fp_available
+
+/* FPSCR writes (mtfsf/mtfsb*) also mirror FPSCR[NI] to the host's MXCSR flush-to-zero mode
+   (runtime/fpu_switch.cpp), which replaces a flag test per floating-point operation. */
+#ifdef __cplusplus
+extern "C" void pandora_fpscr_updated(CPUState* c);
+#else
+extern void pandora_fpscr_updated(CPUState* c);
+#endif
+#define ppc_fpscr_updated pandora_fpscr_updated
 
 #include "fastfp.h"
 

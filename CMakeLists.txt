@@ -56,7 +56,12 @@ if(MSVC)
     # dumps name the recompiled functions.
     target_compile_options(guest PRIVATE /w /bigobj /MP /Z7)
     target_compile_definitions(guest PRIVATE _CRT_SECURE_NO_WARNINGS)
-else()
+endif()
+# Loops return to the dispatcher (for interrupts) every N guest cycles: 4096 is ~5.6 us of guest
+# time, far finer than any timer, and 16x fewer dispatches than the default 256. Guest call chains
+# (virtual calls) nest deeper than 24 host frames; chunk frames are ~0.3 KB.
+target_compile_definitions(guest PRIVATE DOLRECOMP_C_LOOP_CYCLE_BUDGET=4096 DOLRECOMP_C_MAX_CALL_DEPTH=96)
+if(NOT MSVC)
     target_compile_options(guest PRIVATE -w)
 endif()
 # The guest's floating point needs fused multiply-adds (single and paired-single madds are fused on

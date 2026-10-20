@@ -79,11 +79,15 @@ Open work only. How things currently work, and why, is in [NOTES.md](NOTES.md).
 
 ## Performance
 
-- 60 FPS mode is at ~1.0x real time in the observatory on the dev PC (Core Ultra 9 275HX laptop): no
-  headroom for weaker machines yet. The guest's own code dominates (render code around
-  `func_804991E0`, `func_804451E0`, `func_805511E0`); next steps are in the code generator (keep
-  guest registers in locals across a block instead of ctx loads/stores).
-- Bridge (~1.9 ms/frame): the vertex index scan in `prepare_draw`, `vertex_layout`.
+- 60 FPS mode costs ~9.2 ms of guest time per frame in the observatory on the dev PC (Core Ultra 9
+  275HX laptop): ~45% headroom here, not enough for much weaker machines. The recompiled code is
+  ~60% of it (~5.4 host cycles per guest cycle); every guest register still lives in memory, and
+  the remaining structural fix is register allocation in the code generator (not a text rewrite).
+  Cheaper remaining items: CR field read-modify-write (cmpwi/bc), the bl sequence (call-depth
+  counter), function prologue + entry switch per dispatch.
+- Bridge + command processor: ~1.1 ms/frame on the emulation thread (prepare_draw's index scan is
+  a third of it). Could run on its own thread (the real GP reads the FIFO asynchronously): PE
+  interrupts and the frame-end handshake would have to cross threads.
 - Avoid storing `ctx->pc` at every instruction in the generated code.
 - Re-measure boot speed (was ~0.3x real time, dominated by OS alarm/scheduler churn from
   `OSSleepTicks(1)` polling, before the pacing and clang changes).

@@ -150,9 +150,30 @@ aids. Open work is in [TODO.md](TODO.md).
 - Build with clang (`tools/build_clang.bat`): gameplay runs at ~37 fps unthrottled (1.24x real time)
   vs ~21 fps with MSVC.
 - Gameplay cost is almost all per rendered frame: two logic ticks (30 FPS) cost little more than
-  one (60 FPS), so 60 FPS needs nearly twice the work per second. The observatory at 60 FPS now
-  runs at ~1.0x real time unthrottled (~15 ms guest including ~1.9 ms bridge per frame); 30 FPS at
-  ~1.6x.
+  one (60 FPS), so 60 FPS needs nearly twice the work per second. The observatory at 60 FPS costs
+  ~9.2 ms of guest time per frame (5.3M guest cycles, ~5.4 host cycles each; DolRecomp charges
+  ~1.1 cycles per instruction) against a 16.7 ms budget. The display caps measured fps at 60 even
+  with vsync off (the surface only offers FIFO presentation here), so guest ms/frame is the
+  figure to compare, as `scratchpad/perf.sh`-style runs with `--profile` print it.
+- How the time was found: `PANDORA_PROFILE_DUMP=<file>` with `--profile` writes every sampled host
+  address; `tools/hotspots.py <dump> <exe>` attributes chunk samples to guest mnemonics and shows
+  the hottest host instructions with their guest instruction. Loads/stores were 40% of all time
+  before the memory work; the FP flag/NaN bookkeeping ~2 ms/frame after it.
+- Guest memory is at a fixed host address (`fastmem/cpu/guest_base.h`, `runtime/guest_memory.cpp`):
+  MEM1, MEM2 and the locked cache inside a reserved 4 GB window, so a RAM access is one range
+  check plus a `movbe`. Accesses to nowhere in the window fault and are reported with the guest
+  address (on the console they would be a DSI exception).
+- Floating point is at the accuracy of Dolphin's JIT (fastfp.h): raw SSE NaNs, FPSCR[NI] mirrored
+  to the host's MXCSR flush-to-zero/denormals-are-zero (`pandora_fpscr_updated`, hooked on FPSCR
+  writes and FPU context loads), fused single multiply-adds without the double-rounding tie fix.
+  Everything else is bit-exact with DolRecomp's cpu.c; `pandora --fp-selftest` checks 2M random
+  operations, every lfs pattern and 20M stfs values and counts the allowed deviations.
+- Chunk rewrites (tools/strip_pc.py, applied by recompile.sh): pc stores dropped, `__restrict`,
+  the cycle downcount in a local, System V calling convention, bctrl/blrl calling the target chunk
+  directly, cache/barrier instructions inline no-ops (each was a dispatcher round trip: half of all
+  dispatches were the OS's cache-flush loops), loop budget 4096 cycles and call depth 96
+  (CMakeLists). Dispatches went from 47k to 17k per frame; that alone changed little.
+- `PANDORA_DISPATCH_HIST=1` prints where the chunks returned to the dispatcher most.
 - Measuring: a window covered by other windows has its presents throttled by Windows, which
   backs up into aurora's two frame slots and stalls the emulation thread (~15% in gameplay);
   `--background` therefore puts the window off-screen. `PANDORA_PROFILE_FROM=<frame>` limits
