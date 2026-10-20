@@ -13,6 +13,9 @@
 #include <math.h>
 #include <string.h>
 
+/* MSVC's C headers make isnan a call into the CRT (_dtest); this compiles to one compare. */
+#define PANDORA_ISNAN(x) __builtin_isnan(x)
+
 PANDORA_INLINE f64 pandora_f64_from_u64(u64 bits) {
     f64 v;
     memcpy(&v, &bits, sizeof v);
@@ -48,23 +51,23 @@ PANDORA_INLINE f64 pandora_single(f64 value) { return (f64)(f32)value; }
 /* NaN results as DolRecomp: the first NaN operand, quieted, else the default NaN. */
 PANDORA_INLINE f64 pandora_quiet(f64 v) { return pandora_f64_from_u64(pandora_u64_from_f64(v) | 0x0008000000000000ull); }
 PANDORA_NOINLINE f64 pandora_nan2(f64 a, f64 b) {
-    if (isnan(a))
+    if (PANDORA_ISNAN(a))
         return pandora_quiet(a);
-    if (isnan(b))
+    if (PANDORA_ISNAN(b))
         return pandora_quiet(b);
     return pandora_f64_from_u64(0x7FF8000000000000ull);
 }
 PANDORA_NOINLINE f64 pandora_nan3(f64 a, f64 b, f64 c) {
-    if (isnan(a))
+    if (PANDORA_ISNAN(a))
         return pandora_quiet(a);
-    if (isnan(b))
+    if (PANDORA_ISNAN(b))
         return pandora_quiet(b);
-    if (isnan(c))
+    if (PANDORA_ISNAN(c))
         return pandora_quiet(c);
     return pandora_f64_from_u64(0x7FF8000000000000ull);
 }
-#define PANDORA_NAN2(r, a, b) (__builtin_expect(isnan(r), 0) ? pandora_nan2(a, b) : (r))
-#define PANDORA_NAN3(r, a, b, c) (__builtin_expect(isnan(r), 0) ? pandora_nan3(a, b, c) : (r))
+#define PANDORA_NAN2(r, a, b) (__builtin_expect(PANDORA_ISNAN(r), 0) ? pandora_nan2(a, b) : (r))
+#define PANDORA_NAN3(r, a, b, c) (__builtin_expect(PANDORA_ISNAN(r), 0) ? pandora_nan3(a, b, c) : (r))
 
 /* Single-precision results, as DolRecomp's force_single: in non-IEEE mode (FPSCR[NI], which games
    set) magnitudes below the smallest normal single flush to a signed zero. */
@@ -78,8 +81,8 @@ PANDORA_INLINE f64 pandora_round_single(CPUState* c, f64 value) {
 }
 /* force_double: NI flushes double denormals. */
 PANDORA_INLINE f64 pandora_round_double(CPUState* c, f64 value) {
-    if ((c->fpscr & 0x4u) && value != 0.0 && fabs(value) < 2.2250738585072014e-308)
-        return copysign(0.0, value);
+    if ((c->fpscr & 0x4u) && value != 0.0 && __builtin_fabs(value) < 2.2250738585072014e-308)
+        return __builtin_copysign(0.0, value);
     return value;
 }
 
@@ -124,24 +127,19 @@ PANDORA_INLINE void pandora_fdiv(CPUState* c, u8 d, u8 a, u8 b) {
 PANDORA_INLINE void pandora_frsp(CPUState* c, u8 d, u8 b) { pandora_write_single(c, d, c->fpr[b]); }
 
 /* DolRecomp's single_fma_value: fused a * 25-bit c + addend, then (in round-to-nearest) corrected
-   when the double result sits exactly on a single-precision tie (double rounding). When a is a
-   single, its product with a 25-bit c is exact in a double, so a plain multiply-add is fused. */
+   when the double result sits exactly on a single-precision tie (double rounding). */
 PANDORA_NOINLINE f64 pandora_fma_tie(f64 a, f64 c, f64 addend, f64 result) {
     const u64 bits = pandora_u64_from_f64(result);
     const f64 a_prime = addend - result;
     const f64 b_prime = result + a_prime;
-    const f64 error = fma(a, c, a_prime) + (addend - b_prime);
+    const f64 error = __builtin_fma(a, c, a_prime) + (addend - b_prime);
     if (error == 0.0)
         return result;
     return pandora_f64_from_u64((error > 0.0) == (result > 0.0) ? bits + 1 : bits - 1);
 }
 PANDORA_INLINE f64 pandora_single_fma(CPUState* cpu, f64 a, f64 c, f64 addend) {
     const f64 c25 = pandora_f25(c);
-    /* exact only if the product neither under- nor overflows the double range */
-    const f64 p = a * c25;
-    const f64 r = (pandora_u64_from_f64(a) & 0x1FFFFFFFull) == 0 && fabs(p) > 1e-290 && fabs(p) < 1e290
-                      ? p + addend
-                      : fma(a, c25, addend);
+    const f64 r = __builtin_fma(a, c25, addend); /* one instruction: the guest is built with FMA */
     if ((cpu->fpscr & 3u) == 0 && (pandora_u64_from_f64(r) & 0x1FFFFFFFull) == 0x10000000ull)
         return pandora_fma_tie(a, c25, addend, r);
     return r;
@@ -151,9 +149,9 @@ PANDORA_INLINE f64 pandora_single_fma(CPUState* cpu, f64 a, f64 c, f64 addend) {
 PANDORA_INLINE bool pandora_fma(CPUState* cpu, f64 a, f64 c, f64 b, bool single, bool subtract, bool negative,
                                 f64* out) {
     const f64 addend = subtract ? -b : b;
-    f64 r = single ? pandora_single(pandora_single_fma(cpu, a, c, addend)) : fma(a, c, addend);
+    f64 r = single ? pandora_single(pandora_single_fma(cpu, a, c, addend)) : __builtin_fma(a, c, addend);
     r = PANDORA_NAN3(r, a, b, c);
-    if (negative && !isnan(r))
+    if (negative && !PANDORA_ISNAN(r))
         r = -r;
     *out = r;
     return true;
@@ -201,9 +199,9 @@ PANDORA_INLINE void pandora_ps_madd_op(CPUState* c, u8 d, u8 a, u8 cc, u8 b, boo
     if (negative) {
         ps0 = pandora_single(ps0);
         ps1 = pandora_single(ps1);
-        if (!isnan(ps0))
+        if (!PANDORA_ISNAN(ps0))
             ps0 = -ps0;
-        if (!isnan(ps1))
+        if (!PANDORA_ISNAN(ps1))
             ps1 = -ps1;
     }
     pandora_write_paired(c, d, ps0, ps1);
@@ -274,9 +272,9 @@ PANDORA_INLINE void pandora_store_f32(CPUState* c, u32 ea, f64 value) {
 }
 
 PANDORA_INLINE s32 pandora_quantize(f64 value, f64 factor, s32 lo, s32 hi) {
-    if (isnan(value))
+    if (PANDORA_ISNAN(value))
         return hi;
-    const f64 scaled = trunc(value * factor);
+    const f64 scaled = __builtin_trunc(value * factor);
     return scaled <= (f64)lo ? lo : scaled >= (f64)hi ? hi : (s32)scaled;
 }
 
@@ -333,13 +331,12 @@ PANDORA_NOINLINE f64 pandora_f32_from_bits_slow(u32 bits) {
 }
 PANDORA_INLINE f64 pandora_f32_from_bits(u32 bits) {
     const u32 exp = (bits >> 23) & 0xFFu;
-    if (exp > 0 && exp < 255) {
-        const u64 x = bits;
-        const u64 y = !(exp >> 7);
-        const u64 z = (y << 61) | (y << 60) | (y << 59);
-        return pandora_f64_from_u64(((x & 0xC0000000u) << 32) | z | ((x & 0x3FFFFFFFu) << 29));
-    }
-    return pandora_f32_from_bits_slow(bits);
+    if (exp == 0 && (bits & 0x007FFFFFu) != 0)
+        return pandora_f32_from_bits_slow(bits); /* denormal */
+    const u64 x = bits;
+    const u64 y = (exp > 0 && exp < 255) ? !(exp >> 7) : (exp >> 7); /* normal, or zero/inf/NaN */
+    const u64 z = (y << 61) | (y << 60) | (y << 59);
+    return pandora_f64_from_u64(((x & 0xC0000000u) << 32) | z | ((x & 0x3FFFFFFFu) << 29));
 }
 PANDORA_NOINLINE u32 pandora_f32_to_bits_slow(u64 bits) {
     const u32 exp = (u32)((bits >> 52) & 0x7FFu);

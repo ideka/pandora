@@ -35,7 +35,11 @@ NEW="${TEMP:-/tmp}/pandora-recomp-new"
 rm -rf "$NEW"
 "$DOLRECOMP" --cpu broadway --map build/SX3P01.map -j8 build/SX3P01/main_hooked.dol SX3P01 "$NEW"
 # Drop the per-instruction pc stores (PANDORA_KEEP_PC=1 keeps them, e.g. for precise guest profiles).
+# Prune the chunks' entry switches to the addresses that can be entered (PANDORA_KEEP_ENTRIES=1
+# keeps every instruction enterable).
 STRIP=--strip-pc
 [ -z "$PANDORA_KEEP_PC" ] || STRIP=
-python -I tools/sync_dir.py $STRIP "$NEW" build/recomp
+PRUNE="--prune-entries config/SX3P01/symbols.txt build/SX3P01/main_hooked.dol runtime/hle.cpp"
+[ -z "$PANDORA_KEEP_ENTRIES" ] || PRUNE=
+python -I tools/sync_dir.py $STRIP $PRUNE "$NEW" build/recomp
 rm -rf "$NEW"

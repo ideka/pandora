@@ -59,6 +59,14 @@ if(MSVC)
 else()
     target_compile_options(guest PRIVATE -w)
 endif()
+# The guest's floating point needs fused multiply-adds (single and paired-single madds are fused on
+# the Gekko); without FMA in the target, fma() is a slow library routine. AVX2 + FMA: Intel Haswell
+# (2013) / AMD Zen and later.
+if(MSVC)
+    target_compile_options(guest PRIVATE /arch:AVX2)
+else()
+    target_compile_options(guest PRIVATE -mavx2 -mfma)
+endif()
 
 add_executable(pandora
     runtime/audio_dump.cpp

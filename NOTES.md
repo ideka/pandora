@@ -168,6 +168,20 @@ aids. Open work is in [TODO.md](TODO.md).
 - The generated code's per-instruction `ctx->pc` stores are removed by `tools/strip_pc.py` (run by
   `recompile.sh`; `PANDORA_KEEP_PC=1` keeps them). Branches still set the pc, so the guest profile
   and crash logs only see the last branch target.
+- Entry pruning (`tools/prune_entries.py`, run by `recompile.sh`; `PANDORA_KEEP_ENTRIES=1` keeps
+  every instruction enterable): each chunk's entry switch keeps only the addresses that can be
+  entered (function starts, code pointers in data, pc constants, return addresses, hook
+  continuations; ~11% of instructions). FP-unavailable exceptions are handled in place
+  (`runtime/fpu_switch.cpp` does the OS's lazy FPU switch) so FP instructions need no entry. An
+  unlisted entry halts with "no chunk entry". Builds take ~3.5 minutes instead of ~13. Measured
+  speed is unchanged: the generated code still keeps every guest register in ctx memory, ~15 host
+  cycles per guest instruction on average; the next step is the code generator (registers in
+  locals within a function).
+- The guest is compiled with AVX2 + FMA (fused multiply-adds are one instruction). Math in
+  `fastfp.h` uses compiler builtins: MSVC's C headers make `isnan` etc. calls into the CRT, which
+  cost ~4 ms of guest time per frame.
+- `PANDORA_PROFILE_LINES=<n>`: the hottest source lines in the `--profile` report, with the guest
+  instruction for lines of the recompiled chunks.
 - Write-gather pipe stores (`0xCC008000`) go straight from the chunks to `Hardware::gather`
   (`pandora_wgpipe_write`); 32-bit reads inline MEM2 too; lfs/stfs bit conversions inline their
   common case.

@@ -200,7 +200,62 @@ void HostProfiler::report(int top) const {
         DWORD64 disp = 0;
         by_caller[SymFromAddr(process, rip, &disp, sym) ? sym->Name : "[unknown]"] += n;
     }
+    // PANDORA_PROFILE_LINES=<n>: the hottest source lines; for the recompiled chunks, with the guest
+    // instruction they implement (the nearest "// <address>: <instruction>" comment above).
+    std::vector<std::pair<u32, std::string>> hot_lines;
+    if (const char* env = std::getenv("PANDORA_PROFILE_LINES")) {
+        std::unordered_map<std::string, u32> by_line;
+        for (auto [rip, n] : samples_) {
+            IMAGEHLP_LINE64 line{};
+            line.SizeOfStruct = sizeof(line);
+            DWORD disp = 0;
+            if (SymGetLineFromAddr64(process, rip, &disp, &line))
+                by_line[std::string(line.FileName) + ":" + std::to_string(line.LineNumber)] += n;
+        }
+        std::vector<std::pair<std::string, u32>> lines(by_line.begin(), by_line.end());
+        std::sort(lines.begin(), lines.end(), [](auto& a, auto& b) { return a.second > b.second; });
+        std::unordered_map<std::string, std::vector<std::string>> files;
+        for (size_t i = 0; i < lines.size() && i < (size_t)std::atoi(env); i++) {
+            const std::string& key = lines[i].first;
+            const size_t colon = key.rfind(':');
+            const std::string file = key.substr(0, colon);
+            const int no = std::atoi(key.c_str() + colon + 1);
+            auto [it, fresh] = files.try_emplace(file);
+            if (fresh) {
+                if (FILE* f = std::fopen(file.c_str(), "rb")) {
+                    std::string cur;
+                    for (int ch; (ch = std::fgetc(f)) != EOF;) {
+                        if (ch == '\n') {
+                            it->second.push_back(cur);
+                            cur.clear();
+                        } else if (ch != '\r') {
+                            cur += (char)ch;
+                        }
+                    }
+                    std::fclose(f);
+                }
+            }
+            const auto& text = it->second;
+            std::string code = no >= 1 && no <= (int)text.size() ? text[no - 1] : "";
+            std::string insn;
+            for (int k = no - 1; k >= 0 && k > no - 40 && k < (int)text.size(); k--)
+                if (text[k].find("    // ") == 0 && text[k].size() > 16 && text[k][15] == ':') {
+                    insn = text[k].substr(7);
+                    break;
+                }
+            const size_t slash = file.find_last_of("\\/");
+            char out[600];
+            std::snprintf(out, sizeof out, "  %5.2f%%  %s:%d  %-40.40s | %s", 100.0 * lines[i].second / total_,
+                          file.substr(slash + 1).c_str(), no, insn.c_str(), code.c_str());
+            hot_lines.emplace_back(lines[i].second, out);
+        }
+    }
     SymCleanup(process);
+    if (!hot_lines.empty()) {
+        LOG_INFO("hostprof", "hottest source lines:");
+        for (auto& [n, text] : hot_lines)
+            LOG_INFO("hostprof", "%s", text.c_str());
+    }
     std::vector<std::pair<std::string, u32>> sorted(by_fn.begin(), by_fn.end());
     std::sort(sorted.begin(), sorted.end(), [](auto& a, auto& b) { return a.second > b.second; });
     LOG_INFO("hostprof", "host profile of the emulation thread (%u samples):", total_);

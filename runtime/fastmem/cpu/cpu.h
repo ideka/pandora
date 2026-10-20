@@ -207,6 +207,20 @@ PANDORA_INLINE void pandora_mem_write64(CPUState* c, u32 a, u64 v) { pandora_mem
 #define mem_write32 pandora_mem_write32
 #define mem_write64 pandora_mem_write64
 
+/* FP-unavailable: the OS's lazy FPU switch is done in place (runtime/fpu_switch.cpp), so FP
+   instructions never need to be re-entered from the dispatcher (tools/prune_entries.py). */
+#ifdef __cplusplus
+extern "C" bool pandora_fp_unavailable(CPUState* c, u32 cia);
+extern "C" void dolrecomp_missing_entry(CPUState* c);
+#else
+extern bool pandora_fp_unavailable(CPUState* c, u32 cia);
+extern void dolrecomp_missing_entry(CPUState* c);
+#endif
+PANDORA_INLINE bool pandora_fp_available(CPUState* c, u32 cia) {
+    return (c->msr & 0x00002000u) || pandora_fp_unavailable(c, cia);
+}
+#define ppc_fp_available_inline pandora_fp_available
+
 #include "fastfp.h"
 
 #endif /* PANDORA_FASTMEM_CPU_H */

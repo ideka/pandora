@@ -11,6 +11,7 @@ Also points the chunks' lfs/stfs bit conversions at the inline versions in fastf
 
 Used by sync_dir.py --strip-pc.
 """
+import os
 import re
 
 LABEL = re.compile(r'^label_[0-9A-F]{8}:$')
@@ -45,6 +46,10 @@ def strip(text):
             continue
         i += 1
     text = eol.join(out)
+    # Guest memory never overlaps the CPU state: say so, so that guest stores (through a u8*) do
+    # not force the compiler to reload registers from ctx after every one.
+    if not os.environ.get('PANDORA_NO_RESTRICT'):
+        text = re.sub(r'^(void func_[0-9A-F]{8}\(CPUState\*) ctx\) \{', r'\1 __restrict ctx) {', text, flags=re.M)
     # The float bit conversions: runtime/fastmem/cpu/fastfp.h inlines their common cases.
     text = text.replace('dolrecomp_f32_from_bits(', 'pandora_f32_from_bits(')
     text = text.replace('dolrecomp_f32_to_bits(', 'pandora_f32_to_bits(')
