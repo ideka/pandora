@@ -10,6 +10,7 @@
 
 #include "../../../extern/DolRecomp/src/cpu/cpu.h"
 
+
 #if defined(__clang__) || defined(__GNUC__)
 #define PANDORA_INLINE static inline __attribute__((always_inline))
 #define PANDORA_NOINLINE static __attribute__((noinline))
@@ -45,6 +46,11 @@ static inline int pandora_store_fast(CPUState* c) { return !g_mem_write_journal 
 /* Stores to the write-gather pipe (the GX command stream, ~a million per frame) go straight to
    the runtime's gather buffer instead of through DolRecomp's MMIO path. */
 #define PANDORA_WGPIPE 0xCC008000u
+#ifdef PANDORA_NO_WGPIPE
+#define PANDORA_WGPIPE_ON 0
+#else
+#define PANDORA_WGPIPE_ON 1
+#endif
 #ifdef __cplusplus
 extern "C" void pandora_wgpipe_write(u64 value, u32 size);
 #else
@@ -81,7 +87,7 @@ PANDORA_NOINLINE u64 pandora_mem_read64_full(CPUState* c, u32 a) {
     return (u64)bswap32(hi) << 32 | bswap32(lo);
 }
 PANDORA_NOINLINE void pandora_mem_write8_full(CPUState* c, u32 a, u8 v) {
-    if ((a & ~31u) == PANDORA_WGPIPE) {
+    if (PANDORA_WGPIPE_ON && (a & ~31u) == PANDORA_WGPIPE) {
         pandora_wgpipe_write(v, 1);
         return;
     }
@@ -92,7 +98,7 @@ PANDORA_NOINLINE void pandora_mem_write8_full(CPUState* c, u32 a, u8 v) {
         mem_write8(c, a, v);
 }
 PANDORA_NOINLINE void pandora_mem_write16_full(CPUState* c, u32 a, u16 v) {
-    if ((a & ~31u) == PANDORA_WGPIPE) {
+    if (PANDORA_WGPIPE_ON && (a & ~31u) == PANDORA_WGPIPE) {
         pandora_wgpipe_write(v, 2);
         return;
     }
@@ -105,7 +111,7 @@ PANDORA_NOINLINE void pandora_mem_write16_full(CPUState* c, u32 a, u16 v) {
     }
 }
 PANDORA_NOINLINE void pandora_mem_write32_full(CPUState* c, u32 a, u32 v) {
-    if ((a & ~31u) == PANDORA_WGPIPE) {
+    if (PANDORA_WGPIPE_ON && (a & ~31u) == PANDORA_WGPIPE) {
         pandora_wgpipe_write(v, 4);
         return;
     }
@@ -118,7 +124,7 @@ PANDORA_NOINLINE void pandora_mem_write32_full(CPUState* c, u32 a, u32 v) {
     }
 }
 PANDORA_NOINLINE void pandora_mem_write64_full(CPUState* c, u32 a, u64 v) {
-    if ((a & ~31u) == PANDORA_WGPIPE) {
+    if (PANDORA_WGPIPE_ON && (a & ~31u) == PANDORA_WGPIPE) {
         pandora_wgpipe_write(v, 8);
         return;
     }
@@ -155,11 +161,15 @@ PANDORA_INLINE u32 pandora_mem_read32(CPUState* c, u32 a) {
         return bswap32(v);
     }
     const u32 off2 = a - 0x90000000u;
+#ifndef PANDORA_NO_MEM2_INLINE
     if (off2 <= c->mem2_size - 4) {
         u32 v;
         memcpy(&v, c->mem2 + off2, 4);
         return bswap32(v);
     }
+#else
+    (void)off2;
+#endif
     return pandora_mem_read32_full(c, a);
 }
 PANDORA_INLINE u64 pandora_mem_read64(CPUState* c, u32 a) { return pandora_mem_read64_full(c, a); }

@@ -87,6 +87,14 @@ bool SettingsMenu::init(const std::string& asset_dir) {
         });
     c.Bind("remote_status", &remote_status_);
     c.BindFunc(
+        "free_stick", [this](Rml::Variant& v) { v = settings_.free_stick; },
+        [this](const Rml::Variant& v) {
+            if (v.Get<bool>() != settings_.free_stick) {
+                settings_.free_stick = v.Get<bool>();
+                changed();
+            }
+        });
+    c.BindFunc(
         "fps60", [this](Rml::Variant& v) { v = settings_.fps60; },
         [this](const Rml::Variant& v) {
             if (v.Get<bool>() != settings_.fps60) {

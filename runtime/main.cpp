@@ -25,6 +25,7 @@
 #include "ui/settings_menu.h"
 
 int g_log_level = 1;
+extern "C" int pandora_fp_selftest(void);
 
 static void usage() {
     std::fprintf(stderr,
@@ -187,6 +188,7 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
         rt.set_audio_volume(settings.muted ? 0.0f : (float)settings.volume / 100.0f);
         rt.input().set_rumble_intensity((float)settings.rumble / 100.0f);
         rt.input().set_mouse_pointer(settings.mouse_pointer);
+        rt.input().set_free_stick(settings.free_stick);
         rt.input().set_sensor_bar_above(settings.sensor_bar_above);
         rt.input().set_wiimote_scanning(settings.wiimote_scan && (!background || std::getenv("PANDORA_POLL_WIIMOTE")));
     };
@@ -216,7 +218,7 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
         double total = 0, run = 0, end = 0, other = 0;
         u32 frames = 0;
     } prof;
-    u64 prof_tb = rt.cpu.timebase;
+    u64 prof_tb = rt.cpu.timebase, prof_cycles = rt.executed_cycles();
     auto prof_start = clock::now();
 
     Pacer pacer(rt.cpu.timebase);
@@ -359,16 +361,20 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
             if (++prof.frames == 60) {
                 const auto now = clock::now();
                 const double wall = secs(prof_start, now), emu = (double)(rt.cpu.timebase - prof_tb) / 60750000.0;
+                // Share of emulated time the guest CPU was busy (not idle): near 100% means the game is
+                // limited by the emulated CPU's speed, whatever the host's.
+                const double busy = (double)(rt.executed_cycles() - prof_cycles) / ((double)(rt.cpu.timebase - prof_tb) * 12.0);
                 const auto bt = bridge.take_timing();
                 const double ms = 1000.0 / prof.frames;
                 LOG_INFO("perf",
-                         "%.1f fps, emulated %.2fx real time | per frame ms: guest %.2f (bridge %.2f, draw-done wait "
-                         "%.2f x%.1f), pacing+present %.2f, events %.2f | %.0f draws/frame",
-                         prof.frames / wall, emu / wall, (prof.run - bt.forward - bt.drain) * ms, bt.forward * ms,
+                         "%.1f fps, emulated %.2fx real time, guest CPU %.0f%% busy | per frame ms: guest %.2f (bridge %.2f, "
+                         "draw-done wait %.2f x%.1f), pacing+present %.2f, events %.2f | %.0f draws/frame",
+                         prof.frames / wall, emu / wall, 100.0 * busy, (prof.run - bt.forward - bt.drain) * ms, bt.forward * ms,
                          bt.drain * ms, (double)bt.drains / prof.frames, prof.end * ms, prof.other * ms,
                          (double)bt.draws / prof.frames);
                 prof = {};
                 prof_tb = rt.cpu.timebase;
+                prof_cycles = rt.executed_cycles();
                 prof_start = now;
             }
         }
@@ -409,6 +415,8 @@ int main(int argc, char** argv) {
             background = true;
         else if (!std::strcmp(a, "--mute"))
             mute = true;
+        else if (!std::strcmp(a, "--fp-selftest"))  // compare fastfp.h with DolRecomp's FP code
+            return pandora_fp_selftest();
         else if (!std::strcmp(a, "--unthrottled"))
             unthrottled = true;
         else if (!std::strcmp(a, "--menu-test") && i + 1 < argc) {

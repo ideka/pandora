@@ -76,6 +76,11 @@
             <span class="value">{{ rumble == 0 ? 'Off' : rumble + '%' }}</span>
         </div>
         <div class="setting">
+            <span class="name">Free stick direction</span>
+            <input type="checkbox" data-checked="free_stick"/>
+            <span class="note">Move in any direction at full tilt (the game snaps a nearly straight stick to straight)</span>
+        </div>
+        <div class="setting">
             <span class="name">Mouse aims pointer</span>
             <input type="checkbox" data-checked="mouse_pointer"/>
             <span class="note">Move the mouse over the window to aim the Wii Remote pointer</span>

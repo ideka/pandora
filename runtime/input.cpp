@@ -112,23 +112,19 @@ struct DeviceState {
 };
 
 // Sticks are shaped as vectors: a radial dead zone, full deflection from STICK_FULL (pads rarely
-// reach 1.0, least of all diagonally) and, for the Nunchuk stick, stretched from a circle to a
-// square keeping the direction (a real Nunchuk reaches full deflection on both axes at the
-// diagonals, so a round pad stick held diagonally read as only ~70% before).
+// reach 1.0) and the direction kept, within a circle of the given radius.
 constexpr float STICK_DEAD_ZONE = 0.15f, STICK_FULL = 0.85f;
 
-std::pair<float, float> shape_stick(float x, float y, bool square) {
+// The game's stick processing (fn_804F1318) snaps the stick to a pure cardinal direction whenever
+// one axis exceeds 0.995. Free direction keeps the stick inside a circle just short of that.
+constexpr float FREE_STICK_RADIUS = 0.994f;
+
+std::pair<float, float> shape_stick(float x, float y, float radius) {
     const float mag = std::hypot(x, y);
     if (mag < STICK_DEAD_ZONE)
         return {0.0f, 0.0f};
-    const float m = std::min(1.0f, (mag - STICK_DEAD_ZONE) / (STICK_FULL - STICK_DEAD_ZONE));
-    float dx = x / mag, dy = y / mag;
-    if (square) {
-        const float k = 1.0f / std::max(std::fabs(dx), std::fabs(dy));
-        dx *= k;
-        dy *= k;
-    }
-    return {dx * m, dy * m};
+    const float m = std::min(1.0f, (mag - STICK_DEAD_ZONE) / (STICK_FULL - STICK_DEAD_ZONE)) * radius;
+    return {x / mag * m, y / mag * m};
 }
 
 // 0..1 for one physical input. raw: axes without the dead zone (sticks are shaped as vectors).
@@ -369,9 +365,10 @@ void Input::update(u64 frame, bool use_devices) {
                 s.buttons |= BUTTON_BITS[c];
         auto val = [&](Control c) { return raw[(size_t)c]; };
         std::tie(s.stick_x, s.stick_y) = shape_stick(val(Control::StickRight) - val(Control::StickLeft),
-                                                     val(Control::StickUp) - val(Control::StickDown), true);
+                                                     val(Control::StickUp) - val(Control::StickDown),
+                                                     free_stick_ ? FREE_STICK_RADIUS : 1.0f);
         std::tie(px, py) = shape_stick(val(Control::PointerRight) - val(Control::PointerLeft),
-                                       val(Control::PointerDown) - val(Control::PointerUp), false);
+                                       val(Control::PointerDown) - val(Control::PointerUp), 1.0f);
         if (px != 0 || py != 0)
             pointer_input_at_ = SDL_GetTicks();
     }
@@ -399,6 +396,10 @@ void Input::update(u64 frame, bool use_devices) {
         if (wm.nunchuk && (wm.stick_x != 0 || wm.stick_y != 0)) {
             s.stick_x = wm.stick_x;
             s.stick_y = wm.stick_y;
+            if (const float mag = std::hypot(s.stick_x, s.stick_y); free_stick_ && mag > FREE_STICK_RADIUS) {
+                s.stick_x *= FREE_STICK_RADIUS / mag;
+                s.stick_y *= FREE_STICK_RADIUS / mag;
+            }
         }
         s.motion = true;
         std::copy(std::begin(wm.acc), std::end(wm.acc), s.acc);

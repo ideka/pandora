@@ -24,3 +24,5 @@
 80251DB0 dynMgrLoadDdb        # loads a .ddb (e.g. chara/end/end_dyn_mantL.ddb) into the manager
 8001EF94 playerDynUpdate      # after the player's update: dynMgrExtraStep on the 2nd tick of a frame
 80495D48 sceneNodeUpdateWorld # world matrices down a node chain, stamped with the frame counter
+803E0410 gwPadUpdate          # the game's controller wrapper (GWPad) per-frame update: stick polar form, history
+804F1318 padProcessSticks     # KPAD stick -> magnitude/angle; an axis beyond +-0.995 snaps the stick to that cardinal direction

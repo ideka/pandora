@@ -70,6 +70,8 @@ void Settings::load(const std::string& path) {
             wiimote_scan = parse_bool(value);
         } else if (key == "fps60") {
             fps60 = parse_bool(value);
+        } else if (key == "free_stick") {
+            free_stick = parse_bool(value);
         } else {
             // Files from before the two-mapping layout: bind.<id>.controller / .keyboard.
             const size_t dot = key.rfind('.');
@@ -100,6 +102,7 @@ bool Settings::save(const std::string& path) const {
     out << "sensor_bar_above=" << (sensor_bar_above ? 1 : 0) << "\n";
     out << "wiimote_scan=" << (wiimote_scan ? 1 : 0) << "\n";
     out << "fps60=" << (fps60 ? 1 : 0) << "\n";
+    out << "free_stick=" << (free_stick ? 1 : 0) << "\n";
     auto write = [&](const char* prefix, const char* id, const Mappings& m) {
         for (size_t d = 0; d < kDeviceCount; d++)
             for (size_t s = 0; s < kMappingsPerDevice; s++)

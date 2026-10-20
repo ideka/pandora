@@ -34,6 +34,7 @@ inline u16 read16(CPUState* c, u32 a) {
     const u8* p = ptr(c, a, 2);
     return p ? (u16)(p[0] << 8 | p[1]) : 0;
 }
+inline u64 read64(CPUState* c, u32 a) { return (u64)read32(c, a) << 32 | read32(c, a + 4); }
 inline u8 read8(CPUState* c, u32 a) {
     const u8* p = ptr(c, a, 1);
     return p ? *p : 0;
@@ -43,6 +44,10 @@ inline void write32(CPUState* c, u32 a, u32 v) {
 }
 inline void write16(CPUState* c, u32 a, u16 v) {
     if (u8* p = ptr(c, a, 2)) { p[0] = (u8)(v >> 8); p[1] = (u8)v; }
+}
+inline void write64(CPUState* c, u32 a, u64 v) {
+    write32(c, a, (u32)(v >> 32));
+    write32(c, a + 4, (u32)v);
 }
 inline void write8(CPUState* c, u32 a, u8 v) {
     if (u8* p = ptr(c, a, 1)) *p = v;

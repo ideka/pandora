@@ -91,6 +91,7 @@ public:
     void halt(std::string reason);
     std::string describe(u32 addr) const { return syms_.describe(addr); }
     std::string describe_pc() const { return describe(cpu.pc); }
+    u64 executed_cycles() const { return executed_cycles_; }
     // --profile: pause/resume both samplers (PANDORA_PROFILE_FROM=<frame>).
     void set_profiling_paused(bool paused) {
         profile_paused_ = paused;
@@ -153,6 +154,7 @@ private:
     u32 idle_pc_ = 0;
     std::unordered_set<u32> watch_;
     u64 idle_skips_ = 0;
+    u64 executed_cycles_ = 0;  // guest cycles run (not skipped in the idle loop)
     bool halted_ = false;
     std::string halt_reason_;
 };

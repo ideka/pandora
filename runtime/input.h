@@ -108,6 +108,8 @@ public:
     void set_rumble_intensity(float intensity) { rumble_intensity_ = intensity; }
     // Whether the mouse position aims the pointer (absolute, over the window).
     void set_mouse_pointer(bool enabled) { mouse_pointer_ = enabled; }
+    // Keep the Nunchuk stick short of the game's snap to the four cardinal directions.
+    void set_free_stick(bool enabled) { free_stick_ = enabled; }
 
     // A real Wii Remote, if one is paired: poll every host frame.
     void poll_wiimote();
@@ -132,6 +134,7 @@ private:
     float pointer_x_ = 0, pointer_y_ = 0;
     float mouse_x_ = -1, mouse_y_ = -1;  // last mouse position seen (window coordinates)
     bool mouse_pointer_ = true;
+    bool free_stick_ = true;
     bool rumble_on_ = false, rumbling_ = false;
     float rumble_intensity_ = 1.0f;
     Wiimote wiimote_;

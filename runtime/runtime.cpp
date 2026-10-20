@@ -505,6 +505,7 @@ bool Runtime::step() {
         }
         // System calls and FP-unavailable continue at their vector.
     }
+    executed_cycles_ += (u64)(-cpu.downcount > 0 ? -cpu.downcount : 1);
     advance(-cpu.downcount);
     deliver_interrupts();
     return !halted_;
@@ -628,4 +629,13 @@ void Runtime::dump() const {
             std::fputc('\n', stderr);
         }
     }
+}
+
+// A chunk was entered at an address its (pruned) entry switch does not list: see
+// tools/prune_entries.py. Rebuild with PANDORA_KEEP_ENTRIES=1 to get past it, and add the address
+// class to the pruning rules.
+extern "C" void dolrecomp_missing_entry(CPUState* c) {
+    char buf[64];
+    std::snprintf(buf, sizeof buf, "no chunk entry for %08X (entry pruning missed it)", c->pc);
+    self(c)->halt(buf);
 }

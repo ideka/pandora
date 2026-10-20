@@ -75,6 +75,8 @@ add_executable(pandora
     runtime/gpu/command_processor.cpp
     runtime/gpu/vertex_layout.cpp
     runtime/hardware.cpp
+    runtime/fp_selftest.c
+    runtime/fpu_switch.cpp
     runtime/hle.cpp
     runtime/ios.cpp
     runtime/host_profiler.cpp
