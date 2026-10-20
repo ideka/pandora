@@ -35,14 +35,17 @@ constexpr u32 IR_REGISTERS = 0xB00000, EXT_REGISTERS = 0xA40000;
 // The pointer is computed as the game's own KPAD library does (read from this game's copy of
 // KPAD: fn_805E7CA0 and fn_805E76C0 in the DOL), from the sensor bar's two dots in WPAD's
 // coordinates, so a real remote behaves as on a Wii: the Wii's own settings (sensor bar position,
-// IR sensitivity) are the only ones. KPAD's defaults: position scale 1.25, origin 0.2 towards the
-// bar, no play radius; dist = (0.2 m / tan 21 degrees) / the dots' separation (camera 42 degrees
-// wide); dots in the outer 5% of the image are ignored.
-constexpr float KPAD_POS_SCALE = 1.25f / 0.95f, KPAD_BAR_OFFSET = 0.2f, KPAD_DIST_SCALE = 0.2f / 0.383864f;
+// IR sensitivity) are the only ones. KPAD's defaults: origin 0.2 towards the bar, position scale
+// sqrt(1 + 0.75^2) / (0.75 - 0.2) = 2.27 (the image's half height less the origin reaches the
+// screen's corner), no play radius; dist = (0.2 m / tan 21 degrees) / the dots' separation
+// (camera 42 degrees wide); dots in the outer 5% of the image are ignored.
+constexpr float KPAD_BAR_OFFSET = 0.2f, KPAD_POS_SCALE = 1.25f / (0.75f - KPAD_BAR_OFFSET),
+                KPAD_DIST_SCALE = 0.2f / 0.383864f;
 constexpr float KPAD_AREA_X = 0.95f, KPAD_AREA_Y = 0.70f;
-// KPAD's tracking limits: a pair is kept while its distance stays within 0.52..3 m and changes by
-// less than 4 cm and 25 degrees per sample; one dot is followed within 0.1 of a previous end.
-constexpr float KPAD_DIST_MIN = KPAD_DIST_SCALE, KPAD_DIST_MAX = 3.0f, KPAD_DIST_STEP = 0.04f, KPAD_DIR_MIN = 0.9f,
+// KPAD's tracking limits: a pair is kept while its distance stays within 0.52..3 m (0.3 here: a
+// monitor at desk distance is closer than a Wii expects) and changes by less than 4 cm and 25
+// degrees per sample; one dot is followed within 0.1 of a previous end.
+constexpr float KPAD_DIST_MIN = 0.3f, KPAD_DIST_MAX = 3.0f, KPAD_DIST_STEP = 0.04f, KPAD_DIR_MIN = 0.9f,
                 KPAD_TRACK_RADIUS = 0.1f;
 
 // IR camera sensitivity blocks for the Wii's five levels (WiiBrew).

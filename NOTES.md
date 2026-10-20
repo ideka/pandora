@@ -143,8 +143,11 @@ aids. Open work is in [TODO.md](TODO.md).
   rotated into the bar's frame, then pos = 1.25 * (origin - midpoint) with the origin 0.2 towards
   the bar (the Wii's Sensor Bar Position setting; `WPADGetSensorBarPosition` in the callback),
   horizon = the bar's direction, dist = (0.2 m / tan 21 deg) / separation; the scale is
-  1.25 / 0.95 (sqrt(1 + 0.75^2) over the image's smaller half extent less the origin); play
-  radius 0 and sensitivity 1 (KPAD's defaults, the game sets none). KPAD's tracker is ported too
+  sqrt(1 + 0.75^2) / (0.75 - 0.2) = 2.27 (the sampling callback: the image's half height less
+  the origin, the smaller of the two extents, reaches the corner; two earlier readings of that
+  code, 1.25 and 1.32, left the far edge of the screen out of the camera's view); play radius 0
+  and sensitivity 1 (KPAD's defaults, the game sets none). KPAD's minimum distance of 0.52 m is
+  relaxed to 0.3 m (a desk monitor is closer than a Wii expects; a user's log showed 0.58 m). KPAD's tracker is ported too
   (`fn_805E7150` keeps the pair whose distance moved < 4 cm and direction < 25 degrees since the
   last sample, `fn_805E6F60` acquires the pair best aligned with the horizon within 0.52..3 m,
   `fn_805E7540` follows one dot within 0.1 of a previous end, `fn_805E7380` acquires from one dot
