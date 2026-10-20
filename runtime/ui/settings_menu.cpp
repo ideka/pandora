@@ -119,6 +119,15 @@ bool SettingsMenu::init(const std::string& asset_dir) {
             }
         });
     c.BindFunc(
+        "pointer_sensitivity", [this](Rml::Variant& v) { v = settings_.pointer_sensitivity; },
+        [this](const Rml::Variant& v) {
+            const int s = std::clamp((int)std::lround(v.Get<float>()), 50, 300);
+            if (s != settings_.pointer_sensitivity) {
+                settings_.pointer_sensitivity = s;
+                changed();
+            }
+        });
+    c.BindFunc(
         "rumble", [this](Rml::Variant& v) { v = settings_.rumble; },
         [this](const Rml::Variant& v) {
             const int rumble = std::clamp((int)std::lround(v.Get<float>()), 0, 100);

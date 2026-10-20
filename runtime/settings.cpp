@@ -66,6 +66,8 @@ void Settings::load(const std::string& path) {
             mouse_pointer = parse_bool(value);
         } else if (key == "sensor_bar_above") {
             sensor_bar_above = parse_bool(value);
+        } else if (key == "pointer_sensitivity") {
+            pointer_sensitivity = std::clamp(std::atoi(value.c_str()), 50, 300);
         } else if (key == "wiimote_scan") {
             wiimote_scan = parse_bool(value);
         } else if (key == "fps60") {
@@ -100,6 +102,7 @@ bool Settings::save(const std::string& path) const {
     out << "rumble=" << rumble << "\n";
     out << "mouse_pointer=" << (mouse_pointer ? 1 : 0) << "\n";
     out << "sensor_bar_above=" << (sensor_bar_above ? 1 : 0) << "\n";
+    out << "pointer_sensitivity=" << pointer_sensitivity << "\n";
     out << "wiimote_scan=" << (wiimote_scan ? 1 : 0) << "\n";
     out << "fps60=" << (fps60 ? 1 : 0) << "\n";
     out << "free_stick=" << (free_stick ? 1 : 0) << "\n";

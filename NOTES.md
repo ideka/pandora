@@ -133,6 +133,14 @@ aids. Open work is in [TODO.md](TODO.md).
   id ends A4 20 00 00, retried while it reports busy) and continuous report 0x37 (buttons,
   accelerometer, 10 IR bytes, 6 extension bytes). A status report (extension plugged or unplugged)
   re-initialises the extension and the reporting mode.
+- The pointer: the bar's two dots (basic IR mode), the roll undone from their angle, the midpoint
+  scaled by IR_SCALE_X/Y times the "Pointer sensitivity" setting; pointing at the bar puts the
+  cursor on the screen edge next to it. Axes measured with a real remote and bar: image x falls as
+  the remote turns right, image y falls as it turns up (the first version had y the other way).
+  With one dot in view the other end is assumed a bar's width away (last seen) on the side that
+  keeps the midpoint where it was, which extends the reach a little; past that the bar is out of
+  the camera's ~33 x 23 degree view and the cursor goes away, as on a Wii. A monitor at desk
+  distance spans more than that, hence the sensitivity setting (100% = the TV geometry above).
 - Continuous scanning (`runtime/wiimote_scanner.cpp`, Windows), as in Dolphin: while enabled and
   no remote is connected, a thread runs Bluetooth inquiries (2 x 1.28 s). A "Nintendo
   RVL-CNT-01(-TR)" in discoverable mode (1+2, sync) gets its HID service enabled with

@@ -34,6 +34,8 @@ public:
     // Look for the remote's HID device every second for a while (it was just made available).
     void rescan_soon();
     void set_sensor_bar_above(bool above) { bar_above_ = above; }
+    // Pointer movement per turn of the remote (1 = a TV at living-room distance).
+    void set_pointer_sensitivity(float s) { sensitivity_ = s; }
 
 private:
     using Clock = std::chrono::steady_clock;
@@ -63,6 +65,11 @@ private:
     State state_;
     bool rumble_ = false;
     bool bar_above_ = false;
+    float sensitivity_ = 1.0f;
+    // The bar as last seen whole (vector between its ends and midpoint, image pixels), to keep
+    // the pointer when one end leaves the camera's view.
+    bool bar_seen_ = false;
+    float bar_dx_ = 0, bar_dy_ = 0, mid_x_ = 512, mid_y_ = 384;
     bool ext_connected_ = false;
     Clock::time_point next_ext_retry_{};
     // Accelerometer calibration (10-bit units): zero g and one g per axis.

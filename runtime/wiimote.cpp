@@ -31,9 +31,12 @@ constexpr u8 IN_STATUS = 0x20, IN_READ_DATA = 0x21, IN_ACK = 0x22, IN_CORE_ACC_I
 
 constexpr u32 IR_REGISTERS = 0xB00000, EXT_REGISTERS = 0xA40000;
 
-// Camera image: 1024 x 768. The pointer covers the screen when the bar's midpoint moves this far
-// (as a fraction of the half-image) from where it sits when pointing at the screen's centre:
-// roughly a 1.2 m wide 16:9 screen seen from 2.5 m, through a camera with a ~33 x 23 degree view.
+// Camera image: 1024 x 768. At 100% pointer sensitivity the pointer covers the screen when the
+// bar's midpoint moves this far (as a fraction of the half-image) from where it sits when pointing
+// at the screen's centre: roughly a 1.2 m wide 16:9 screen seen from 2.5 m, through a camera with a
+// ~33 x 23 degree view. A monitor at desk distance spans a bigger angle than the camera sees, so
+// the bar leaves the view before the pointer reaches the edges; a higher sensitivity maps the
+// visible range onto the screen.
 constexpr float IR_SCALE_X = 1.22f, IR_SCALE_Y = 1.5f;
 
 float axis(float raw, float zero, float one) { return one != zero ? (raw - zero) / (one - zero) : 0.0f; }
@@ -313,6 +316,8 @@ void Wiimote::parse_core(const u8* b, const u8* a) {
 }
 
 // Basic IR: two dots per 5 bytes (x and y low bytes, then the high bits of both), 0x3FF = none.
+// In the image, x falls as the remote turns right and y falls as it turns up (both measured with
+// a real remote and bar).
 void Wiimote::parse_ir(const u8* ir) {
     float dx[4], dy[4];
     int dots = 0;
@@ -329,25 +334,43 @@ void Wiimote::parse_ir(const u8* ir) {
             dy[dots++] = (float)y2;
         }
     }
-    if (dots < 2) {
+    float x1, y1, x2, y2;
+    if (dots >= 2) {
+        // The sensor bar's two ends: the first two dots, ordered left to right in the image.
+        x1 = dx[0], y1 = dy[0], x2 = dx[1], y2 = dy[1];
+        if (x1 > x2) {
+            std::swap(x1, x2);
+            std::swap(y1, y2);
+        }
+        bar_dx_ = x2 - x1;
+        bar_dy_ = y2 - y1;
+        bar_seen_ = true;
+    } else if (dots == 1 && bar_seen_) {
+        // One end left the camera's view (the edge of the screen): the other is a bar's width
+        // away, on the side that keeps the midpoint near where it was.
+        const float lx = dx[0], ly = dy[0];
+        const float ax = lx + bar_dx_ / 2, ay = ly + bar_dy_ / 2;  // midpoint if this is the left end
+        const float bx = lx - bar_dx_ / 2, by = ly - bar_dy_ / 2;  // ... the right end
+        const bool left = std::hypot(ax - mid_x_, ay - mid_y_) < std::hypot(bx - mid_x_, by - mid_y_);
+        x1 = left ? lx : lx - bar_dx_;
+        y1 = left ? ly : ly - bar_dy_;
+        x2 = left ? lx + bar_dx_ : lx;
+        y2 = left ? ly + bar_dy_ : ly;
+    } else {
         state_.pointer_valid = false;  // the game hides its cursor, as with a real Wii
         return;
     }
-    // The sensor bar's two ends: the first two dots, ordered left to right in the image.
-    float x1 = dx[0], y1 = dy[0], x2 = dx[1], y2 = dy[1];
-    if (x1 > x2) {
-        std::swap(x1, x2);
-        std::swap(y1, y2);
-    }
-    // Undo the remote's roll, then centre on the image (the camera sees the scene mirrored).
+    mid_x_ = (x1 + x2) / 2;
+    mid_y_ = (y1 + y2) / 2;
+    // Undo the remote's roll, then centre on the image.
     const float angle = std::atan2(y2 - y1, x2 - x1);
-    const float mx = (x1 + x2) / 2 - 512, my = (y1 + y2) / 2 - 384;
+    const float mx = mid_x_ - 512, my = mid_y_ - 384;
     const float c = std::cos(-angle), s = std::sin(-angle);
     const float rx = mx * c - my * s, ry = mx * s + my * c;
     // Pointing at the bar puts the cursor on the screen edge next to it.
     const float edge = bar_above_ ? -1.0f : 1.0f;
-    state_.pointer_x = std::clamp(-rx / 512.0f * IR_SCALE_X, -1.0f, 1.0f);
-    state_.pointer_y = std::clamp(edge - ry / 384.0f * IR_SCALE_Y, -1.0f, 1.0f);
+    state_.pointer_x = std::clamp(-rx / 512.0f * IR_SCALE_X * sensitivity_, -1.0f, 1.0f);
+    state_.pointer_y = std::clamp(edge + ry / 384.0f * IR_SCALE_Y * sensitivity_, -1.0f, 1.0f);
     state_.pointer_valid = true;
 }
 

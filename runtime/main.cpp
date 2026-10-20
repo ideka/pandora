@@ -193,6 +193,7 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
         rt.input().set_mouse_pointer(settings.mouse_pointer);
         rt.input().set_free_stick(settings.free_stick);
         rt.input().set_sensor_bar_above(settings.sensor_bar_above);
+        rt.input().set_pointer_sensitivity((float)settings.pointer_sensitivity / 100.0f);
         rt.input().set_wiimote_scanning(settings.wiimote_scan && (!background || std::getenv("PANDORA_POLL_WIIMOTE")));
     };
     apply_settings();
