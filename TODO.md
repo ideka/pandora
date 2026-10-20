@@ -74,10 +74,10 @@ Open work only. How things currently work, and why, is in [NOTES.md](NOTES.md).
   odd ticks is a visual approximation of the 30 FPS cadence (the cloth sees the anchors move by a
   frame's worth every other tick, as at 30 FPS, but the pinned particles' velocity term differs).
   Compare more scenes against 30 FPS; `PANDORA_CAPE_OFF=1` disables the hold for comparisons.
-- Audit the remaining first-tick-gated sites (frame manager +0x448 readers: `fn_800384B0`,
-  `fn_800A168C`, `fn_80197FD8`, `fn_8019D0BC`, `fn_8019EE44`, `fn_8019F8B4`, `fn_8000F9A4`,
-  `fn_8007E364`) for work that should keep a 30 Hz cadence; `PANDORA_HOST_PATCH` tests one
-  without a rebuild (NOTES.md, Debugging aids).
+- Audit the first-tick-gated sites (frame manager +0x448 readers that run only when it is *set*:
+  `fn_800A168C`, `fn_80197FD8`, `fn_8019D0BC`, `fn_8019EE44`, `fn_8019F8B4`, `fn_804F7F70`), which
+  run twice as often at 60 FPS, for work that should keep a 30 Hz cadence (as the second-tick ones
+  now do through `hostTickGate`); `PANDORA_HOST_PATCH` tests one without a rebuild.
 
 ## Performance
 

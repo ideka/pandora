@@ -20,3 +20,10 @@
 # it the skinned meshes (Aeron's cape) keep stale matrices. The tick check is dropped; the hook on
 # sceneRefreshSkinned decides instead (runtime/hle.cpp).
 804A579C 40820354 60000000  # bne 0x804A5AF0 -> nop
+
+# 60 FPS: code the game runs only on the second logic tick of a frame (frame manager +0x448 clear),
+# which never comes with one tick per frame. These gates read the flag through hostTickGate
+# instead: the real flag with several ticks per frame, every other tick with one (runtime/hle.cpp).
+8000FABC 88030448 485DA2FD  # lbz r0, 1096(r3) -> bl hostTickGate (fn_8000F9A4: the zoom's slow-time event (task groups paused))
+800385A8 88030448 485B1811  # lbz r0, 1096(r3) -> bl hostTickGate (fn_800384B0)
+8007E5C8 88030448 4856B7F1  # lbz r0, 1096(r3) -> bl hostTickGate (fn_8007E364: the zoom's screen effect fade)

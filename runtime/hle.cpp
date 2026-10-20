@@ -206,6 +206,23 @@ void Runtime::install_hle() {
     //
     hook("hostContinue", [](Runtime& rt) { rt.host_continue(); });
 
+    // The second-tick gates (patches.txt): code the game runs only on the second logic tick of a
+    // frame (the zoom's slow-time event in fn_8000F9A4, its screen effect in fn_8007E364, and
+    // fn_800384B0) calls this instead of loading the frame manager's first-tick flag; r0 = the flag
+    // to test (0 = run). With several ticks per frame that is the flag itself; with one (60 FPS)
+    // it is clear every other tick, so the code keeps its 30 Hz cadence instead of never running.
+    hook("hostTickGate", [](Runtime& rt) {
+        CPUState* c = &rt.cpu;
+        constexpr u32 FRAME_MANAGER = 0x80774678, TICK_COUNTER = 0x807F04F8;
+        const u32 max_rate = mem::read32(c, FRAME_MANAGER + 0x434), rate = mem::read32(c, FRAME_MANAGER + 0x438);
+        const bool one_tick_per_frame = rate != 0 && max_rate / rate <= 1;
+        if (one_tick_per_frame)
+            c->gpr[0] = (mem::read32(c, TICK_COUNTER) & 1) != 0 ? 0 : 1;
+        else
+            c->gpr[0] = mem::read8(c, FRAME_MANAGER + 0x448);
+        rt.ret(c->gpr[3]);
+    });
+
     // s32 WPADGetStatus(void): WPAD_STATE_SETUP (3). The game's remote sound system (fn_801250B4)
     // only initialises in that state; WPADInit is stubbed, so the library's own state byte stays 0.
     hook("WPADGetStatus", [](Runtime& rt) { rt.ret(3); });

@@ -121,6 +121,19 @@ aids. Open work is in [TODO.md](TODO.md).
   own, hangs the game when opened; `fn_8000F9A4`, `fn_800384B0`, `fn_8007E364` change nothing
   visible). Tick-aligned: at 60 FPS every scripted press at twice the frame number of the 30 FPS
   run gives the same game state tick for tick, so screenshots compare at the same pose.
+- Holding B (the targeting zoom) slows the world down, and at 60 FPS it did not. The world runs
+  as scheduler tasks, each with a group mask; a task runs only while `scheduler[+2132] & task[+56]`
+  (`fn_8047CE54`). Timed "pause" events (`fn_8000FDE4`, `fn_8000FF04`) clear groups from that mask
+  for a duration, and the zoom keeps pushing one from `fn_8000F9A4` - on the second tick of each
+  frame only, so never at 60 FPS. Measured on the world clock (`fn_800CCFD0`, which advances by OS
+  time divided by the ticks since it last ran): 0.25x speed while zoomed at 30 FPS, 1.0x at 60 FPS
+  before the fix, 0.24x after. Its sibling gate in `fn_8007E364` fades in the zoom's screen effect
+  (`fn_80170B60`), also missing at 60 FPS. The fix: those gates and the one in `fn_800384B0` load
+  the first-tick flag through a hooked padding word, `hostTickGate` (`0x805E9DB8`, patches.txt:
+  `lbz r0, 1096(r3)` -> `bl hostTickGate`; the three functions save LR in their prologue), which
+  returns the real flag with several ticks per frame and "second tick" every other tick with one,
+  keeping their 30 Hz cadence. The remaining second-tick gate is the frame manager's own
+  (`804F7F94`: rendering on a frame's last tick), which the 60 FPS mode handles.
 - The cloth's anchors (`dynClothSetAnchors`, `dynClothRefreshBones`) are written from world
   matrices that the engine recomputes once per rendered frame, so at 30 FPS they move only on a
   frame's first tick; at 60 FPS they move every tick and the cape streams out further behind a
