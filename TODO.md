@@ -70,12 +70,14 @@ Open work only. How things currently work, and why, is in [NOTES.md](NOTES.md).
 
 ## 60 FPS mode
 
-- Aeron's cape floats at 60 FPS (reported): reproduce in motion and compare with 30 FPS at the
-  same tick. Suspects: the "second tick only" code in `fn_8000F9A4` and `fn_8007E364` (never runs
-  at 60 FPS); see NOTES.md (How the game keeps time).
-- Audit the other first-tick-gated sites (frame manager +0x448 readers: `fn_800384B0`,
-  `fn_800A168C`, `fn_80197FD8`, `fn_8019D0BC`, `fn_8019EE44`, `fn_8019F8B4`, `fn_804A5780`) for
-  work that should keep a 30 Hz cadence.
+- Aeron's cape at 60 FPS: the frozen mesh is fixed (`sceneRefreshSkinned`); the anchor hold on
+  odd ticks is a visual approximation of the 30 FPS cadence (the cloth sees the anchors move by a
+  frame's worth every other tick, as at 30 FPS, but the pinned particles' velocity term differs).
+  Compare more scenes against 30 FPS; `PANDORA_CAPE_OFF=1` disables the hold for comparisons.
+- Audit the remaining first-tick-gated sites (frame manager +0x448 readers: `fn_800384B0`,
+  `fn_800A168C`, `fn_80197FD8`, `fn_8019D0BC`, `fn_8019EE44`, `fn_8019F8B4`, `fn_8000F9A4`,
+  `fn_8007E364`) for work that should keep a 30 Hz cadence; `PANDORA_HOST_PATCH` tests one
+  without a rebuild (NOTES.md, Debugging aids).
 
 ## Performance
 

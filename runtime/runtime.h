@@ -34,7 +34,7 @@ struct Options {
     std::string audio_dump;      // write mixed audio to this WAV file
     std::vector<std::string> watch;  // log arguments when these functions are dispatched
     std::vector<std::pair<u32, u32>> dumps;  // memory ranges to hexdump at halt
-    std::vector<u32> watch_writes;           // log every store to these MEM1 addresses
+    std::vector<u32> watch_writes;           // log every store to these addresses (MEM1 or MEM2)
     struct FileDump {
         u32 addr, len;
         std::string path;

@@ -26,3 +26,6 @@
 80495D48 sceneNodeUpdateWorld # world matrices down a node chain, stamped with the frame counter
 803E0410 gwPadUpdate          # the game's controller wrapper (GWPad) per-frame update: stick polar form, history
 804F1318 padProcessSticks     # KPAD stick -> magnitude/angle; an axis beyond +-0.995 snaps the stick to that cardinal direction
+804A5780 sceneRefreshSkinned  # per-frame scene pass: skinned nodes (type 14) get their slot, subtrees marked dirty; 2nd tick of a frame only (hooked for 60 FPS)
+80412F14 dynClothRefreshBones # cloth step: root frame + bone entries (anchors) from the skeleton's world matrices
+804134FC dynClothSetAnchors   # cloth step: pinned particles from the skeleton's world matrices

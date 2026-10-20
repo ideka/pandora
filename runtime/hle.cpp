@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <string>
+#include <cstdlib>
 
 #include "input.h"
 #include "log.h"
@@ -63,6 +65,22 @@ std::string guest_format(Runtime& rt, u32 fmt_addr, int first_gpr) {
 }
 
 }  // namespace
+
+// Continue into a hooked guest function: its first instruction (carrying the hook marker in the
+// recompiled code) is still the original in guest memory; it is a stack-frame push (stwu r1,
+// -N(r1)) for every function hooked this way, so emulate it and resume at the second instruction.
+static void run_original(Runtime& rt, u32 entry) {
+    CPUState* c = &rt.cpu;
+    const u32 insn = mem::read32(c, entry);
+    if ((insn >> 26) != 37 || ((insn >> 21) & 31) != 1 || ((insn >> 16) & 31) != 1) {
+        rt.halt("run_original: hooked function does not start with stwu r1 at " + rt.describe(entry));
+        return;
+    }
+    const u32 sp = c->gpr[1] + (u32)(s32)(s16)(insn & 0xFFFF);
+    mem::write32(c, sp, c->gpr[1]);
+    c->gpr[1] = sp;
+    c->pc = entry + 4;
+}
 
 void Runtime::install_hle() {
     // The DSP is not emulated at the hardware level: skip the boot-time DSP handshake.
@@ -140,6 +158,51 @@ void Runtime::install_hle() {
         mem::write32(c, sp, c->gpr[1]);
         c->gpr[1] = sp;
         c->pc = 0x802527DC;
+    });
+
+    // The cloth's anchors: dynClothSetAnchors (fn_804134FC) writes the pinned particles from the
+    // skeleton's world matrices at the start of every step, and dynClothRefreshBones (fn_80412F14)
+    // the cloth's root frame. The engine recomputes world matrices once per rendered frame, so at
+    // 30 FPS the anchors move only on the first of a frame's two ticks, and the cloth (Aeron's
+    // cape) was tuned for that: at 60 FPS they move every tick and the cape streams out behind
+    // him (the 60 FPS code's known side effect). With one tick per frame, skip both on odd ticks:
+    // the anchors then move every other tick by a frame's worth, as at 30 FPS.
+    // PANDORA_CAPE_OFF=1 disables this (tests).
+    auto hold_anchor_this_tick = [](Runtime& rt) {
+        CPUState* c = &rt.cpu;
+        constexpr u32 FRAME_MANAGER = 0x80774678, TICK_COUNTER = 0x807F04F8;
+        static const bool off = std::getenv("PANDORA_CAPE_OFF") != nullptr;
+        const u32 max_rate = mem::read32(c, FRAME_MANAGER + 0x434), rate = mem::read32(c, FRAME_MANAGER + 0x438);
+        return !off && rate != 0 && max_rate / rate <= 1 && (mem::read32(c, TICK_COUNTER) & 1) != 0;
+    };
+    hook("dynClothRefreshBones", [hold_anchor_this_tick](Runtime& rt) {
+        if (hold_anchor_this_tick(rt))
+            rt.ret(0);
+        else
+            run_original(rt, 0x80412F14);
+    });
+    hook("dynClothSetAnchors", [hold_anchor_this_tick](Runtime& rt) {
+        if (hold_anchor_this_tick(rt))
+            rt.ret(0);
+        else
+            run_original(rt, 0x804134FC);
+    });
+
+    // void sceneRefreshSkinned(void) (fn_804A5780): a scene pass that (re)assigns skinned nodes
+    // (type 14) their slots and marks their subtrees' matrices dirty; the game runs it only on the
+    // second tick of a frame, which never comes at 60 FPS: the skinned meshes then keep their old
+    // matrices and Aeron's cape renders frozen in its bind pose while the cloth moves underneath.
+    // The tick check is patched out (patches.txt) and decided here: unchanged with several ticks
+    // per frame, every tick with one (once per rendered frame either way).
+    hook("sceneRefreshSkinned", [](Runtime& rt) {
+        CPUState* c = &rt.cpu;
+        constexpr u32 FRAME_MANAGER = 0x80774678;
+        const u32 max_rate = mem::read32(c, FRAME_MANAGER + 0x434), rate = mem::read32(c, FRAME_MANAGER + 0x438);
+        const bool one_tick_per_frame = rate != 0 && max_rate / rate <= 1;
+        if (one_tick_per_frame || mem::read8(c, FRAME_MANAGER + 0x448) == 0)
+            run_original(rt, 0x804A5780);
+        else
+            rt.ret(0);
     });
 
     // s32 KPADRead(s32 chan, KPADStatus* samples, u32 length): one sample per call.

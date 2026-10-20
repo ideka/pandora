@@ -429,12 +429,13 @@ std::string Runtime::backtrace(int max_frames) const {
 // Write watchpoints (debugging): called by cpu.c before every store to MEM1.
 void Runtime::on_mem1_write(u32 offset, u32 size, void* user) {
     auto* rt = static_cast<Runtime*>(user);
+    // DolRecomp reports MEM1 offsets; the chunks' slow path reports MEM2 ones with bit 28 set.
+    const u32 addr = (offset & 0x10000000u) ? 0x90000000u | (offset & 0x0FFFFFFFu) : 0x80000000u | offset;
     for (u32 w : rt->opts_.watch_writes) {
-        u32 woff = w & 0x01FFFFFF;
-        if (woff < offset + size && offset < woff + 4)
-            LOG_INFO("watch", "store%u to %08X at %s (lr %s) r3=%08X r4=%08X r5=%08X\n%s", size * 8,
-                     0x80000000 | offset, rt->describe_pc().c_str(), rt->describe(rt->cpu.lr).c_str(), rt->cpu.gpr[3],
-                     rt->cpu.gpr[4], rt->cpu.gpr[5], rt->backtrace(10).c_str());
+        if (w < addr + size && addr < w + 4)
+            LOG_INFO("watch", "store%u to %08X at %s (lr %s) r3=%08X r4=%08X r5=%08X\n%s", size * 8, addr,
+                     rt->describe_pc().c_str(), rt->describe(rt->cpu.lr).c_str(), rt->cpu.gpr[3], rt->cpu.gpr[4],
+                     rt->cpu.gpr[5], rt->backtrace(10).c_str());
     }
 }
 

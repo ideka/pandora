@@ -87,6 +87,8 @@ PANDORA_NOINLINE u64 pandora_mem_read64_full(CPUState* c, u32 a) {
     return (u64)bswap32(hi) << 32 | bswap32(lo);
 }
 PANDORA_NOINLINE void pandora_mem_write8_full(CPUState* c, u32 a, u8 v) {
+    if (g_mem_write_journal && a - PANDORA_MEM2_BASE < PANDORA_MEM2_SIZE)
+        g_mem_write_journal(0x10000000u | (a - PANDORA_MEM2_BASE), 1, g_mem_write_journal_user); /* --watch-write in MEM2 */
     if (PANDORA_WGPIPE_ON && (a & ~31u) == PANDORA_WGPIPE) {
         pandora_wgpipe_write(v, 1);
         return;
@@ -98,6 +100,8 @@ PANDORA_NOINLINE void pandora_mem_write8_full(CPUState* c, u32 a, u8 v) {
         mem_write8(c, a, v);
 }
 PANDORA_NOINLINE void pandora_mem_write16_full(CPUState* c, u32 a, u16 v) {
+    if (g_mem_write_journal && a - PANDORA_MEM2_BASE < PANDORA_MEM2_SIZE)
+        g_mem_write_journal(0x10000000u | (a - PANDORA_MEM2_BASE), 2, g_mem_write_journal_user); /* --watch-write in MEM2 */
     if (PANDORA_WGPIPE_ON && (a & ~31u) == PANDORA_WGPIPE) {
         pandora_wgpipe_write(v, 2);
         return;
@@ -111,6 +115,8 @@ PANDORA_NOINLINE void pandora_mem_write16_full(CPUState* c, u32 a, u16 v) {
     }
 }
 PANDORA_NOINLINE void pandora_mem_write32_full(CPUState* c, u32 a, u32 v) {
+    if (g_mem_write_journal && a - PANDORA_MEM2_BASE < PANDORA_MEM2_SIZE)
+        g_mem_write_journal(0x10000000u | (a - PANDORA_MEM2_BASE), 4, g_mem_write_journal_user); /* --watch-write in MEM2 */
     if (PANDORA_WGPIPE_ON && (a & ~31u) == PANDORA_WGPIPE) {
         pandora_wgpipe_write(v, 4);
         return;
@@ -124,6 +130,8 @@ PANDORA_NOINLINE void pandora_mem_write32_full(CPUState* c, u32 a, u32 v) {
     }
 }
 PANDORA_NOINLINE void pandora_mem_write64_full(CPUState* c, u32 a, u64 v) {
+    if (g_mem_write_journal && a - PANDORA_MEM2_BASE < PANDORA_MEM2_SIZE)
+        g_mem_write_journal(0x10000000u | (a - PANDORA_MEM2_BASE), 8, g_mem_write_journal_user); /* --watch-write in MEM2 */
     if (PANDORA_WGPIPE_ON && (a & ~31u) == PANDORA_WGPIPE) {
         pandora_wgpipe_write(v, 8);
         return;

@@ -90,11 +90,23 @@ aids. Open work is in [TODO.md](TODO.md).
   per 2 ticks. Those gates are patched out and a hook decides: unchanged with several ticks per
   frame, every other tick with one. It only fires in some character states (flags `&1` and `&0x40`
   of the character's state byte), not while standing.
-- Aeron's cape is reported to float at 60 FPS. Standing in the observatory, the cloth state
-  (parameters and every particle) matches 30 FPS within 5 mm at the same tick count. Forcing the
-  first-tick flag on at 30 FPS changes the cape's look, and bisecting points at the "second tick
-  only" sites `fn_8000F9A4` / `fn_8007E364`, but those comparisons were taken at different moments
-  of the idle animation, so they are not conclusive; needs a reproduction in motion.
+- Aeron's cape was frozen at 60 FPS, stretched out in its bind pose while the cloth simulation
+  moved underneath (the mesh is skinned to the cloth's bones). The cause is another "second tick
+  only" gate: `sceneRefreshSkinned` (`fn_804A5780`), a scene pass that gives skinned nodes (type
+  14) their slot and marks their subtrees' matrices dirty, so the skinned meshes never picked up
+  the cloth's output. Same treatment as `dynMgrExtraStep`: gate patched out, the hook runs it
+  every tick with one tick per frame, on the second tick otherwise (once per rendered frame
+  either way). Found by opening each of the five second-tick gates in turn with
+  `PANDORA_HOST_PATCH` (below) in tick-aligned runs (`fn_804F7F70`'s gate, the frame manager's
+  own, hangs the game when opened; `fn_8000F9A4`, `fn_800384B0`, `fn_8007E364` change nothing
+  visible). Tick-aligned: at 60 FPS every scripted press at twice the frame number of the 30 FPS
+  run gives the same game state tick for tick, so screenshots compare at the same pose.
+- The cloth's anchors (`dynClothSetAnchors`, `dynClothRefreshBones`) are written from world
+  matrices that the engine recomputes once per rendered frame, so at 30 FPS they move only on a
+  frame's first tick; at 60 FPS they move every tick and the cape streams out further behind a
+  running Aeron. Hooks skip both writers on odd ticks in 60 FPS mode (`PANDORA_CAPE_OFF=1` turns
+  that off), which brings the look close to 30 FPS; the cloth's step is 1/60 s per tick in both
+  modes (`DynMgr+532`, a constant), so the simulation itself needs no change.
 
 ## Input
 
@@ -231,5 +243,11 @@ aids. Open work is in [TODO.md](TODO.md).
   (bridge, HLE) is charged to whatever guest code ran last; rebuild with `PANDORA_KEEP_PC=1` for a
   precise one.
 - `PANDORA_NO_VSYNC=1` turns vsync off (to measure headroom).
+- `PANDORA_HOST_PATCH=<rva>=<hex bytes>[;...]` patches this executable's code at startup (a
+  recompiled branch opened or closed without a rebuild, e.g. a `bne` gate: `je` -> 6-byte nop);
+  `tools/lines2rva.py <pdb> <chunk .c> <line>` gives the host RVAs of a chunk's source lines (the
+  line after a `// <addr>: bc ...` comment holds the branch) via llvm-pdbutil, and llvm-objdump
+  `--start-address=0x140000000+rva` shows the bytes. `PANDORA_WAIT_DEBUGGER=1` makes a test run
+  wait for a debugger before starting (x64dbg attaches by pid, which the run prints).
 - `tools/dol2elf.py <main.dol> <symbols.txt> <out.elf>` makes an ELF with every section and symbol,
   for Binary Ninja/Ghidra (`build/SX3P01/main.elf`).

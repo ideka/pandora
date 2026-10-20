@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -335,6 +336,11 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
         // community code "04774AB0 0000003C" sets it, re-applied every frame like a cheat code.
         // Switching it off puts 30 back.
         constexpr u32 FRAME_RATE_TARGET = 0x80774AB0;
+        // Test runs: PANDORA_FPS60_UNTIL=<frame> leaves 60 FPS mode from that frame on (to
+        // compare the modes along an identical path into gameplay).
+        static const u64 fps60_until = std::getenv("PANDORA_FPS60_UNTIL") ? std::strtoull(std::getenv("PANDORA_FPS60_UNTIL"), nullptr, 10) : 0;
+        if (fps60_until && bridge.frames() >= fps60_until)
+            settings.fps60 = false;
         if (settings.fps60)
             mem::write32(&rt.cpu, FRAME_RATE_TARGET, 60);
         else if (mem::read32(&rt.cpu, FRAME_RATE_TARGET) == 60)
@@ -415,6 +421,41 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
 }
 
 int main(int argc, char** argv) {
+    // PANDORA_WAIT_DEBUGGER=1: wait for a debugger to attach before anything runs (test runs started
+    // with the test's environment and arguments, then attached from x64dbg).
+    if (const char* w = std::getenv("PANDORA_WAIT_DEBUGGER"); w && *w == '1') {
+        std::fprintf(stderr, "waiting for a debugger (pid %lu)\n", (unsigned long)GetCurrentProcessId());
+        while (!IsDebuggerPresent())
+            Sleep(100);
+    }
+    // PANDORA_HOST_PATCH=<rva>=<hex bytes>[;...]: byte patches to this executable's code (test runs:
+    // open or close a recompiled branch without rebuilding; RVAs from the PDB, tools/lines2rva.py).
+    if (const char* spec = std::getenv("PANDORA_HOST_PATCH")) {
+        auto* base = reinterpret_cast<unsigned char*>(GetModuleHandleA(nullptr));
+        for (const char* p = spec; *p;) {
+            char* end;
+            const unsigned long rva = std::strtoul(p, &end, 16);
+            if (*end != '=') {
+                std::fprintf(stderr, "PANDORA_HOST_PATCH: bad entry at '%s'\n", p);
+                return 1;
+            }
+            std::vector<unsigned char> bytes;
+            for (p = end + 1; std::isxdigit((unsigned char)p[0]) && std::isxdigit((unsigned char)p[1]); p += 2)
+                bytes.push_back((unsigned char)std::strtoul(std::string(p, 2).c_str(), nullptr, 16));
+            DWORD old;
+            VirtualProtect(base + rva, bytes.size(), PAGE_EXECUTE_READWRITE, &old);
+            std::memcpy(base + rva, bytes.data(), bytes.size());
+            VirtualProtect(base + rva, bytes.size(), old, &old);
+            FlushInstructionCache(GetCurrentProcess(), base + rva, bytes.size());
+            std::fprintf(stderr, "host patch: %zu bytes at rva %lx\n", bytes.size(), rva);
+            if (*p == ';')
+                p++;
+            else if (*p) {
+                std::fprintf(stderr, "PANDORA_HOST_PATCH: bad entry at '%s'\n", p);
+                return 1;
+            }
+        }
+    }
     Options opts;
     bool headless = false, background = false, mute = false, unthrottled = false;
     u64 menu_test_frame = 0;
