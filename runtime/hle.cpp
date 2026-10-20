@@ -82,6 +82,58 @@ static void run_original(Runtime& rt, u32 entry) {
     c->pc = entry + 4;
 }
 
+// KPADRead's sample from the host's input state (see the hook below).
+static void kpad_read(Runtime& rt) {
+    CPUState* c = &rt.cpu;
+    static u32 previous = 0;
+    const u32 chan = c->gpr[3], buf = c->gpr[4], len = c->gpr[5];
+    if (chan != 0 || len == 0) {
+        rt.ret(0);
+        return;
+    }
+    auto f32 = [&](u32 off, float v) {
+        u32 bits;
+        std::memcpy(&bits, &v, 4);
+        mem::write32(c, buf + off, bits);
+    };
+    PadState p = rt.input().state();
+    // The HOME Menu is disabled (a nuisance, and a source of softlocks); PANDORA_HOME_MENU=1
+    // lets a real Wii Remote's HOME button reach the game (its pointer cursor helps debugging).
+    static const bool home_menu = std::getenv("PANDORA_HOME_MENU") != nullptr;
+    if (!home_menu)
+        p.buttons &= ~WPAD_HOME;
+    for (u32 i = 0; i < 0xF0; i += 4)
+        mem::write32(c, buf + i, 0);
+    mem::write32(c, buf + 0x00, p.buttons);
+    mem::write32(c, buf + 0x04, p.buttons & ~previous);
+    mem::write32(c, buf + 0x08, previous & ~p.buttons);
+    previous = p.buttons;
+    // acc (x, y, z in g) and its magnitude: a real Wii Remote's, or at rest (gravity along -y).
+    f32(0x0C, p.acc[0]);
+    f32(0x10, p.acc[1]);
+    f32(0x14, p.acc[2]);
+    f32(0x18, std::sqrt(p.acc[0] * p.acc[0] + p.acc[1] * p.acc[1] + p.acc[2] * p.acc[2]));
+    f32(0x20, p.pointer_x);
+    f32(0x24, p.pointer_y);
+    f32(0x34, p.horizon_x);  // horizon (level unless a real remote rolls)
+    f32(0x38, p.horizon_y);
+    f32(0x48, p.dist);       // dist: metres to the sensor bar (2 unless a real remote reports)
+    f32(0x54, 1.0f);   // acc_vertical
+    mem::write8(c, buf + 0x5C, 1);                         // WPAD_DEV_FREESTYLE
+    mem::write8(c, buf + 0x5D, 0);                         // WPAD_ERR_NONE
+    mem::write8(c, buf + 0x5E, p.pointer_valid ? 2 : 0);   // pointer valid
+    mem::write8(c, buf + 0x5F, 5);                         // WPAD_FMT_FS_BTN_ACC_DPD
+    f32(0x60, p.stick_x);
+    f32(0x64, p.stick_y);
+    f32(0x68, p.nunchuk_acc[0]);  // Nunchuk acc and magnitude
+    f32(0x6C, p.nunchuk_acc[1]);
+    f32(0x70, p.nunchuk_acc[2]);
+    f32(0x74, std::sqrt(p.nunchuk_acc[0] * p.nunchuk_acc[0] + p.nunchuk_acc[1] * p.nunchuk_acc[1] +
+                        p.nunchuk_acc[2] * p.nunchuk_acc[2]));
+    rt.ret(1);
+}
+
+
 void Runtime::install_hle() {
     // The DSP is not emulated at the hardware level: skip the boot-time DSP handshake.
     // TODO: replace with AX-level audio.
@@ -125,6 +177,60 @@ void Runtime::install_hle() {
     // BOOL WPADIsMotorEnabled(void): the console's rumble setting, normally read by WPADInit (stubbed).
     // Always on; the settings menu's rumble intensity decides whether the host gamepad shakes.
     hook("WPADIsMotorEnabled", [](Runtime& rt) { rt.ret(1); });
+
+    // The Wii Remote speaker. The game (sndRemoteSpeakerStart) turns it on with
+    // WPADControlSpeaker(chan, 1 on, cb) and, from that callback, (chan, 4 play, cb2); cb2 marks the
+    // channel streaming. Then sndRemoteStreamTask sends 20-byte packets (40 samples of 4-bit Yamaha
+    // ADPCM from AX's remote mix, encoded with WENC) whenever WPADCanSendStreamData says so. The
+    // callbacks are run right away (WPADControlSpeaker jumps to them with the caller's return
+    // address, so they return to the caller), and the packets go to the real remote's speaker or
+    // the host mixer (settings).
+    //
+    hook("hostContinue", [](Runtime& rt) { rt.host_continue(); });
+
+    // s32 WPADGetStatus(void): WPAD_STATE_SETUP (3). The game's remote sound system (fn_801250B4)
+    // only initialises in that state; WPADInit is stubbed, so the library's own state byte stays 0.
+    hook("WPADGetStatus", [](Runtime& rt) { rt.ret(3); });
+
+    // s32 WPADControlSpeaker(s32 chan, u32 command, WPADCallback callback)
+    hook("WPADControlSpeaker", [](Runtime& rt) {
+        CPUState* c = &rt.cpu;
+        const u32 chan = c->gpr[3], command = c->gpr[4], callback = c->gpr[5];
+        if (chan != 0) {
+            rt.ret((u32)-1);  // WPAD_ERR_NO_CONTROLLER
+            return;
+        }
+        LOG_INFO("speaker", "WPADControlSpeaker %u", command);
+        switch (command) {
+        case 0: rt.set_remote_speaker_state(false, false); break;  // off
+        case 1: rt.set_remote_speaker_state(true, false); break;   // on (not playing yet)
+        case 4: rt.set_remote_speaker_state(true, true); break;    // play
+        default: break;                                            // 2 mute, 3 unmute: unused here
+        }
+        if (!callback) {
+            rt.ret(0);
+            return;
+        }
+        c->gpr[3] = chan;
+        c->gpr[4] = 0;  // WPAD_ERR_NONE
+        c->pc = callback;
+    });
+
+    // BOOL WPADCanSendStreamData(s32 chan)
+    hook("WPADCanSendStreamData", [](Runtime& rt) { rt.ret(rt.cpu.gpr[3] == 0 && rt.remote_speaker_wants_data() ? 1 : 0); });
+
+    // s32 WPADSendStreamData(s32 chan, void* data, u16 len)
+    hook("WPADSendStreamData", [](Runtime& rt) {
+        CPUState* c = &rt.cpu;
+        const u32 chan = c->gpr[3], data = c->gpr[4], len = std::min<u32>(c->gpr[5], 20);
+        if (chan == 0 && len) {
+            u8 packet[20] = {};
+            for (u32 i = 0; i < len; i++)
+                packet[i] = mem::read8(c, data + i);
+            rt.remote_speaker_data(packet, len);
+        }
+        rt.ret(0);
+    });
 
     // void WPADControlMotor(s32 chan, u32 command): 1 starts the rumble motor, 0 stops it.
     hook("WPADControlMotor", [](Runtime& rt) {
@@ -210,52 +316,22 @@ void Runtime::install_hle() {
     // device type/error/DPD-valid/format at 0x5C, Nunchuk status at 0x60.
     hook("KPADRead", [](Runtime& rt) {
         CPUState* c = &rt.cpu;
-        static u32 previous = 0;
-        const u32 chan = c->gpr[3], buf = c->gpr[4], len = c->gpr[5];
-        if (chan != 0 || len == 0) {
-            rt.ret(0);
+        // KPAD's connect callback (the game's: it starts the Wii Remote speaker) is called once,
+        // as KPAD would when the controller connects, with the KPADRead finished afterwards.
+        constexpr u32 KPAD_CHAN0 = 0x807E0D38, KPAD_CONNECT_CALLBACK = 1596;
+        static bool connect_notified = false;
+        const u32 cb = mem::read32(c, KPAD_CHAN0 + KPAD_CONNECT_CALLBACK);
+        if (!connect_notified && cb && c->gpr[3] == 0) {
+            connect_notified = true;
+            LOG_INFO("input", "KPAD connect callback %s", rt.describe(cb).c_str());
+            const u32 chan = c->gpr[3], buf = c->gpr[4], len = c->gpr[5];
+            rt.call_guest(cb, {chan, 1}, [chan, buf, len](Runtime& rt, u32) {
+                rt.cpu.gpr[3] = chan, rt.cpu.gpr[4] = buf, rt.cpu.gpr[5] = len;
+                kpad_read(rt);
+            });
             return;
         }
-        auto f32 = [&](u32 off, float v) {
-            u32 bits;
-            std::memcpy(&bits, &v, 4);
-            mem::write32(c, buf + off, bits);
-        };
-        PadState p = rt.input().state();
-        // The HOME Menu is disabled (a nuisance, and a source of softlocks); PANDORA_HOME_MENU=1
-        // lets a real Wii Remote's HOME button reach the game (its pointer cursor helps debugging).
-        static const bool home_menu = std::getenv("PANDORA_HOME_MENU") != nullptr;
-        if (!home_menu)
-            p.buttons &= ~WPAD_HOME;
-        for (u32 i = 0; i < 0xF0; i += 4)
-            mem::write32(c, buf + i, 0);
-        mem::write32(c, buf + 0x00, p.buttons);
-        mem::write32(c, buf + 0x04, p.buttons & ~previous);
-        mem::write32(c, buf + 0x08, previous & ~p.buttons);
-        previous = p.buttons;
-        // acc (x, y, z in g) and its magnitude: a real Wii Remote's, or at rest (gravity along -y).
-        f32(0x0C, p.acc[0]);
-        f32(0x10, p.acc[1]);
-        f32(0x14, p.acc[2]);
-        f32(0x18, std::sqrt(p.acc[0] * p.acc[0] + p.acc[1] * p.acc[1] + p.acc[2] * p.acc[2]));
-        f32(0x20, p.pointer_x);
-        f32(0x24, p.pointer_y);
-        f32(0x34, p.horizon_x);  // horizon (level unless a real remote rolls)
-        f32(0x38, p.horizon_y);
-        f32(0x48, p.dist);       // dist: metres to the sensor bar (2 unless a real remote reports)
-        f32(0x54, 1.0f);   // acc_vertical
-        mem::write8(c, buf + 0x5C, 1);                         // WPAD_DEV_FREESTYLE
-        mem::write8(c, buf + 0x5D, 0);                         // WPAD_ERR_NONE
-        mem::write8(c, buf + 0x5E, p.pointer_valid ? 2 : 0);   // pointer valid
-        mem::write8(c, buf + 0x5F, 5);                         // WPAD_FMT_FS_BTN_ACC_DPD
-        f32(0x60, p.stick_x);
-        f32(0x64, p.stick_y);
-        f32(0x68, p.nunchuk_acc[0]);  // Nunchuk acc and magnitude
-        f32(0x6C, p.nunchuk_acc[1]);
-        f32(0x70, p.nunchuk_acc[2]);
-        f32(0x74, std::sqrt(p.nunchuk_acc[0] * p.nunchuk_acc[0] + p.nunchuk_acc[1] * p.nunchuk_acc[1] +
-                            p.nunchuk_acc[2] * p.nunchuk_acc[2]));
-        rt.ret(1);
+        kpad_read(rt);
     });
 
     // OSReport writes to the (absent) debug UART: print it instead.

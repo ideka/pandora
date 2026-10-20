@@ -125,6 +125,15 @@ bool Wiimote::connect(const char* path) {
 }
 
 void Wiimote::disconnect() {
+    if (speaker_thread_.joinable()) {
+        {
+            std::lock_guard<std::mutex> lock(speaker_mutex_);
+            speaker_run_ = false;
+        }
+        speaker_cv_.notify_all();
+        speaker_thread_.join();
+    }
+    speaker_on_ = false;
     if (dev_)
         SDL_hid_close(dev_);
     dev_ = nullptr;
@@ -143,6 +152,7 @@ void Wiimote::disconnect() {
 // Some Windows Bluetooth stacks reject WriteFile on the Wii Remote (notably with the -TR model);
 // HidD_SetOutputReport on our own handle works there, as in Dolphin.
 bool Wiimote::send(const u8* data, size_t len) {
+    std::lock_guard<std::mutex> lock(io_mutex_);
     u8 report[REPORT_SIZE] = {};
     std::memcpy(report, data, std::min(len, sizeof report));
     if (len > 1 && rumble_)
@@ -217,6 +227,9 @@ void Wiimote::setup() {
         }
     }
     setup_ir();
+    speaker_on_ = false;
+    if (speaker_wanted_)
+        setup_speaker(true);
     // The status report says whether an extension is plugged in.
     const u8 status[] = {OUT_STATUS, 0x00};
     send(status, sizeof status);
@@ -231,6 +244,84 @@ void Wiimote::setup() {
 }
 
 // Unencrypted extension access (0x55 to F0, 0x00 to FB), then its id: a Nunchuk ends in A4 20 00 00.
+// The speaker (WiiBrew): enable, mute, registers A20009 = 1, A20001 = 8, the 7-byte
+// configuration at A20001 (the game's: 4-bit Yamaha ADPCM, rate 0x07D0, volume 0x40), A20008 = 1,
+// unmute. The game sends 20-byte packets (report 0x18) which a thread writes as they come, at
+// most one every 6 ms (they arrive in bursts, a host frame's worth at a time).
+constexpr u8 OUT_SPEAKER_ENABLE = 0x14, OUT_SPEAKER_DATA = 0x18, OUT_SPEAKER_MUTE = 0x19;
+constexpr u32 SPEAKER_REGISTERS = 0xA20000;
+constexpr u8 SPEAKER_CONFIG[7] = {0x00, 0x00, 0xD0, 0x07, 0x40, 0x0C, 0x0E};
+
+void Wiimote::setup_speaker(bool on) {
+    u8 r[2] = {OUT_SPEAKER_MUTE, 0x04};
+    if (!on) {
+        send(r, sizeof r);
+        r[0] = OUT_SPEAKER_ENABLE, r[1] = 0x00;
+        send(r, sizeof r);
+        speaker_on_ = false;
+        LOG_INFO("wiimote", "speaker off");
+        return;
+    }
+    r[0] = OUT_SPEAKER_ENABLE, r[1] = 0x04;
+    send(r, sizeof r);
+    r[0] = OUT_SPEAKER_MUTE, r[1] = 0x04;
+    send(r, sizeof r);
+    const u8 one = 0x01, eight = 0x08;
+    write_register(SPEAKER_REGISTERS + 0x09, &one, 1);
+    write_register(SPEAKER_REGISTERS + 0x01, &eight, 1);
+    write_register(SPEAKER_REGISTERS + 0x01, SPEAKER_CONFIG, sizeof SPEAKER_CONFIG);
+    write_register(SPEAKER_REGISTERS + 0x08, &one, 1);
+    r[1] = 0x00;
+    send(r, sizeof r);
+    speaker_on_ = true;
+    if (!speaker_thread_.joinable()) {
+        speaker_run_ = true;
+        speaker_thread_ = std::thread([this] { speaker_thread(); });
+    }
+    LOG_INFO("wiimote", "speaker on");
+}
+
+void Wiimote::set_speaker(bool on) {
+    speaker_wanted_ = on;
+    if (dev_ && speaker_on_ != on)
+        setup_speaker(on);
+}
+
+void Wiimote::send_speaker(const u8* packet, size_t len) {
+    if (!speaker_on_)
+        return;
+    std::array<u8, 21> entry{};
+    entry[0] = (u8)std::min<size_t>(len, 20);
+    std::memcpy(&entry[1], packet, entry[0]);
+    {
+        std::lock_guard<std::mutex> lock(speaker_mutex_);
+        if (speaker_queue_.size() >= 12)  // the game ran ahead: keep the latest
+            speaker_queue_.pop_front();
+        speaker_queue_.push_back(entry);
+    }
+    speaker_cv_.notify_one();
+}
+
+void Wiimote::speaker_thread() {
+    auto next = Clock::now();
+    for (;;) {
+        std::array<u8, 21> entry;
+        {
+            std::unique_lock<std::mutex> lock(speaker_mutex_);
+            speaker_cv_.wait(lock, [this] { return !speaker_run_ || !speaker_queue_.empty(); });
+            if (!speaker_run_)
+                return;
+            entry = speaker_queue_.front();
+            speaker_queue_.pop_front();
+        }
+        std::this_thread::sleep_until(next);
+        u8 report[22] = {OUT_SPEAKER_DATA, (u8)(entry[0] << 3)};
+        std::memcpy(report + 2, &entry[1], 20);
+        send(report, sizeof report);
+        next = std::max(next + std::chrono::microseconds(6000), Clock::now() - std::chrono::milliseconds(20));
+    }
+}
+
 // IR camera: basic mode (10 bytes for 4 dots) at the Wii's sensitivity level (1-5).
 void Wiimote::setup_ir() {
     u8 r[2] = {OUT_IR_PIXEL_CLOCK, 0x04};

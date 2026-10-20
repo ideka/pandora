@@ -155,6 +155,22 @@ aids. Open work is in [TODO.md](TODO.md).
   up/down as the horizon reference. `PANDORA_IR_LOG=1` logs every IR report (raw dots, ends
   found, pos, dist, acc). The game's cursor reaches the screen's edges at about +-1.22 / +-0.91
   (measured). The Wii's IR sensitivity setting (1-5) selects the camera's gain block (WiiBrew's).
+- The speaker. The game's remote sound system (`fn_801250B4`) only initialises when
+  `WPADGetStatus` returns WPAD_STATE_SETUP (hooked: 3; the real one reads WPAD's state byte,
+  which the stubbed WPADInit leaves 0). It registers a KPAD connect callback
+  (`sndRemoteSpeakerStart`), which the KPADRead hook fires once (as KPAD would on connection,
+  through `Runtime::call_guest`), and starts the speaker with `WPADControlSpeaker(chan, 1 on, cb)`
+  then, from the callback, `(chan, 4 play, cb2)`; the hook runs the callbacks at once by jumping
+  to them with the caller's return address. `sndRemoteStreamTask` then takes 40 samples from AX's
+  remote mix per channel (`AXRmtGetSamples`), encodes them with `WENCGetEncodeData` (4-bit Yamaha
+  ADPCM, 20 bytes) and calls `WPADSendStreamData` whenever `WPADCanSendStreamData` allows (hooked:
+  while the speaker plays and an output wants the data). Measured: 150 packets/s, i.e. 6000
+  samples/s, with the SDK's speaker configuration `00 00 D0 07 40 0C 0E` (ADPCM, rate value
+  0x07D0, volume 0x40), which the driver writes to the remote (WiiBrew's enable sequence); a thread
+  writes the 0x18 reports as they come, at most one per 6 ms. Without a remote (or with "Wii Remote
+  speaker" off) the host decodes the packets (Dolphin's Yamaha ADPCM tables, volume 0x40/0x7F)
+  and mixes them into the output at the game's measured packet rate. `PANDORA_SPEAKER_LOG=1`
+  counts packets; `PANDORA_SPEAKER_DUMP=<file>` writes the decoded mono s16 stream.
 - Continuous scanning (`runtime/wiimote_scanner.cpp`, Windows), as in Dolphin: while enabled and
   no remote is connected, a thread runs Bluetooth inquiries (2 x 1.28 s). A "Nintendo
   RVL-CNT-01(-TR)" in discoverable mode (1+2, sync) gets its HID service enabled with
@@ -245,6 +261,16 @@ aids. Open work is in [TODO.md](TODO.md).
 - Cross-chunk direct calls (`patches/dolrecomp/0001`, enabled by `tools/recompile.sh` with
   `DOLRECOMP_UNSAFE_DIRECT_CALLS=1`) halve dispatches. They bypass dispatch-time checks, which is
   fine while hooks are in-code markers.
+
+## Calling guest code from a hook
+
+`Runtime::call_guest(fn, {args}, then)` runs a guest function from inside a hook: the hook's
+caller's return address is saved, LR is pointed at `hostContinue` (a hooked padding word after
+KPADRead in the DOL, `0x805E95AC`), and the function runs on the guest's stack; when it returns,
+the hostContinue hook pops the continuation and runs `then(rt, r3)`, which restores the caller's
+return (or does the hook's own `ret`). Nested calls and the callee's own hooks work (a chain of
+LR-preserving tail jumps, as WPADControlSpeaker's callbacks do, also returns there). Used for
+KPAD's connect callback; WPADGetInfoAsync's callback could use it too.
 
 ## Debugging aids
 

@@ -3,8 +3,13 @@
 // the player LED. Its buttons map straight to the emulated ones (no rebinding).
 #pragma once
 
+#include <array>
 #include <chrono>
+#include <condition_variable>
+#include <deque>
+#include <mutex>
 #include <string>
+#include <thread>
 
 #include "guest.h"
 
@@ -38,6 +43,10 @@ public:
     // The Wii's sensor bar position and IR sensitivity (1-5) settings.
     void set_sensor_bar_above(bool above) { bar_above_ = above; }
     void set_ir_sensitivity(int level);
+    // The speaker: on (the game's configuration, 4-bit ADPCM) or off; packets of up to 20 bytes
+    // as the game sends them (WPADSendStreamData), written by a thread paced like the game.
+    void set_speaker(bool on);
+    void send_speaker(const u8* packet, size_t len);
 
 private:
     using Clock = std::chrono::steady_clock;
@@ -50,6 +59,8 @@ private:
     void setup();
     void setup_extension();
     void setup_ir();
+    void setup_speaker(bool on);
+    void speaker_thread();
     void set_reporting();
     // Waits up to timeout_ms for a report with the given id, handling the others meanwhile.
     bool wait_for(u8 id, u8* out, int timeout_ms);
@@ -69,6 +80,13 @@ private:
     bool rumble_ = false;
     bool bar_above_ = false;
     int ir_sensitivity_ = 3, ir_level_set_ = 0;
+    bool speaker_wanted_ = false, speaker_on_ = false;
+    std::mutex io_mutex_;  // output reports go from the main thread and the speaker thread
+    std::thread speaker_thread_;
+    std::mutex speaker_mutex_;
+    std::condition_variable speaker_cv_;
+    std::deque<std::array<u8, 21>> speaker_queue_;  // length, then the data
+    bool speaker_run_ = false;
     // KPAD's tracking state (normalised image coordinates): how many ends were found last, where
     // they were, the bar's length, direction and distance, and the length remembered for
     // acquiring from one dot.

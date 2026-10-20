@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 
 #include "log.h"
 
@@ -54,8 +56,24 @@ void AudioOut::push(const u8* b) {
         return;
     auto scale = [this](int v) { return (s16)std::clamp((int)std::lround(v * gain_), -32768, 32767); };
     for (int i = 0; i < 8; i++, b += 4) {
-        pending_.push_back(scale((s16)(b[2] << 8 | b[3])));  // left
-        pending_.push_back(scale((s16)(b[0] << 8 | b[1])));  // right
+        // The remote speaker's stream, linearly resampled (it is mono and ~3-6 kHz).
+        int spk = 0;
+        if (speaker_read_ + 1 < speaker_.size()) {
+            const size_t k = speaker_read_;
+            const double f = speaker_pos_;
+            spk = (int)std::lround(speaker_[k] * (1.0 - f) + speaker_[k + 1] * f);
+            speaker_pos_ += speaker_step_;
+            while (speaker_pos_ >= 1.0) {
+                speaker_pos_ -= 1.0;
+                speaker_read_++;
+            }
+        }
+        pending_.push_back(scale((s16)(b[2] << 8 | b[3]) + spk));  // left
+        pending_.push_back(scale((s16)(b[0] << 8 | b[1]) + spk));  // right
+    }
+    if (speaker_read_ > 4096) {
+        speaker_.erase(speaker_.begin(), speaker_.begin() + (ptrdiff_t)speaker_read_);
+        speaker_read_ = 0;
     }
     if (pending_.size() < BATCH_FRAMES * 2)
         return;
@@ -79,3 +97,34 @@ void AudioOut::push(const u8* b) {
 }
 
 int AudioOut::queued_ms() const { return stream_ ? SDL_GetAudioStreamQueued(stream_) / BYTES_PER_MS : -1; }
+
+// 4-bit Yamaha ADPCM (as ffmpeg and Dolphin decode it), high nibble first; the remote plays the
+// game's configured volume 0x40 of 0x7F.
+void AudioOut::push_speaker(const u8* packet, size_t len, float rate) {
+    static const s32 DIFF[16] = {1, 3, 5, 7, 9, 11, 13, 15, -1, -3, -5, -7, -9, -11, -13, -15};
+    static const s32 SCALE[16] = {230, 230, 230, 230, 307, 409, 512, 614, 230, 230, 230, 230, 307, 409, 512, 614};
+    auto expand = [&](u8 nibble) {
+        adpcm_predictor_ = std::clamp(adpcm_predictor_ + adpcm_step_ * DIFF[nibble] / 8, -32768, 32767);
+        adpcm_step_ = std::clamp((adpcm_step_ * SCALE[nibble]) >> 8, 127, 24576);
+        return (s16)(adpcm_predictor_ * 0x40 / 0x7F);
+    };
+    if (speaker_.size() - speaker_read_ > 24000)  // half a second behind: the output is not consuming
+        return;
+    const size_t first = speaker_.size();
+    for (size_t i = 0; i < len; i++) {
+        speaker_.push_back(expand(packet[i] >> 4));
+        speaker_.push_back(expand(packet[i] & 0xF));
+    }
+    // PANDORA_SPEAKER_DUMP=<file>: the decoded stream as raw mono s16 (test runs).
+    static FILE* dump = std::getenv("PANDORA_SPEAKER_DUMP") ? std::fopen(std::getenv("PANDORA_SPEAKER_DUMP"), "wb") : nullptr;
+    if (dump) {
+        std::fwrite(speaker_.data() + first, sizeof(s16), speaker_.size() - first, dump);
+        std::fflush(dump);
+    }
+    speaker_step_ = std::clamp((double)rate, 1000.0, 16000.0) / RATE;
+}
+
+void AudioOut::reset_speaker() {
+    adpcm_predictor_ = 0;
+    adpcm_step_ = 127;
+}

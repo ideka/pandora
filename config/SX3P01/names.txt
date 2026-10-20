@@ -26,6 +26,17 @@
 80495D48 sceneNodeUpdateWorld # world matrices down a node chain, stamped with the frame counter
 803E0410 gwPadUpdate          # the game's controller wrapper (GWPad) per-frame update: stick polar form, history
 804F1318 padProcessSticks     # KPAD stick -> magnitude/angle; an axis beyond +-0.995 snaps the stick to that cardinal direction
+805A27C0 WPADGetStatus        # stub (b WPADiGetStatus); hooked: WPAD_STATE_SETUP, so the game sets up the remote speaker
+805B4A10 WPADiGetStatus       # the library's state byte
+805A4B50 WPADControlSpeaker   # (chan, command 1 on / 4 play / 0 off, callback(chan, result)); hooked: callback run at once
+805A63B0 WPADSendStreamData    # (chan, data, 20): one speaker packet, 20 bytes of 4-bit Yamaha ADPCM (40 samples); hooked
+80561FF0 AXRmtGetSamplesLeft   # AX remote mix: samples waiting for the speaker stream
+80562020 AXRmtGetSamples       # (chan, s16* out, count)
+805620F0 AXRmtAdvancePtr       # (count) after every channel read its samples
+801253BC sndRemoteSpeakerStart # (chan, mute): WPADControlSpeaker on, callback sndRemoteSpeakerCb1
+80125454 sndRemoteSpeakerCb1   # speaker on -> WPADControlSpeaker play, callback sndRemoteSpeakerCb2
+80125498 sndRemoteSpeakerCb2   # play started: channel flags +40 on, +41 first packet, +43 enabled
+80125518 sndRemoteStreamTask   # per AX frame: 40 remote samples -> WENCGetEncodeData -> WPADSendStreamData per channel
 804A5780 sceneRefreshSkinned  # per-frame scene pass: skinned nodes (type 14) get their slot, subtrees marked dirty; 2nd tick of a frame only (hooked for 60 FPS)
 80412F14 dynClothRefreshBones # cloth step: root frame + bone entries (anchors) from the skeleton's world matrices
 804134FC dynClothSetAnchors   # cloth step: pinned particles from the skeleton's world matrices

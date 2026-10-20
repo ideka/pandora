@@ -156,7 +156,7 @@ scrollbarvertical sliderarrowdec, scrollbarvertical sliderarrowinc { width: 0; h
     display: flex;
     flex-direction: row;
     align-items: center;
-    padding: 12dp;
+    padding: 7dp 12dp;
 }
 .setting .name { width: 200dp; }
 .setting .value { margin-left: 14dp; width: 60dp; }

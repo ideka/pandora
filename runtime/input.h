@@ -116,6 +116,9 @@ public:
     // A real Wii Remote, if one is paired: poll every host frame.
     void poll_wiimote();
     const Wiimote& wiimote() const { return wiimote_; }
+    Wiimote& wiimote_mut() { return wiimote_; }
+    // Whether the remote's speaker should be on (the game plays on it and the setting allows).
+    void set_remote_speaker(bool on) { remote_speaker_ = on; }
     void set_sensor_bar_above(bool above) { wiimote_.set_sensor_bar_above(above); }
     void set_ir_sensitivity(int level) { wiimote_.set_ir_sensitivity(level); }
     // Continuous Bluetooth scanning for Wii Remotes (press 1+2 to connect).
@@ -139,6 +142,7 @@ private:
     bool mouse_pointer_ = true;
     bool free_stick_ = true;
     bool rumble_on_ = false, rumbling_ = false;
+    bool remote_speaker_ = false;
     float rumble_intensity_ = 1.0f;
     Wiimote wiimote_;
     WiimoteScanner scanner_;

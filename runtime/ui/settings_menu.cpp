@@ -119,6 +119,22 @@ bool SettingsMenu::init(const std::string& asset_dir) {
             }
         });
     c.BindFunc(
+        "wiimote_speaker", [this](Rml::Variant& v) { v = settings_.wiimote_speaker; },
+        [this](const Rml::Variant& v) {
+            if (v.Get<bool>() != settings_.wiimote_speaker) {
+                settings_.wiimote_speaker = v.Get<bool>();
+                changed();
+            }
+        });
+    c.BindFunc(
+        "wiimote_sounds_pc", [this](Rml::Variant& v) { v = settings_.wiimote_sounds_pc; },
+        [this](const Rml::Variant& v) {
+            if (v.Get<bool>() != settings_.wiimote_sounds_pc) {
+                settings_.wiimote_sounds_pc = v.Get<bool>();
+                changed();
+            }
+        });
+    c.BindFunc(
         "ir_sensitivity", [this](Rml::Variant& v) { v = settings_.ir_sensitivity; },
         [this](const Rml::Variant& v) {
             const int s = std::clamp((int)std::lround(v.Get<float>()), 1, 5);

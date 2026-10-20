@@ -194,6 +194,7 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
         rt.input().set_free_stick(settings.free_stick);
         rt.input().set_sensor_bar_above(settings.sensor_bar_above);
         rt.input().set_ir_sensitivity(settings.ir_sensitivity);
+        rt.set_remote_speaker_outputs(settings.wiimote_speaker, settings.wiimote_sounds_pc);
         rt.input().set_wiimote_scanning(settings.wiimote_scan && (!background || std::getenv("PANDORA_POLL_WIIMOTE")));
     };
     apply_settings();

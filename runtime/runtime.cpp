@@ -426,6 +426,80 @@ std::string Runtime::backtrace(int max_frames) const {
     return out;
 }
 
+// Calling guest code from the host: the function returns to hostContinue (a hooked padding word
+// in the DOL), whose hook runs the continuation.
+constexpr u32 HOST_CONTINUE = 0x805E95AC;
+
+void Runtime::call_guest(u32 fn, std::initializer_list<u32> args, std::function<void(Runtime&, u32)> then) {
+    continuations_.push_back({cpu.lr, std::move(then)});
+    u32 r = 3;
+    for (u32 a : args)
+        cpu.gpr[r++] = a;
+    cpu.lr = HOST_CONTINUE;
+    cpu.pc = fn;
+}
+
+void Runtime::host_continue() {
+    if (continuations_.empty()) {
+        halt("hostContinue reached with nothing to continue");
+        return;
+    }
+    Continuation k = std::move(continuations_.back());
+    continuations_.pop_back();
+    cpu.lr = k.lr;
+    cpu.pc = k.lr;  // unless the continuation redirects (e.g. rt.ret, run_original)
+    k.then(*this, cpu.gpr[3]);
+}
+
+// The Wii Remote speaker. The real remote plays the packets when one is connected and the
+// setting allows; otherwise the host mixer decodes them (setting), at the rate the game sends
+// them (40 samples per packet; 3 or 6 kHz on a Wii, measured from the timebase).
+void Runtime::set_remote_speaker_outputs(bool on_remote, bool on_host) {
+    speaker_on_remote_ = on_remote;
+    speaker_on_host_ = on_host;
+    input_.set_remote_speaker(speaker_on_remote_ && speaker_on_ && speaker_playing_);
+}
+
+void Runtime::set_remote_speaker_state(bool on, bool playing) {
+    if (on && playing && !(speaker_on_ && speaker_playing_)) {
+        audio_out_.reset_speaker();  // the game's encoder starts afresh (WENC flag 1 on its first packet)
+        speaker_last_tb_ = 0;
+    }
+    speaker_on_ = on;
+    speaker_playing_ = playing;
+    input_.set_remote_speaker(speaker_on_remote_ && speaker_on_ && speaker_playing_);
+}
+
+bool Runtime::remote_speaker_wants_data() const {
+    if (!(speaker_on_ && speaker_playing_))
+        return false;
+    const bool remote = speaker_on_remote_ && input_.wiimote().state().connected;
+    return remote || speaker_on_host_;
+}
+
+void Runtime::remote_speaker_data(const u8* packet, size_t len) {
+    // The game's packet rate gives the stream's sample rate (the packets arrive in bursts in host
+    // time, so it is measured in guest time).
+    const u64 tb = cpu.timebase;
+    if (speaker_last_tb_ && tb > speaker_last_tb_) {
+        const double interval = (double)(tb - speaker_last_tb_) / 60750000.0;
+        if (interval > 0.002 && interval < 0.05)
+            speaker_rate_ = 0.9f * speaker_rate_ + 0.1f * (float)(2.0 * (double)len / interval);
+    }
+    speaker_last_tb_ = tb;
+    static const bool log = std::getenv("PANDORA_SPEAKER_LOG") != nullptr;
+    if (log) {
+        static u32 packets = 0;
+        if (++packets % 150 == 0)
+            LOG_INFO("speaker", "%u packets, ~%.0f samples/s, %s", packets, speaker_rate_,
+                     speaker_on_remote_ && input_.wiimote().state().connected ? "to the remote" : "to the host mixer");
+    }
+    if (speaker_on_remote_ && input_.wiimote().state().connected)
+        input_.wiimote_mut().send_speaker(packet, len);
+    else if (speaker_on_host_)
+        audio_out_.push_speaker(packet, len, speaker_rate_);
+}
+
 // Write watchpoints (debugging): called by cpu.c before every store to MEM1.
 void Runtime::on_mem1_write(u32 offset, u32 size, void* user) {
     auto* rt = static_cast<Runtime*>(user);

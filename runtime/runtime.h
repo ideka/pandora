@@ -74,6 +74,11 @@ public:
     bool enable_audio_output();
     void disable_audio_output() { audio_out_.close(); }
     void set_audio_volume(float volume) { audio_out_.set_volume(volume); }
+    // The Wii Remote speaker: where its sounds play (settings) and the game's own state (hooks).
+    void set_remote_speaker_outputs(bool on_remote, bool on_host);
+    void set_remote_speaker_state(bool on, bool playing);
+    bool remote_speaker_wants_data() const;
+    void remote_speaker_data(const u8* packet, size_t len);
     int audio_queued_ms() const { return audio_out_.queued_ms(); }
     AuroraBridge* bridge() { return bridge_.get(); }
     Input& input() { return input_; }
@@ -83,6 +88,12 @@ public:
     // cpu.pc at the next guest address, usually via ret().
     void hook(u32 addr, Hook fn);
     bool hook(std::string_view name, Hook fn);
+    // Calls a guest function from a hook: fn(args...) runs on the guest's stack with the hook's
+    // caller's frame, and when it returns, `then` runs with its result (r3). The hook must not
+    // touch the CPU after this (the function's own hooks may run in between).
+    void call_guest(u32 fn, std::initializer_list<u32> args, std::function<void(Runtime&, u32)> then);
+    void host_continue();  // the hostContinue hook: a called guest function returned
+
     void ret(u32 r3) {
         cpu.gpr[3] = r3;
         cpu.pc = cpu.lr;
@@ -130,6 +141,15 @@ private:
     std::unique_ptr<Ios> ios_;
     AudioDump audio_dump_;
     AudioOut audio_out_;
+    bool speaker_on_remote_ = true, speaker_on_host_ = true;  // settings
+    bool speaker_on_ = false, speaker_playing_ = false;       // the game's state
+    struct Continuation {
+        u32 lr;
+        std::function<void(Runtime&, u32)> then;
+    };
+    std::vector<Continuation> continuations_;  // call_guest's pending returns, innermost last
+    u64 speaker_last_tb_ = 0;    // timebase of the last packet, for the stream's sample rate
+    float speaker_rate_ = 6000;  // samples per second the game produces (40 per packet)
     static void audio_sink(void* self, const u8* block);
     Input input_;
     std::unique_ptr<AuroraBridge> bridge_;
