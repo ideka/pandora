@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 
 #ifdef _WIN32
@@ -37,8 +38,12 @@ constexpr u32 IR_REGISTERS = 0xB00000, EXT_REGISTERS = 0xA40000;
 // IR sensitivity) are the only ones. KPAD's defaults: position scale 1.25, origin 0.2 towards the
 // bar, no play radius; dist = (0.2 m / tan 21 degrees) / the dots' separation (camera 42 degrees
 // wide); dots in the outer 5% of the image are ignored.
-constexpr float KPAD_POS_SCALE = 1.25f, KPAD_BAR_OFFSET = 0.2f, KPAD_DIST_SCALE = 0.2f / 0.383864f;
+constexpr float KPAD_POS_SCALE = 1.25f / 0.95f, KPAD_BAR_OFFSET = 0.2f, KPAD_DIST_SCALE = 0.2f / 0.383864f;
 constexpr float KPAD_AREA_X = 0.95f, KPAD_AREA_Y = 0.70f;
+// KPAD's tracking limits: a pair is kept while its distance stays within 0.52..3 m and changes by
+// less than 4 cm and 25 degrees per sample; one dot is followed within 0.1 of a previous end.
+constexpr float KPAD_DIST_MIN = KPAD_DIST_SCALE, KPAD_DIST_MAX = 3.0f, KPAD_DIST_STEP = 0.04f, KPAD_DIR_MIN = 0.9f,
+                KPAD_TRACK_RADIUS = 0.1f;
 
 // IR camera sensitivity blocks for the Wii's five levels (WiiBrew).
 constexpr u8 IR_BLOCK1[5][9] = {
@@ -120,6 +125,9 @@ void Wiimote::disconnect() {
     if (dev_)
         SDL_hid_close(dev_);
     dev_ = nullptr;
+    dpd_count_ = 0;
+    known_len_ = 0;
+    stable_ = 0;
     scanned_once_ = false;  // look again (e.g. the remote reconnects)
 #ifdef _WIN32
     if (win_handle_)
@@ -337,74 +345,180 @@ void Wiimote::parse_core(const u8* b, const u8* a) {
 // Basic IR: two dots per 5 bytes (x and y low bytes, then the high bits of both), 0x3FF = none.
 // WPAD's coordinates: x as the camera reports it (falls as the remote turns right), y flipped
 // (767 - y: rises as the remote turns up); both measured with a real remote and bar.
+//
+// Then KPAD's tracker (fn_805E7CA0 and the functions it calls): the dots are normalised by 512,
+// those in the outer 5% of the image or duplicated are dropped, and the bar's two ends are
+// chosen by what was tracked last:
+//   - from two ends: the pair whose distance changed by less than 4 cm and direction by less
+//     than 25 degrees (fn_805E7150), else the one dot within 0.1 of a previous end, the other
+//     end a bar's length away as before (fn_805E7540);
+//   - from nothing: the pair best aligned with the horizon that is within 0.52..3 m
+//     (fn_805E6F60), or one dot with the other end a remembered bar's length away wherever it
+//     fits in the image (fn_805E7380);
+// and pos = 1.25 / 0.95 * (origin - midpoint in the bar's frame), horizon = the bar's direction,
+// dist from the separation (fn_805E76C0). KPAD orders the ends by its horizon reference, which
+// here is the accelerometer's roll (an upside-down remote reverses them).
 void Wiimote::parse_ir(const u8* ir) {
-    float dx[4], dy[4];
-    int dots = 0;
+    static const bool log = std::getenv("PANDORA_IR_LOG") != nullptr;
+    int rx[4], ry[4], raw = 0;
     for (int pair = 0; pair < 2; pair++) {
         const u8* p = ir + pair * 5;
-        const int x1 = p[0] | ((p[2] >> 4) & 3) << 8, y1 = p[1] | ((p[2] >> 6) & 3) << 8;
-        const int x2 = p[3] | (p[2] & 3) << 8, y2 = p[4] | ((p[2] >> 2) & 3) << 8;
-        // KPAD's normalisation: (x - 511.5) / 512, (y - 383.5) / 512; dots in the outer 5% of the
-        // image are dropped.
-        auto add = [&](int x, int y) {
-            const float nx = ((float)x - 511.5f) / 512.0f, ny = ((float)(767 - y) - 383.5f) / 512.0f;
-            if (std::fabs(nx) < KPAD_AREA_X && std::fabs(ny) < KPAD_AREA_Y) {
-                dx[dots] = nx;
-                dy[dots++] = ny;
-            }
-        };
-        if (y1 != 0x3FF && x1 != 0x3FF)
-            add(x1, y1);
-        if (y2 != 0x3FF && x2 != 0x3FF)
-            add(x2, y2);
+        rx[raw] = p[0] | ((p[2] >> 4) & 3) << 8, ry[raw++] = p[1] | ((p[2] >> 6) & 3) << 8;
+        rx[raw] = p[3] | (p[2] & 3) << 8, ry[raw++] = p[4] | ((p[2] >> 2) & 3) << 8;
     }
-    float x1, y1, x2, y2;
-    if (dots >= 2) {
-        // The sensor bar's two ends, left to right as the remote is held: by x, the other way
-        // round when the remote is upside down (its z axis, up through the buttons, reads below
-        // zero: KPAD's y is its negative), which the dots alone cannot tell.
-        x1 = dx[0], y1 = dy[0], x2 = dx[1], y2 = dy[1];
-        const bool upside_down = state_.acc[1] > 0;
-        if ((x1 > x2) != upside_down) {
-            std::swap(x1, x2);
-            std::swap(y1, y2);
+    // KPAD's objects: (x - 511.5) / 512, (y - 383.5) / 512 with y down; outer 5% and duplicates out.
+    float ox[4], oy[4];
+    int n = 0;
+    for (int i = 0; i < 4; i++) {
+        if (rx[i] == 0x3FF || ry[i] == 0x3FF)
+            continue;
+        const float x = ((float)rx[i] - 511.5f) / 512.0f, y = ((float)(767 - ry[i]) - 383.5f) / 512.0f;
+        if (!(x > -KPAD_AREA_X && x < KPAD_AREA_X && y > -KPAD_AREA_Y && y < KPAD_AREA_Y))
+            continue;
+        bool dup = false;
+        for (int j = 0; j < n; j++)
+            dup |= ox[j] == x && oy[j] == y;
+        if (!dup) {
+            ox[n] = x;
+            oy[n++] = y;
         }
-        bar_dx_ = x2 - x1;
-        bar_dy_ = y2 - y1;
-        bar_seen_ = true;
-    } else if (dots == 1 && bar_seen_) {
-        // One end left the camera's view: the other is a bar's width away, on the side that
-        // keeps the midpoint near where it was (as KPAD does with its last separation).
-        const float lx = dx[0], ly = dy[0];
-        const float ax = lx + bar_dx_ / 2, ay = ly + bar_dy_ / 2;  // midpoint if this is the left end
-        const float bx = lx - bar_dx_ / 2, by = ly - bar_dy_ / 2;  // ... the right end
-        const bool left = std::hypot(ax - mid_x_, ay - mid_y_) < std::hypot(bx - mid_x_, by - mid_y_);
-        x1 = left ? lx : lx - bar_dx_;
-        y1 = left ? ly : ly - bar_dy_;
-        x2 = left ? lx + bar_dx_ : lx;
-        y2 = left ? ly + bar_dy_ : ly;
+    }
+    // The horizon reference: level, reversed when the remote is upside down (its z axis, up
+    // through the buttons, reads below zero: KPAD's y is its negative).
+    const float ref_x = state_.acc[1] > 0 ? -1.0f : 1.0f;
+    auto inside = [](float x, float y) { return x > -KPAD_AREA_X && x < KPAD_AREA_X && y > -KPAD_AREA_Y && y < KPAD_AREA_Y; };
+    auto pair_dist = [](float x1, float y1, float x2, float y2) {
+        const float len = std::hypot(x2 - x1, y2 - y1);
+        return len > 0 ? KPAD_DIST_SCALE / len : 0.0f;
+    };
+    int found = 0;
+    float ax = 0, ay = 0, bx = 0, by = 0;  // the ends, left to right
+    auto track2 = [&] {  // fn_805E7150: the pair most like the last one
+        float best = 2.0f;
+        for (int i = 0; i < n; i++)
+            for (int j = i + 1; j < n; j++) {
+                const float len = std::hypot(ox[j] - ox[i], oy[j] - oy[i]);
+                const float dist = pair_dist(ox[i], oy[i], ox[j], oy[j]);
+                if (!(dist > KPAD_DIST_MIN && dist < KPAD_DIST_MAX))
+                    continue;
+                float score = std::fabs(dist - dpd_dist_) / KPAD_DIST_STEP;
+                if (score >= 1.0f)
+                    continue;
+                float dot = ((ox[j] - ox[i]) * dpd_ux_ + (oy[j] - oy[i]) * dpd_uy_) / len;
+                const bool swap = dot < 0;
+                if (swap)
+                    dot = -dot;
+                if (dot <= KPAD_DIR_MIN)
+                    continue;
+                score += (1.0f - dot) / (1.0f - KPAD_DIR_MIN);
+                if (score < best) {
+                    best = score;
+                    ax = swap ? ox[j] : ox[i], ay = swap ? oy[j] : oy[i];
+                    bx = swap ? ox[i] : ox[j], by = swap ? oy[i] : oy[j];
+                    found = 2;
+                }
+            }
+    };
+    auto acquire2 = [&] {  // fn_805E6F60: the pair best aligned with the horizon
+        float best = 0.5f;  // KPAD: 0.9 against its accelerometer horizon; looser here (level only)
+        for (int i = 0; i < n; i++)
+            for (int j = i + 1; j < n; j++) {
+                const float len = std::hypot(ox[j] - ox[i], oy[j] - oy[i]);
+                const float dist = pair_dist(ox[i], oy[i], ox[j], oy[j]);
+                if (!(dist > KPAD_DIST_MIN && dist < KPAD_DIST_MAX))
+                    continue;
+                float dot = (ox[j] - ox[i]) * ref_x / len;
+                const bool swap = dot < 0;
+                if (swap)
+                    dot = -dot;
+                if (dot > best) {
+                    best = dot;
+                    ax = swap ? ox[j] : ox[i], ay = swap ? oy[j] : oy[i];
+                    bx = swap ? ox[i] : ox[j], by = swap ? oy[i] : oy[j];
+                    found = 2;
+                }
+            }
+    };
+    auto track1 = [&] {  // fn_805E7540: the dot nearest (within 0.1) a previous end
+        float best = KPAD_TRACK_RADIUS * KPAD_TRACK_RADIUS;
+        int which = -1, end = 0;
+        for (int e = 0; e < 2; e++) {
+            const float ex = e ? dpd_bx_ : dpd_ax_, ey = e ? dpd_by_ : dpd_ay_;
+            for (int i = 0; i < n; i++) {
+                const float d = (ox[i] - ex) * (ox[i] - ex) + (oy[i] - ey) * (oy[i] - ey);
+                if (d < best)
+                    best = d, which = i, end = e;
+            }
+        }
+        if (which < 0)
+            return;
+        const float sx = dpd_len_ * dpd_ux_, sy = dpd_len_ * dpd_uy_;
+        if (end == 0)
+            ax = ox[which], ay = oy[which], bx = ax + sx, by = ay + sy;
+        else
+            bx = ox[which], by = oy[which], ax = bx - sx, ay = by - sy;
+        found = 1;
+    };
+    auto acquire1 = [&] {  // fn_805E7380: one dot, the other end a remembered length away
+        if (known_len_ <= 0)
+            return;
+        const float sx = known_len_ * ref_x, sy = 0;
+        for (int i = 0; i < n && !found; i++) {
+            if (inside(ox[i] - sx, oy[i] - sy))  // as the right end
+                ax = ox[i] - sx, ay = oy[i] - sy, bx = ox[i], by = oy[i], found = 1;
+            else if (inside(ox[i] + sx, oy[i] + sy))  // as the left end
+                ax = ox[i], ay = oy[i], bx = ox[i] + sx, by = oy[i] + sy, found = 1;
+        }
+    };
+    if (dpd_count_ == 2) {
+        if (n >= 2)
+            track2();
+        if (!found && n >= 1)
+            track1();
+    } else if (dpd_count_ == 1) {
+        if (n >= 2)
+            acquire2();
+        if (!found && n >= 1)
+            track1();
     } else {
+        if (n >= 2)
+            acquire2();
+        if (!found && n == 1)
+            acquire1();
+    }
+    if (found) {
+        const float len = std::hypot(bx - ax, by - ay);
+        dpd_ax_ = ax, dpd_ay_ = ay, dpd_bx_ = bx, dpd_by_ = by;
+        dpd_len_ = len;
+        dpd_ux_ = (bx - ax) / len, dpd_uy_ = (by - ay) / len;
+        dpd_dist_ = KPAD_DIST_SCALE / len;
+        // The bar's length is remembered for one-dot acquisition once seen whole for 200 samples.
+        if (found == 2 && dpd_count_ == 2) {
+            if (stable_ < 200)
+                stable_++;
+            else
+                known_len_ = len;
+        } else {
+            stable_ = 0;
+        }
+        const float mx = (ax + bx) / 2, my = (ay + by) / 2;
+        const float px = dpd_ux_ * mx + dpd_uy_ * my, py = dpd_ux_ * my - dpd_uy_ * mx;
+        const float oy_origin = bar_above_ ? -KPAD_BAR_OFFSET : KPAD_BAR_OFFSET;
+        state_.pointer_x = KPAD_POS_SCALE * (0.0f - px);
+        state_.pointer_y = KPAD_POS_SCALE * (oy_origin - py);
+        state_.horizon_x = dpd_ux_;
+        state_.horizon_y = -dpd_uy_;
+        state_.dist = dpd_dist_;
+        state_.pointer_valid = true;
+    } else {
+        stable_ = 0;
         state_.pointer_valid = false;  // the game hides its cursor, as with a real Wii
-        return;
     }
-    mid_x_ = (x1 + x2) / 2;
-    mid_y_ = (y1 + y2) / 2;
-    // KPAD: the midpoint in the bar's frame (roll undone), scaled from the origin, which sits
-    // 0.2 towards the bar; horizon along the bar; dist from the dots' separation.
-    const float len = std::hypot(x2 - x1, y2 - y1);
-    if (len <= 0.0f) {
-        state_.pointer_valid = false;
-        return;
-    }
-    const float ux = (x2 - x1) / len, uy = (y2 - y1) / len;
-    const float rx = ux * mid_x_ + uy * mid_y_, ry = ux * mid_y_ - uy * mid_x_;
-    const float oy = bar_above_ ? -KPAD_BAR_OFFSET : KPAD_BAR_OFFSET;
-    state_.pointer_x = KPAD_POS_SCALE * (0.0f - rx);
-    state_.pointer_y = KPAD_POS_SCALE * (oy - ry);
-    state_.horizon_x = ux;
-    state_.horizon_y = -uy;
-    state_.dist = KPAD_DIST_SCALE / len;
-    state_.pointer_valid = true;
+    dpd_count_ = found;
+    if (log)
+        LOG_INFO("ir", "dots %4d,%4d %4d,%4d %4d,%4d %4d,%4d  valid %d  ends %d  pos %6.3f %6.3f  dist %.2f  acc %5.2f %5.2f %5.2f",
+                 rx[0], ry[0], rx[1], ry[1], rx[2], ry[2], rx[3], ry[3], n, found, state_.pointer_x, state_.pointer_y,
+                 state_.dist, state_.acc[0], state_.acc[1], state_.acc[2]);
 }
 
 // Nunchuk (unencrypted): stick x, y, then accelerometer x, y, z high bytes, then Z and C (active

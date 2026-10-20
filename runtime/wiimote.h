@@ -69,10 +69,14 @@ private:
     bool rumble_ = false;
     bool bar_above_ = false;
     int ir_sensitivity_ = 3, ir_level_set_ = 0;
-    // The bar as last seen whole (vector between its ends and midpoint, KPAD's normalised
-    // coordinates), to keep the pointer when one end leaves the camera's view.
-    bool bar_seen_ = false;
-    float bar_dx_ = 0, bar_dy_ = 0, mid_x_ = 0, mid_y_ = 0;
+    // KPAD's tracking state (normalised image coordinates): how many ends were found last, where
+    // they were, the bar's length, direction and distance, and the length remembered for
+    // acquiring from one dot.
+    int dpd_count_ = 0;
+    float dpd_ax_ = 0, dpd_ay_ = 0, dpd_bx_ = 0, dpd_by_ = 0;
+    float dpd_len_ = 0, dpd_ux_ = 1, dpd_uy_ = 0, dpd_dist_ = 0;
+    float known_len_ = 0;
+    int stable_ = 0;
     bool ext_connected_ = false;
     Clock::time_point next_ext_retry_{};
     // Accelerometer calibration (10-bit units): zero g and one g per axis.

@@ -142,12 +142,16 @@ aids. Open work is in [TODO.md](TODO.md).
   ordered left to right (by x, reversed when the accelerometer says upside down), the midpoint
   rotated into the bar's frame, then pos = 1.25 * (origin - midpoint) with the origin 0.2 towards
   the bar (the Wii's Sensor Bar Position setting; `WPADGetSensorBarPosition` in the callback),
-  horizon = the bar's direction, dist = (0.2 m / tan 21 deg) / separation; play radius 0 and
-  sensitivity 1 (KPAD's defaults, the game sets none). The game's cursor reaches the screen's
-  edges at about +-1.22 / +-0.91 (measured), so a Wii needs only ~20 degrees of yaw across. The
-  Wii's IR sensitivity setting (1-5) selects the camera's gain block (WiiBrew's). With one dot in
-  view the other end is assumed a bar's width away on the side that keeps the midpoint where it
-  was (KPAD keeps its last separation the same way).
+  horizon = the bar's direction, dist = (0.2 m / tan 21 deg) / separation; the scale is
+  1.25 / 0.95 (sqrt(1 + 0.75^2) over the image's smaller half extent less the origin); play
+  radius 0 and sensitivity 1 (KPAD's defaults, the game sets none). KPAD's tracker is ported too
+  (`fn_805E7150` keeps the pair whose distance moved < 4 cm and direction < 25 degrees since the
+  last sample, `fn_805E6F60` acquires the pair best aligned with the horizon within 0.52..3 m,
+  `fn_805E7540` follows one dot within 0.1 of a previous end, `fn_805E7380` acquires from one dot
+  with the bar's remembered length, learnt after 200 whole samples), with the accelerometer's
+  up/down as the horizon reference. `PANDORA_IR_LOG=1` logs every IR report (raw dots, ends
+  found, pos, dist, acc). The game's cursor reaches the screen's edges at about +-1.22 / +-0.91
+  (measured). The Wii's IR sensitivity setting (1-5) selects the camera's gain block (WiiBrew's).
 - Continuous scanning (`runtime/wiimote_scanner.cpp`, Windows), as in Dolphin: while enabled and
   no remote is connected, a thread runs Bluetooth inquiries (2 x 1.28 s). A "Nintendo
   RVL-CNT-01(-TR)" in discoverable mode (1+2, sync) gets its HID service enabled with
