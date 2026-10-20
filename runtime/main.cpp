@@ -154,10 +154,14 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
         settings.fps60 = *fps60 != '0';
     if (const char* classic = std::getenv("PANDORA_CLASSIC"))  // test runs: force the controller type
         settings.classic_controller = *classic != '0';
+    if (const char* aniso = std::getenv("PANDORA_ANISO"))  // test runs: force the anisotropic filtering level
+        settings.anisotropy = std::atoi(aniso);
 
     LOG_INFO("main", "pandora %s, built %s", PANDORA_VERSION, PANDORA_BUILD_TIME);
     AuroraConfig config{};
     config.appName = "Pandora's Tower";
+    // Anti-aliasing is fixed when the GPU device is created; PANDORA_MSAA=<samples> overrides it (tests).
+    config.msaa = std::getenv("PANDORA_MSAA") ? (u32)std::atoi(std::getenv("PANDORA_MSAA")) : (u32)settings.msaa;
     config.logCallback = &aurora_log;
     config.logLevel = g_log_level >= 2 ? LOG_DEBUG : LOG_INFO;
     config.vsync = std::getenv("PANDORA_NO_VSYNC") == nullptr;  // test runs: PANDORA_NO_VSYNC=1
@@ -196,6 +200,7 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
         rt.input().set_mouse_pointer(settings.mouse_pointer);
         rt.input().set_free_stick(settings.free_stick);
         rt.input().set_classic(settings.classic_controller);
+        aurora_set_forced_anisotropy((uint16_t)settings.anisotropy);
         rt.input().set_sensor_bar_above(settings.sensor_bar_above);
         rt.input().set_ir_sensitivity(settings.ir_sensitivity);
         rt.input().set_wiimote_scanning(settings.wiimote_scan && (!background || std::getenv("PANDORA_POLL_WIIMOTE")));

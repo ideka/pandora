@@ -76,6 +76,11 @@ void Settings::load(const std::string& path) {
             free_stick = parse_bool(value);
         } else if (key == "classic_controller") {
             classic_controller = parse_bool(value);
+        } else if (key == "anisotropy") {
+            const int a = std::atoi(value.c_str());
+            anisotropy = a >= 16 ? 16 : a >= 8 ? 8 : a >= 4 ? 4 : a >= 2 ? 2 : 1;
+        } else if (key == "msaa") {
+            msaa = std::atoi(value.c_str()) >= 4 ? 4 : 1;
         } else {
             // Files from before the two-mapping layout: bind.<id>.controller / .keyboard.
             const size_t dot = key.rfind('.');
@@ -109,6 +114,8 @@ bool Settings::save(const std::string& path) const {
     out << "fps60=" << (fps60 ? 1 : 0) << "\n";
     out << "free_stick=" << (free_stick ? 1 : 0) << "\n";
     out << "classic_controller=" << (classic_controller ? 1 : 0) << "\n";
+    out << "anisotropy=" << anisotropy << "\n";
+    out << "msaa=" << msaa << "\n";
     auto write = [&](const char* prefix, const char* id, const Mappings& m) {
         for (size_t d = 0; d < kDeviceCount; d++)
             for (size_t s = 0; s < kMappingsPerDevice; s++)

@@ -16,7 +16,7 @@ namespace in = aurora::input;
 
 namespace {
 
-constexpr const char* TABS[] = {"controls", "sound", "general"};
+constexpr const char* TABS[] = {"controls", "sound", "graphics", "general"};
 constexpr auto CAPTURE_TIMEOUT = std::chrono::seconds(5);
 // Holding a direction repeats it after REPEAT_DELAY, every REPEAT_INTERVAL.
 constexpr auto REPEAT_DELAY = std::chrono::milliseconds(500);
@@ -86,6 +86,33 @@ bool SettingsMenu::init(const std::string& asset_dir) {
             }
         });
     c.Bind("remote_status", &remote_status_);
+    // Anisotropic filtering as a slider position 0-4 (1x-16x).
+    c.BindFunc(
+        "anisotropy_step",
+        [this](Rml::Variant& v) {
+            int step = 0;
+            while (step < 4 && (2 << step) <= settings_.anisotropy)
+                step++;
+            v = step;
+        },
+        [this](const Rml::Variant& v) {
+            const int level = 1 << std::clamp((int)std::lround(v.Get<float>()), 0, 4);
+            if (level != settings_.anisotropy) {
+                settings_.anisotropy = level;
+                model_.DirtyVariable("anisotropy");
+                changed();
+            }
+        });
+    c.BindFunc("anisotropy", [this](Rml::Variant& v) { v = settings_.anisotropy; });
+    c.BindFunc(
+        "msaa", [this](Rml::Variant& v) { v = settings_.msaa > 1; },
+        [this](const Rml::Variant& v) {
+            const int samples = v.Get<bool>() ? 4 : 1;
+            if (samples != settings_.msaa) {
+                settings_.msaa = samples;
+                changed();
+            }
+        });
     c.BindFunc(
         "classic_controller", [this](Rml::Variant& v) { v = settings_.classic_controller; },
         [this](const Rml::Variant& v) {

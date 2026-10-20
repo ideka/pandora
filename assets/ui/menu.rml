@@ -8,6 +8,7 @@
     <div id="tabs">
         <button id="tab-controls" class="tab" data-class-selected="tab == 'controls'" data-event-click="set_tab('controls')">Controls</button>
         <button id="tab-sound" class="tab" data-class-selected="tab == 'sound'" data-event-click="set_tab('sound')">Sound</button>
+        <button id="tab-graphics" class="tab" data-class-selected="tab == 'graphics'" data-event-click="set_tab('graphics')">Graphics</button>
         <button id="tab-general" class="tab" data-class-selected="tab == 'general'" data-event-click="set_tab('general')">General</button>
     </div>
 
@@ -64,12 +65,31 @@
         </div>
     </div>
 
-    <div class="page" data-if="tab == 'general'">
+    <div class="page" data-if="tab == 'graphics'">
         <div class="setting">
             <span class="name">60 FPS mode</span>
             <input type="checkbox" data-checked="fps60"/>
             <span class="note">Twice the frame rate; needs about twice the CPU</span>
         </div>
+        <div class="setting">
+            <span class="name">Fullscreen</span>
+            <input type="checkbox" data-checked="fullscreen"/>
+            <span class="note">F11 or Alt+Enter</span>
+        </div>
+        <div class="setting">
+            <span class="name">Anisotropic filtering</span>
+            <input type="range" min="0" max="4" step="1" data-value="anisotropy_step"/>
+            <span class="value">{{ anisotropy == 1 ? 'Off' : anisotropy + 'x' }}</span>
+            <span class="note">Sharper textures at grazing angles (floors, walls)</span>
+        </div>
+        <div class="setting">
+            <span class="name">Anti-aliasing</span>
+            <input type="checkbox" data-checked="msaa"/>
+            <span class="note">4x MSAA: smoother edges; takes effect after restarting</span>
+        </div>
+    </div>
+
+    <div class="page" data-if="tab == 'general'">
         <div class="setting">
             <span class="name">Rumble</span>
             <input type="range" min="0" max="100" step="10" data-value="rumble"/>
@@ -109,11 +129,6 @@
             <input type="range" min="1" max="5" step="1" data-value="ir_sensitivity"/>
             <span class="value">{{ ir_sensitivity }}</span>
             <span class="note">The Wii's "Sensitivity" setting: the Wii Remote camera's gain (3 is the Wii's default)</span>
-        </div>
-        <div class="setting">
-            <span class="name">Fullscreen</span>
-            <input type="checkbox" data-checked="fullscreen"/>
-            <span class="note">F11 or Alt+Enter</span>
         </div>
     </div>
 

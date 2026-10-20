@@ -50,6 +50,15 @@ aids. Open work is in [TODO.md](TODO.md).
   overlays; `--screenshot` applies the same curve. The display copy's own gamma field stays 1.0
   and the copy filter is unchanged by the setting.
 
+- Graphics settings: "Anisotropic filtering" forces 2-16x on every mipmapped, linearly filtered
+  texture (`aurora_set_forced_anisotropy`, `patches/aurora/0008`; aurora otherwise only honours
+  the game's own GX max_aniso, which is 1x here; samplers are cached by descriptor, so the level
+  changes live). About 40% of sampler uses qualify; unmipmapped textures are unaffected, as in
+  Dolphin. "Anti-aliasing" is aurora's 4x MSAA (`AuroraConfig.msaa`, fixed when the device is
+  created, so it applies after a restart; 4 is the only count WebGPU guarantees). With MSAA aurora
+  disables its asynchronous readback, so `--screenshot` captures nothing then (the game itself does
+  not use readback). `PANDORA_ANISO` and `PANDORA_MSAA` override the settings in test runs.
+
 ## Settings menu
 
 - RmlUi through aurora's integration (`AURORA_ENABLE_RMLUI`): `runtime/ui/settings_menu.cpp`

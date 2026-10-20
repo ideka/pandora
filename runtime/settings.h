@@ -17,6 +17,8 @@ struct Settings {
     bool fps60 = true;              // the game's 60 FPS mode (community code)
     bool free_stick = true;         // stick in any direction (no snapping to the four cardinals)
     bool classic_controller = false;  // a Classic Controller instead of the Nunchuk
+    int anisotropy = 16;            // anisotropic filtering forced on the game's textures: 1 (off), 2, 4, 8, 16
+    int msaa = 1;                   // anti-aliasing samples: 1 (off) or 4 (applies at startup)
     Bindings bindings = Bindings::defaults();
 
     // Missing or unreadable files leave the defaults; unknown keys are ignored.
