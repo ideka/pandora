@@ -69,9 +69,9 @@ No game code or data is included. You need your own copy of the game.
 
    A real **Wii Remote** (with Nunchuk) works too: with "Scan for Wii Remotes" on (General, the
    default) just press 1 and 2 on the remote while the game runs, as with Dolphin's continuous
-   scanning; pairing it in Windows' Bluetooth settings or a DolphinBar in mode 4 also work. Its buttons, Nunchuk, motion,
-   pointer (needs a sensor bar; set whether it sits above or below the screen under General) and
-   rumble go to the game directly. HOME opens the settings menu (D-pad, A, B, -/+ work there).
+   scanning; pairing it in Windows' Bluetooth settings or a DolphinBar in mode 4 also work. Its
+   buttons, Nunchuk, motion, pointer (needs a sensor bar; set whether it sits above or below the
+   screen under General) and rumble go to the game directly. HOME opens the settings menu (D-pad, A, B, -/+ work there).
 
    F11 or Alt+Enter toggles fullscreen. Audio plays on the default output device; `--mute`
    disables it. `--background` runs are always muted and never write the settings file.
