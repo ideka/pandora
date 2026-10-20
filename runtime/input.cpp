@@ -313,7 +313,6 @@ Bindings Bindings::defaults() {
 void Input::poll_wiimote() {
     if (scanner_.take_found())
         wiimote_.rescan_soon();
-    wiimote_.set_speaker(remote_speaker_);
     wiimote_.poll();
     scanner_.set_connected(wiimote_.state().connected);
     if (SDL_GetTicks() > wiimote_rumble_until_)

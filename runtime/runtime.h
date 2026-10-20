@@ -74,10 +74,9 @@ public:
     bool enable_audio_output();
     void disable_audio_output() { audio_out_.close(); }
     void set_audio_volume(float volume) { audio_out_.set_volume(volume); }
-    // The Wii Remote speaker: where its sounds play (settings) and the game's own state (hooks).
-    void set_remote_speaker_outputs(bool on_remote, bool on_host);
+    // The Wii Remote speaker's sounds, played through the host mixer (hooks).
     void set_remote_speaker_state(bool on, bool playing);
-    bool remote_speaker_wants_data() const;
+    bool remote_speaker_wants_data() const { return speaker_on_ && speaker_playing_; }
     void remote_speaker_data(const u8* packet, size_t len);
     int audio_queued_ms() const { return audio_out_.queued_ms(); }
     AuroraBridge* bridge() { return bridge_.get(); }
@@ -141,8 +140,7 @@ private:
     std::unique_ptr<Ios> ios_;
     AudioDump audio_dump_;
     AudioOut audio_out_;
-    bool speaker_on_remote_ = true, speaker_on_host_ = true;  // settings
-    bool speaker_on_ = false, speaker_playing_ = false;       // the game's state
+    bool speaker_on_ = false, speaker_playing_ = false;  // the game's speaker state
     struct Continuation {
         u32 lr;
         std::function<void(Runtime&, u32)> then;

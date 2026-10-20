@@ -166,11 +166,14 @@ aids. Open work is in [TODO.md](TODO.md).
   ADPCM, 20 bytes) and calls `WPADSendStreamData` whenever `WPADCanSendStreamData` allows (hooked:
   while the speaker plays and an output wants the data). Measured: 150 packets/s, i.e. 6000
   samples/s, with the SDK's speaker configuration `00 00 D0 07 40 0C 0E` (ADPCM, rate value
-  0x07D0, volume 0x40), which the driver writes to the remote (WiiBrew's enable sequence); a thread
-  writes the 0x18 reports as they come, at most one per 6 ms. Without a remote (or with "Wii Remote
-  speaker" off) the host decodes the packets (Dolphin's Yamaha ADPCM tables, volume 0x40/0x7F)
-  and mixes them into the output at the game's measured packet rate. `PANDORA_SPEAKER_LOG=1`
-  counts packets; `PANDORA_SPEAKER_DUMP=<file>` writes the decoded mono s16 stream.
+  0x07D0, volume 0x40). The host decodes the packets (Dolphin's Yamaha ADPCM tables, volume
+  0x40/0x7F) and mixes them into the output at the game's measured packet rate. A real remote's
+  speaker is not driven: on the user's PC it does not work in Dolphin either without Bluetooth
+  passthrough (the Windows stack cannot keep up with the 0x18 reports), so the driver code for it
+  (WiiBrew's enable sequence, a paced thread for the reports) was dropped; it is in git history
+  (commit "Wii Remote speaker: the game's remote sounds play on the remote or the PC").
+  `PANDORA_SPEAKER_LOG=1` counts packets; `PANDORA_SPEAKER_DUMP=<file>` writes the decoded mono
+  s16 stream.
 - Continuous scanning (`runtime/wiimote_scanner.cpp`, Windows), as in Dolphin: while enabled and
   no remote is connected, a thread runs Bluetooth inquiries (2 x 1.28 s). A "Nintendo
   RVL-CNT-01(-TR)" in discoverable mode (1+2, sync) gets its HID service enabled with

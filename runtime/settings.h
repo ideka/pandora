@@ -13,8 +13,6 @@ struct Settings {
     bool mouse_pointer = true;  // the mouse aims the Wii Remote pointer
     bool sensor_bar_above = false;  // real Wii Remote: sensor bar above (or below) the screen
     int ir_sensitivity = 3;         // real Wii Remote: the Wii's IR sensitivity setting (1-5)
-    bool wiimote_speaker = true;    // the game's Wii Remote sounds play on a connected remote's speaker
-    bool wiimote_sounds_pc = true;  // ... and on the PC when no remote plays them
     bool wiimote_scan = true;       // scan for Wii Remotes over Bluetooth while none is connected
     bool fps60 = true;              // the game's 60 FPS mode (community code)
     bool free_stick = true;         // stick in any direction (no snapping to the four cardinals)

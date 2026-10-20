@@ -183,8 +183,8 @@ void Runtime::install_hle() {
     // channel streaming. Then sndRemoteStreamTask sends 20-byte packets (40 samples of 4-bit Yamaha
     // ADPCM from AX's remote mix, encoded with WENC) whenever WPADCanSendStreamData says so. The
     // callbacks are run right away (WPADControlSpeaker jumps to them with the caller's return
-    // address, so they return to the caller), and the packets go to the real remote's speaker or
-    // the host mixer (settings).
+    // address, so they return to the caller), and the packets are decoded into the host mixer (a
+    // real remote's speaker would need Bluetooth passthrough, as on Dolphin).
     //
     hook("hostContinue", [](Runtime& rt) { rt.host_continue(); });
 

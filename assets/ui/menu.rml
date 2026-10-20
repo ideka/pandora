@@ -100,16 +100,6 @@
             <span class="note">The Wii's "Sensor Bar Position" setting, for a real Wii Remote's pointer</span>
         </div>
         <div class="setting">
-            <span class="name">Wii Remote speaker</span>
-            <input type="checkbox" data-checked="wiimote_speaker"/>
-            <span class="note">The game's Wii Remote sounds play on a connected remote's speaker</span>
-        </div>
-        <div class="setting">
-            <span class="name">Remote sounds on PC</span>
-            <input type="checkbox" data-checked="wiimote_sounds_pc"/>
-            <span class="note">... and on the PC's speakers when no remote plays them</span>
-        </div>
-        <div class="setting">
             <span class="name">IR sensitivity</span>
             <input type="range" min="1" max="5" step="1" data-value="ir_sensitivity"/>
             <span class="value">{{ ir_sensitivity }}</span>
