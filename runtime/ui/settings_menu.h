@@ -15,6 +15,7 @@
 #include "../settings.h"
 
 namespace Rml {
+class Element;
 class ElementDocument;
 }
 
@@ -97,6 +98,7 @@ private:
     int capturing_ = -1;  // table * 1000 + index * 10 + slot while waiting for an input to bind
     Clock::time_point capture_deadline_;
     bool open_ = false;
+    Rml::Element* last_focus_ = nullptr;  // focused when the menu closed (compared, not dereferenced, until found again)
     uint64_t layer_ = 0;
 
     std::vector<PhysicalInput> down_;            // physical inputs currently held

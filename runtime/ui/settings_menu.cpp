@@ -221,8 +221,26 @@ void SettingsMenu::open() {
         held_[a] = remote_held_[a] ? 1 : 0;
     refresh_rows();
     doc_->Show();
-    if (Rml::Element* first = doc_->GetElementById("tab-" + tab_))
+    // Back where the cursor was when the menu closed, if that element still exists (rows are only
+    // regenerated when their number changes); else the current tab.
+    Rml::Element* target = nullptr;
+    if (last_focus_) {
+        std::vector<Rml::Element*> stack{doc_};
+        while (!stack.empty() && !target) {
+            Rml::Element* e = stack.back();
+            stack.pop_back();
+            if (e == last_focus_)
+                target = e;
+            for (int i = 0; i < e->GetNumChildren(); i++)
+                stack.push_back(e->GetChild(i));
+        }
+    }
+    if (target && target->IsVisible()) {
+        target->Focus(true);
+        target->ScrollIntoView(Rml::ScrollAlignment::Nearest);
+    } else if (Rml::Element* first = doc_->GetElementById("tab-" + tab_)) {
         first->Focus(true);
+    }
     in::reconcile();
 }
 
@@ -231,6 +249,8 @@ void SettingsMenu::close() {
         return;
     cancel_capture();
     open_ = false;
+    Rml::Element* focus = aurora::rmlui::get_context()->GetFocusElement();
+    last_focus_ = focus && focus != doc_ && focus->GetOwnerDocument() == doc_ ? focus : nullptr;
     doc_->Hide();
     in::reconcile();
 }
