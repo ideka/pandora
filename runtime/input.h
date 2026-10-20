@@ -116,6 +116,7 @@ public:
     const Wiimote& wiimote() const { return wiimote_; }
     void set_sensor_bar_above(bool above) { wiimote_.set_sensor_bar_above(above); }
     void set_pointer_sensitivity(float s) { wiimote_.set_pointer_sensitivity(s); }
+    void set_pointer_center(bool set, float x, float y) { wiimote_.set_pointer_center(set, x, y); }
     // Continuous Bluetooth scanning for Wii Remotes (press 1+2 to connect).
     void set_wiimote_scanning(bool enabled) { scanner_.set_enabled(enabled); }
     WiimoteScanner::Status wiimote_scan_status() const { return scanner_.status(); }

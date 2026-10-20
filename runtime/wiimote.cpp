@@ -31,13 +31,12 @@ constexpr u8 IN_STATUS = 0x20, IN_READ_DATA = 0x21, IN_ACK = 0x22, IN_CORE_ACC_I
 
 constexpr u32 IR_REGISTERS = 0xB00000, EXT_REGISTERS = 0xA40000;
 
-// Camera image: 1024 x 768. At 100% pointer sensitivity the pointer covers the screen when the
-// bar's midpoint moves this far (as a fraction of the half-image) from where it sits when pointing
-// at the screen's centre: roughly a 1.2 m wide 16:9 screen seen from 2.5 m, through a camera with a
-// ~33 x 23 degree view. A monitor at desk distance spans a bigger angle than the camera sees, so
-// the bar leaves the view before the pointer reaches the edges; a higher sensitivity maps the
-// visible range onto the screen.
-constexpr float IR_SCALE_X = 1.22f, IR_SCALE_Y = 1.5f;
+// Camera image: 1024 x 768 over about 42 x 31.5 degrees (Dolphin's measurement; WiiBrew says
+// 33 x 23). At 100% sensitivity the pointer spans -1..1 over 25 degrees of yaw and 20 of pitch,
+// as Dolphin's emulated remote does by default, and the bar is taken to sit 2.9 degrees (10 cm at
+// 2 m) below or above the aim at the screen's centre until the centre is calibrated.
+constexpr float PX_PER_DEG = 1024.0f / 42.0f;
+constexpr float HALF_YAW = 12.5f * PX_PER_DEG, HALF_PITCH = 10.0f * PX_PER_DEG, BAR_OFFSET = 2.9f * PX_PER_DEG;
 
 float axis(float raw, float zero, float one) { return one != zero ? (raw - zero) / (one - zero) : 0.0f; }
 
@@ -316,8 +315,8 @@ void Wiimote::parse_core(const u8* b, const u8* a) {
 }
 
 // Basic IR: two dots per 5 bytes (x and y low bytes, then the high bits of both), 0x3FF = none.
-// In the image, x falls as the remote turns right and y falls as it turns up (both measured with
-// a real remote and bar).
+// In the image x falls as the remote turns right and y falls as it turns up (measured with a real
+// remote and bar), so image coordinates are a right-handed (right, up) frame of the camera's view.
 void Wiimote::parse_ir(const u8* ir) {
     float dx[4], dy[4];
     int dots = 0;
@@ -336,9 +335,12 @@ void Wiimote::parse_ir(const u8* ir) {
     }
     float x1, y1, x2, y2;
     if (dots >= 2) {
-        // The sensor bar's two ends: the first two dots, ordered left to right in the image.
+        // The sensor bar's two ends, left to right as the remote is held. The image orders them
+        // by x, the other way round when the remote is upside down (its z axis, up through the
+        // buttons, reads below zero: KPAD's y is its negative), which the dots alone cannot tell.
         x1 = dx[0], y1 = dy[0], x2 = dx[1], y2 = dy[1];
-        if (x1 > x2) {
+        const bool upside_down = state_.acc[1] > 0;
+        if ((x1 > x2) != upside_down) {
             std::swap(x1, x2);
             std::swap(y1, y2);
         }
@@ -358,19 +360,24 @@ void Wiimote::parse_ir(const u8* ir) {
         y2 = left ? ly + bar_dy_ : ly;
     } else {
         state_.pointer_valid = false;  // the game hides its cursor, as with a real Wii
+        state_.bar_in_view = false;
         return;
     }
     mid_x_ = (x1 + x2) / 2;
     mid_y_ = (y1 + y2) / 2;
-    // Undo the remote's roll, then centre on the image.
+    // The bar's angle is the remote's roll: undo it, centred on the image.
     const float angle = std::atan2(y2 - y1, x2 - x1);
     const float mx = mid_x_ - 512, my = mid_y_ - 384;
     const float c = std::cos(-angle), s = std::sin(-angle);
     const float rx = mx * c - my * s, ry = mx * s + my * c;
-    // Pointing at the bar puts the cursor on the screen edge next to it.
-    const float edge = bar_above_ ? -1.0f : 1.0f;
-    state_.pointer_x = std::clamp(-rx / 512.0f * IR_SCALE_X * sensitivity_, -1.0f, 1.0f);
-    state_.pointer_y = std::clamp(edge + ry / 384.0f * IR_SCALE_Y * sensitivity_, -1.0f, 1.0f);
+    state_.bar_in_view = true;
+    state_.bar_x = rx;
+    state_.bar_y = ry;
+    // Where the bar sits when aiming at the screen's centre: calibrated, or the default offset.
+    const float cx = center_set_ ? center_x_ : 0.0f;
+    const float cy = center_set_ ? center_y_ : (bar_above_ ? BAR_OFFSET : -BAR_OFFSET);
+    state_.pointer_x = std::clamp(-(rx - cx) / HALF_YAW * sensitivity_, -1.0f, 1.0f);
+    state_.pointer_y = std::clamp((ry - cy) / HALF_PITCH * sensitivity_, -1.0f, 1.0f);
     state_.pointer_valid = true;
 }
 

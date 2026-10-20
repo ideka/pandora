@@ -26,6 +26,8 @@ public:
         float nunchuk_acc[3] = {0, -1, 0};
         bool pointer_valid = false;   // the sensor bar is in view
         float pointer_x = 0, pointer_y = 0;  // screen units, -1..1 (y down)
+        bool bar_in_view = false;
+        float bar_x = 0, bar_y = 0;   // the bar's midpoint from the camera's centre, roll undone (pixels)
         int battery = 0;              // 0..255
     };
     const State& state() const { return state_; }
@@ -34,8 +36,11 @@ public:
     // Look for the remote's HID device every second for a while (it was just made available).
     void rescan_soon();
     void set_sensor_bar_above(bool above) { bar_above_ = above; }
-    // Pointer movement per turn of the remote (1 = a TV at living-room distance).
+    // Pointer movement per turn of the remote (1 = Dolphin's default: 25 degrees of yaw across).
     void set_pointer_sensitivity(float s) { sensitivity_ = s; }
+    // Where the bar sits (bar_x, bar_y) when the remote aims at the screen's centre; unset uses a
+    // default offset below or above the aim.
+    void set_pointer_center(bool set, float x, float y) { center_set_ = set, center_x_ = x, center_y_ = y; }
 
 private:
     using Clock = std::chrono::steady_clock;
@@ -66,6 +71,8 @@ private:
     bool rumble_ = false;
     bool bar_above_ = false;
     float sensitivity_ = 1.0f;
+    bool center_set_ = false;
+    float center_x_ = 0, center_y_ = 0;
     // The bar as last seen whole (vector between its ends and midpoint, image pixels), to keep
     // the pointer when one end leaves the camera's view.
     bool bar_seen_ = false;

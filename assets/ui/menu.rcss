@@ -161,7 +161,7 @@ scrollbarvertical sliderarrowdec, scrollbarvertical sliderarrowinc { width: 0; h
 .setting .name { width: 200dp; }
 .setting .value { margin-left: 14dp; width: 60dp; }
 .setting .note { margin-left: 14dp; color: #8d897f; font-size: 14dp; }
-.setting .status { color: #d6b37a; }
+.setting .status { margin-left: 14dp; color: #d6b37a; }
 
 input.range {
     width: 320dp;

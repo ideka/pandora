@@ -13,6 +13,8 @@ struct Settings {
     bool mouse_pointer = true;  // the mouse aims the Wii Remote pointer
     bool sensor_bar_above = false;  // real Wii Remote: sensor bar above (or below) the screen
     int pointer_sensitivity = 100;  // percent: real Wii Remote pointer movement per turn of the remote
+    bool pointer_calibrated = false;  // pointer_center holds where the sensor bar sits in the camera's
+    int pointer_center_x = 0, pointer_center_y = 0;  // view (pixels from its centre) when aiming at the screen's centre
     bool wiimote_scan = true;       // scan for Wii Remotes over Bluetooth while none is connected
     bool fps60 = true;              // the game's 60 FPS mode (community code)
     bool free_stick = true;         // stick in any direction (no snapping to the four cardinals)

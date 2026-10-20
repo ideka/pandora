@@ -194,6 +194,8 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
         rt.input().set_free_stick(settings.free_stick);
         rt.input().set_sensor_bar_above(settings.sensor_bar_above);
         rt.input().set_pointer_sensitivity((float)settings.pointer_sensitivity / 100.0f);
+        rt.input().set_pointer_center(settings.pointer_calibrated, (float)settings.pointer_center_x,
+                                      (float)settings.pointer_center_y);
         rt.input().set_wiimote_scanning(settings.wiimote_scan && (!background || std::getenv("PANDORA_POLL_WIIMOTE")));
     };
     apply_settings();
@@ -322,6 +324,7 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
                               wm.battery * 100 / 200 > 100 ? 100 : wm.battery * 100 / 200,
                               wm.pointer_valid ? ", pointing at the screen" : "");
             menu.set_remote_status(status);
+            menu.set_bar_position(wm.connected && wm.bar_in_view, wm.bar_x, wm.bar_y);
         }
         menu.update();
         // While paused (F5) the guest does not run; aurora keeps presenting the last frame.

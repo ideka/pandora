@@ -133,14 +133,21 @@ aids. Open work is in [TODO.md](TODO.md).
   id ends A4 20 00 00, retried while it reports busy) and continuous report 0x37 (buttons,
   accelerometer, 10 IR bytes, 6 extension bytes). A status report (extension plugged or unplugged)
   re-initialises the extension and the reporting mode.
-- The pointer: the bar's two dots (basic IR mode), the roll undone from their angle, the midpoint
-  scaled by IR_SCALE_X/Y times the "Pointer sensitivity" setting; pointing at the bar puts the
-  cursor on the screen edge next to it. Axes measured with a real remote and bar: image x falls as
-  the remote turns right, image y falls as it turns up (the first version had y the other way).
-  With one dot in view the other end is assumed a bar's width away (last seen) on the side that
-  keeps the midpoint where it was, which extends the reach a little; past that the bar is out of
-  the camera's ~33 x 23 degree view and the cursor goes away, as on a Wii. A monitor at desk
-  distance spans more than that, hence the sensitivity setting (100% = the TV geometry above).
+- The pointer (`Wiimote::parse_ir`): the bar's two dots (basic IR mode), ordered left to right as
+  held (by image x, reversed when the accelerometer says the remote is upside down: the dots alone
+  give the roll only modulo 180 degrees), the roll undone from their angle, then the midpoint's
+  offset from where it sits when aiming at the screen's centre, scaled: at 100% sensitivity -1..1
+  spans 25 degrees of yaw and 20 of pitch (Dolphin's defaults for its emulated remote, which the
+  game was tuned against through KPAD), the camera taken as 42 x 31.5 degrees over 1024 x 768 (also
+  Dolphin's figure; WiiBrew says 33 x 23). Axes measured with a real remote and bar: image x falls
+  as the remote turns right and image y as it turns up, so the image is a (right, up) frame; the
+  first version had y inverted and mapped "pointing at the bar" to the screen's edge, which put
+  the top of the screen outside the camera's view. The centre offset defaults to 2.9 degrees below
+  or above the aim (the "sensor bar above" setting) and is calibrated from the menu (aim at the
+  screen's centre, Calibrate: stores the bar's position, `pointer_center` in settings.ini). With
+  one dot in view the other end is assumed a bar's width away (last seen) on the side that keeps
+  the midpoint where it was; past that the bar is out of view and the cursor goes away, as on a
+  Wii. Not verified with a real bar here: the sign of the roll correction between 0 and 180 degrees.
 - Continuous scanning (`runtime/wiimote_scanner.cpp`, Windows), as in Dolphin: while enabled and
   no remote is connected, a thread runs Bluetooth inquiries (2 x 1.28 s). A "Nintendo
   RVL-CNT-01(-TR)" in discoverable mode (1+2, sync) gets its HID service enabled with

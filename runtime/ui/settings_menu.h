@@ -43,6 +43,8 @@ public:
     void set_remote_buttons(u32 buttons);
     // Shown on the General tab (e.g. "Connected, Nunchuk, battery 80%").
     void set_remote_status(std::string status);
+    // Where a real Wii Remote sees the sensor bar right now (for calibrating the pointer's centre).
+    void set_bar_position(bool in_view, float x, float y) { bar_in_view_ = in_view, bar_x_ = x, bar_y_ = y; }
 
     // One row of a bindings table, as the document sees it.
     struct Row {
@@ -103,6 +105,9 @@ private:
     std::array<int, kMenuActionCount> held_{};  // how many of them hold each action
     std::array<bool, kMenuActionCount> remote_held_{};  // held by a real Wii Remote's buttons
     Rml::String remote_status_;
+    Rml::String pointer_calibration_;  // what the Calibrate button did last
+    bool bar_in_view_ = false;
+    float bar_x_ = 0, bar_y_ = 0;
     std::array<Clock::time_point, kMenuActionCount> next_repeat_{};
     std::array<std::array<bool, 2>, SDL_GAMEPAD_AXIS_COUNT> axis_on_{};  // [axis][negative, positive] pressed
 };
