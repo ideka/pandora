@@ -74,6 +74,13 @@ aids. Open work is in [TODO.md](TODO.md).
 - The HOME Menu is disabled by never reporting the HOME button (`KPADRead` masks it; there is no
   Home binding).
 
+- 60 FPS mode: the community code `04774AB0 0000003C` (Dolphin forums' 60 FPS list, for PAL and
+  NTSC-U) sets the game's frame-rate target, a word in its frame manager (`lbl_80774678` + 0x438;
+  30 normally, next to 60/30 limits), to 60. It is re-applied every host frame like a cheat code;
+  turning it off writes 30 back. Known side effect: Aeron's cape floats. It roughly doubles the
+  guest's work: the observatory ran at ~47 fps unthrottled (0.78x real time) with it, so heavy
+  scenes run below full speed until the runtime gets faster.
+
 ## Input
 
 - WPAD/KPAD are emulated at the API level (`KPADRead`, `WPADProbe`, `WPADGetInfoAsync`): one Wii

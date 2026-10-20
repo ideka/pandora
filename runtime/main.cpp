@@ -18,6 +18,7 @@
 #include "gpu/aurora_bridge.h"
 #include "crash.h"
 #include "log.h"
+#include "memory.h"
 #include "runtime.h"
 #include "png_write.h"
 #include "settings.h"
@@ -308,6 +309,14 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
             pacer.reset(rt.cpu.timebase);  // don't try to catch up on the paused time
         }
         bridge.begin_frame();
+        // 60 FPS mode: the game's frame-rate target (a word in its frame manager, 30 normally), as the
+        // community code "04774AB0 0000003C" sets it, re-applied every frame like a cheat code.
+        // Switching it off puts 30 back.
+        constexpr u32 FRAME_RATE_TARGET = 0x80774AB0;
+        if (settings.fps60)
+            mem::write32(&rt.cpu, FRAME_RATE_TARGET, 60);
+        else if (mem::read32(&rt.cpu, FRAME_RATE_TARGET) == 60)
+            mem::write32(&rt.cpu, FRAME_RATE_TARGET, 30);
         rt.input().update(bridge.frames(), !background && !menu.is_open());  // the menu takes input while open
         for (const auto& [frame, path] : rt.options().screenshots)
             if (bridge.frames() == frame)

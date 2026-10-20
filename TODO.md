@@ -70,6 +70,7 @@ Open work only. How things currently work, and why, is in [NOTES.md](NOTES.md).
 
 ## Performance
 
+- 60 FPS mode needs ~1.3x the current speed in heavy scenes (observatory: 0.78x real time).
 - Inline DolRecomp's FP/paired-single helpers (`binary_single`, `psq_load_value`, ...): they are
   out-of-line calls into cpu.c from ~31k call sites.
 - Make sure the memory fast path (`pandora_mem_read32` etc.) is inlined everywhere.
