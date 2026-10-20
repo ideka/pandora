@@ -135,6 +135,14 @@ aids. Open work is in [TODO.md](TODO.md).
   hooked and drives `SDL_RumbleGamepad`, refreshed every guest frame with a 200 ms duration so it
   stops by itself when the game pauses.
 
+- Classic Controller: the game takes WPADProbe's device type 1 (Nunchuk) or 2 (Classic) (stored
+  at its pad object +31148, checked at `803B071C`, a change handled at `8010725C`). In Classic mode
+  the WPADProbe hook reports 2 and KPADRead writes device type 2, format 8 and KPADEXStatus.cl as
+  this game's KPAD fills it (`fn_805E84C0`): hold/trig/release (WPAD_CL_* bits) at 0x60/0x64/0x68,
+  left and right stick at 0x6C and 0x74 (-1..1, y up), analog L/R at 0x7C/0x80 (0..1). The Classic's
+  controls are their own bindings (`Control::ClA`...); only the active controller's bindings are
+  read. Scripted presses map onto it in Classic mode (`PANDORA_CLASSIC=1` forces the mode).
+
 ## Real Wii Remote
 
 - `runtime/wiimote.cpp` drives a Wii Remote (057E:0306, and the -TR 057E:0330) through SDL's HID

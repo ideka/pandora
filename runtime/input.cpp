@@ -32,6 +32,28 @@ constexpr BindingInfo CONTROLS[kControlCount] = {
     {"pointer_down", "Pointer Down", false},
     {"pointer_left", "Pointer Left", false},
     {"pointer_right", "Pointer Right", false},
+    {"cl_a", "A", false},
+    {"cl_b", "B", false},
+    {"cl_x", "X", false},
+    {"cl_y", "Y", false},
+    {"cl_l", "L", false},
+    {"cl_r", "R", false},
+    {"cl_zl", "ZL", false},
+    {"cl_zr", "ZR", false},
+    {"cl_plus", "+ (Plus)", false},
+    {"cl_minus", "- (Minus)", false},
+    {"cl_up", "D-Pad Up", false},
+    {"cl_down", "D-Pad Down", false},
+    {"cl_left", "D-Pad Left", false},
+    {"cl_right", "D-Pad Right", false},
+    {"cl_lstick_up", "Left Stick Up", false},
+    {"cl_lstick_down", "Left Stick Down", false},
+    {"cl_lstick_left", "Left Stick Left", false},
+    {"cl_lstick_right", "Left Stick Right", false},
+    {"cl_rstick_up", "Right Stick Up", false},
+    {"cl_rstick_down", "Right Stick Down", false},
+    {"cl_rstick_left", "Right Stick Left", false},
+    {"cl_rstick_right", "Right Stick Right", false},
 };
 
 constexpr BindingInfo MENU_ACTIONS[kMenuActionCount] = {
@@ -50,6 +72,14 @@ constexpr BindingInfo MENU_ACTIONS[kMenuActionCount] = {
 constexpr u32 BUTTON_BITS[kControlCount] = {
     WPAD_A, WPAD_B, WPAD_1, WPAD_2, WPAD_PLUS, WPAD_MINUS,
     WPAD_UP, WPAD_DOWN, WPAD_LEFT, WPAD_RIGHT, WPAD_Z, WPAD_C,
+};
+// Classic Controller buttons driven by each Classic button control (L and R also analog).
+constexpr std::pair<Control, u32> CL_BUTTONS[] = {
+    {Control::ClA, WPAD_CL_A},         {Control::ClB, WPAD_CL_B},         {Control::ClX, WPAD_CL_X},
+    {Control::ClY, WPAD_CL_Y},         {Control::ClL, WPAD_CL_L},         {Control::ClR, WPAD_CL_R},
+    {Control::ClZL, WPAD_CL_ZL},       {Control::ClZR, WPAD_CL_ZR},       {Control::ClPlus, WPAD_CL_PLUS},
+    {Control::ClMinus, WPAD_CL_MINUS}, {Control::ClUp, WPAD_CL_UP},       {Control::ClDown, WPAD_CL_DOWN},
+    {Control::ClLeft, WPAD_CL_LEFT},   {Control::ClRight, WPAD_CL_RIGHT},
 };
 
 struct ButtonName {
@@ -289,6 +319,32 @@ Bindings Bindings::defaults() {
     set(control(Control::PointerDown), P::axis(SDL_GAMEPAD_AXIS_RIGHTY, 1), none, P::key(SDL_SCANCODE_K), none);
     set(control(Control::PointerLeft), P::axis(SDL_GAMEPAD_AXIS_RIGHTX, -1), none, P::key(SDL_SCANCODE_J), none);
     set(control(Control::PointerRight), P::axis(SDL_GAMEPAD_AXIS_RIGHTX, 1), none, P::key(SDL_SCANCODE_L), none);
+    // Classic Controller: buttons by label (A on the pad's south button), L/R on the analog
+    // triggers, ZL/ZR on the shoulders.
+    set(control(Control::ClA), P::button(SDL_GAMEPAD_BUTTON_SOUTH), none, P::key(SDL_SCANCODE_RETURN),
+        P::key(SDL_SCANCODE_SPACE));
+    set(control(Control::ClB), P::button(SDL_GAMEPAD_BUTTON_EAST), none, P::key(SDL_SCANCODE_BACKSPACE),
+        P::mouse(SDL_BUTTON_LEFT));
+    set(control(Control::ClX), P::button(SDL_GAMEPAD_BUTTON_WEST), none, P::key(SDL_SCANCODE_1), none);
+    set(control(Control::ClY), P::button(SDL_GAMEPAD_BUTTON_NORTH), none, P::key(SDL_SCANCODE_2), none);
+    set(control(Control::ClL), P::axis(SDL_GAMEPAD_AXIS_LEFT_TRIGGER, 1), none, P::key(SDL_SCANCODE_Q), none);
+    set(control(Control::ClR), P::axis(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, 1), none, P::key(SDL_SCANCODE_E), none);
+    set(control(Control::ClZL), P::button(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER), none, P::key(SDL_SCANCODE_Z), none);
+    set(control(Control::ClZR), P::button(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER), none, P::key(SDL_SCANCODE_C), none);
+    set(control(Control::ClPlus), P::button(SDL_GAMEPAD_BUTTON_START), none, P::key(SDL_SCANCODE_EQUALS), none);
+    set(control(Control::ClMinus), P::button(SDL_GAMEPAD_BUTTON_BACK), none, P::key(SDL_SCANCODE_MINUS), none);
+    set(control(Control::ClUp), P::button(SDL_GAMEPAD_BUTTON_DPAD_UP), none, P::key(SDL_SCANCODE_UP), none);
+    set(control(Control::ClDown), P::button(SDL_GAMEPAD_BUTTON_DPAD_DOWN), none, P::key(SDL_SCANCODE_DOWN), none);
+    set(control(Control::ClLeft), P::button(SDL_GAMEPAD_BUTTON_DPAD_LEFT), none, P::key(SDL_SCANCODE_LEFT), none);
+    set(control(Control::ClRight), P::button(SDL_GAMEPAD_BUTTON_DPAD_RIGHT), none, P::key(SDL_SCANCODE_RIGHT), none);
+    set(control(Control::ClLStickUp), P::axis(SDL_GAMEPAD_AXIS_LEFTY, -1), none, P::key(SDL_SCANCODE_W), none);
+    set(control(Control::ClLStickDown), P::axis(SDL_GAMEPAD_AXIS_LEFTY, 1), none, P::key(SDL_SCANCODE_S), none);
+    set(control(Control::ClLStickLeft), P::axis(SDL_GAMEPAD_AXIS_LEFTX, -1), none, P::key(SDL_SCANCODE_A), none);
+    set(control(Control::ClLStickRight), P::axis(SDL_GAMEPAD_AXIS_LEFTX, 1), none, P::key(SDL_SCANCODE_D), none);
+    set(control(Control::ClRStickUp), P::axis(SDL_GAMEPAD_AXIS_RIGHTY, -1), none, P::key(SDL_SCANCODE_I), none);
+    set(control(Control::ClRStickDown), P::axis(SDL_GAMEPAD_AXIS_RIGHTY, 1), none, P::key(SDL_SCANCODE_K), none);
+    set(control(Control::ClRStickLeft), P::axis(SDL_GAMEPAD_AXIS_RIGHTX, -1), none, P::key(SDL_SCANCODE_J), none);
+    set(control(Control::ClRStickRight), P::axis(SDL_GAMEPAD_AXIS_RIGHTX, 1), none, P::key(SDL_SCANCODE_L), none);
 
     auto action = [&](MenuAction a) -> Mappings& { return b.menu[(size_t)a]; };
     set(action(MenuAction::Toggle), P::button(SDL_GAMEPAD_BUTTON_GUIDE), none, P::key(SDL_SCANCODE_ESCAPE), none);
@@ -362,7 +418,9 @@ void Input::update(u64 frame, bool use_devices) {
         // Alt+Enter toggles fullscreen; don't let it also press a control bound to Enter.
         const bool alt = SDL_GetModState() & SDL_KMOD_ALT;
         std::array<float, kControlCount> v{}, raw{};
-        for (size_t c = 0; c < kControlCount; c++)
+        for (size_t c = 0; c < kControlCount; c++) {
+            if (is_classic_control((Control)c) != classic_)
+                continue;  // the other controller's bindings (they share keys and buttons)
             for (const auto& device : bindings.controls[c])
                 for (const PhysicalInput& in : device) {
                     if (alt && in.kind == PhysicalInput::Kind::Key &&
@@ -371,10 +429,22 @@ void Input::update(u64 frame, bool use_devices) {
                     v[c] = std::max(v[c], input_value(in, d));
                     raw[c] = std::max(raw[c], input_value(in, d, true));
                 }
+        }
         for (size_t c = 0; c < kControlCount; c++)
             if (BUTTON_BITS[c] && v[c] >= 0.5f)
                 s.buttons |= BUTTON_BITS[c];
         auto val = [&](Control c) { return raw[(size_t)c]; };
+        if (classic_) {
+            for (const auto& [c, bit] : CL_BUTTONS)
+                if (v[(size_t)c] >= 0.5f)
+                    s.cl_buttons |= bit;
+            std::tie(s.cl_lx, s.cl_ly) = shape_stick(val(Control::ClLStickRight) - val(Control::ClLStickLeft),
+                                                     val(Control::ClLStickUp) - val(Control::ClLStickDown), 1.0f);
+            std::tie(s.cl_rx, s.cl_ry) = shape_stick(val(Control::ClRStickRight) - val(Control::ClRStickLeft),
+                                                     val(Control::ClRStickUp) - val(Control::ClRStickDown), 1.0f);
+            s.cl_l = v[(size_t)Control::ClL];
+            s.cl_r = v[(size_t)Control::ClR];
+        }
         std::tie(s.stick_x, s.stick_y) = shape_stick(val(Control::StickRight) - val(Control::StickLeft),
                                                      val(Control::StickUp) - val(Control::StickDown),
                                                      free_stick_ ? FREE_STICK_RADIUS : 1.0f);
@@ -448,6 +518,28 @@ void Input::update(u64 frame, bool use_devices) {
             s.stick_x = -1;
         if (p.buttons & SCRIPT_STICK_RIGHT)
             s.stick_x = 1;
+    }
+    s.classic = classic_;
+    if (classic_) {
+        // Scripted presses drive the Classic Controller: A B 1 2 + - D-pad Z C as A B X Y + -
+        // D-pad ZL ZR, the stick as the left stick.
+        static constexpr std::pair<u32, u32> MAP[] = {
+            {WPAD_A, WPAD_CL_A},       {WPAD_B, WPAD_CL_B},         {WPAD_1, WPAD_CL_X},       {WPAD_2, WPAD_CL_Y},
+            {WPAD_PLUS, WPAD_CL_PLUS}, {WPAD_MINUS, WPAD_CL_MINUS}, {WPAD_UP, WPAD_CL_UP},     {WPAD_DOWN, WPAD_CL_DOWN},
+            {WPAD_LEFT, WPAD_CL_LEFT}, {WPAD_RIGHT, WPAD_CL_RIGHT}, {WPAD_Z, WPAD_CL_ZL},      {WPAD_C, WPAD_CL_ZR},
+        };
+        for (const auto& [wpad, cl] : MAP)
+            if (s.buttons & wpad)
+                s.cl_buttons |= cl;
+        s.buttons &= ~(WPAD_A | WPAD_B | WPAD_1 | WPAD_2 | WPAD_PLUS | WPAD_MINUS | WPAD_UP | WPAD_DOWN | WPAD_LEFT |
+                       WPAD_RIGHT | WPAD_Z | WPAD_C);
+        if (s.stick_x != 0 || s.stick_y != 0) {
+            s.cl_lx = s.stick_x;
+            s.cl_ly = s.stick_y;
+            s.stick_x = s.stick_y = 0;
+        }
+        if (use_devices && wm.connected)
+            s.buttons |= wm.buttons & ~WPAD_HOME;  // a real remote's own buttons still count
     }
     for (const auto& p : pointer_script_) {
         if (frame < p.start || frame >= p.start + p.frames)

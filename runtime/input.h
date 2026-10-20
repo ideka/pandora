@@ -1,4 +1,4 @@
-// Host input mapped to a Wii Remote + Nunchuk: SDL gamepads, keyboard and mouse through remappable
+// Host input mapped to a Wii Remote + Nunchuk or a Classic Controller: SDL gamepads, keyboard and mouse through remappable
 // bindings, plus scripted presses for automated runs. The settings menu's own actions are bound
 // the same way.
 #pragma once
@@ -28,6 +28,25 @@ enum : u32 {
     WPAD_HOME = 0x8000,
 };
 
+// Classic Controller button bits (WPAD_CL_*, as KPAD reports them).
+enum : u32 {
+    WPAD_CL_UP = 0x0001,
+    WPAD_CL_LEFT = 0x0002,
+    WPAD_CL_ZR = 0x0004,
+    WPAD_CL_X = 0x0008,
+    WPAD_CL_A = 0x0010,
+    WPAD_CL_Y = 0x0020,
+    WPAD_CL_B = 0x0040,
+    WPAD_CL_ZL = 0x0080,
+    WPAD_CL_R = 0x0200,
+    WPAD_CL_PLUS = 0x0400,
+    WPAD_CL_HOME = 0x0800,
+    WPAD_CL_MINUS = 0x1000,
+    WPAD_CL_L = 0x2000,
+    WPAD_CL_DOWN = 0x4000,
+    WPAD_CL_RIGHT = 0x8000,
+};
+
 struct PadState {
     u32 buttons = 0;
     float stick_x = 0, stick_y = 0;      // Nunchuk stick, -1..1 (y up)
@@ -37,6 +56,11 @@ struct PadState {
     float dist = 2;
     bool motion = false;  // accelerometers from a real Wii Remote (otherwise "at rest")
     float acc[3] = {0, -1, 0}, nunchuk_acc[3] = {0, -1, 0};
+    // A Classic Controller instead of the Nunchuk: its buttons (WPAD_CL_*), sticks (-1..1, y up)
+    // and analog L/R (0..1).
+    bool classic = false;
+    u32 cl_buttons = 0;
+    float cl_lx = 0, cl_ly = 0, cl_rx = 0, cl_ry = 0, cl_l = 0, cl_r = 0;
 };
 
 // The emulated controls that can be bound.
@@ -46,9 +70,16 @@ enum class Control : u8 {
     Z, C,
     StickUp, StickDown, StickLeft, StickRight,
     PointerUp, PointerDown, PointerLeft, PointerRight,
+    // Classic Controller
+    ClA, ClB, ClX, ClY, ClL, ClR, ClZL, ClZR, ClPlus, ClMinus,
+    ClUp, ClDown, ClLeft, ClRight,
+    ClLStickUp, ClLStickDown, ClLStickLeft, ClLStickRight,
+    ClRStickUp, ClRStickDown, ClRStickLeft, ClRStickRight,
     Count,
 };
 constexpr size_t kControlCount = (size_t)Control::Count;
+// Whether a control belongs to the Classic Controller (otherwise the Wii Remote + Nunchuk).
+constexpr bool is_classic_control(Control c) { return c >= Control::ClA && c < Control::Count; }
 
 // The settings menu's actions.
 enum class MenuAction : u8 { Toggle, Accept, Cancel, Up, Down, Left, Right, PrevTab, NextTab, Count };
@@ -112,6 +143,9 @@ public:
     void set_mouse_pointer(bool enabled) { mouse_pointer_ = enabled; }
     // Keep the Nunchuk stick short of the game's snap to the four cardinal directions.
     void set_free_stick(bool enabled) { free_stick_ = enabled; }
+    // A Classic Controller instead of the Nunchuk.
+    void set_classic(bool classic) { classic_ = classic; }
+    bool classic() const { return classic_; }
 
     // A real Wii Remote, if one is paired: poll every host frame.
     void poll_wiimote();
@@ -143,6 +177,7 @@ private:
     float mouse_x_ = -1, mouse_y_ = -1;  // last mouse position seen (window coordinates)
     bool mouse_pointer_ = true;
     bool free_stick_ = true;
+    bool classic_ = false;
     bool rumble_on_ = false, rumbling_ = false;
     float rumble_intensity_ = 1.0f;
     Wiimote wiimote_;

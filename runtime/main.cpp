@@ -152,6 +152,8 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
     settings.load(settings_path);
     if (const char* fps60 = std::getenv("PANDORA_FPS60"))  // test runs: force the 60 FPS mode on/off
         settings.fps60 = *fps60 != '0';
+    if (const char* classic = std::getenv("PANDORA_CLASSIC"))  // test runs: force the controller type
+        settings.classic_controller = *classic != '0';
 
     LOG_INFO("main", "pandora %s, built %s", PANDORA_VERSION, PANDORA_BUILD_TIME);
     AuroraConfig config{};
@@ -193,6 +195,7 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
         rt.input().set_rumble_intensity((float)settings.rumble / 100.0f);
         rt.input().set_mouse_pointer(settings.mouse_pointer);
         rt.input().set_free_stick(settings.free_stick);
+        rt.input().set_classic(settings.classic_controller);
         rt.input().set_sensor_bar_above(settings.sensor_bar_above);
         rt.input().set_ir_sensitivity(settings.ir_sensitivity);
         rt.input().set_wiimote_scanning(settings.wiimote_scan && (!background || std::getenv("PANDORA_POLL_WIIMOTE")));

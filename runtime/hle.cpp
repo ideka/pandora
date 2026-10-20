@@ -119,17 +119,35 @@ static void kpad_read(Runtime& rt) {
     f32(0x38, p.horizon_y);
     f32(0x48, p.dist);       // dist: metres to the sensor bar (2 unless a real remote reports)
     f32(0x54, 1.0f);   // acc_vertical
-    mem::write8(c, buf + 0x5C, 1);                         // WPAD_DEV_FREESTYLE
     mem::write8(c, buf + 0x5D, 0);                         // WPAD_ERR_NONE
     mem::write8(c, buf + 0x5E, p.pointer_valid ? 2 : 0);   // pointer valid
-    mem::write8(c, buf + 0x5F, 5);                         // WPAD_FMT_FS_BTN_ACC_DPD
-    f32(0x60, p.stick_x);
-    f32(0x64, p.stick_y);
-    f32(0x68, p.nunchuk_acc[0]);  // Nunchuk acc and magnitude
-    f32(0x6C, p.nunchuk_acc[1]);
-    f32(0x70, p.nunchuk_acc[2]);
-    f32(0x74, std::sqrt(p.nunchuk_acc[0] * p.nunchuk_acc[0] + p.nunchuk_acc[1] * p.nunchuk_acc[1] +
-                        p.nunchuk_acc[2] * p.nunchuk_acc[2]));
+    if (p.classic) {
+        // KPADEXStatus.cl (as this game's KPAD fills it, fn_805E84C0): hold, trig, release, left
+        // and right stick (-1..1, y up), analog L and R (0..1).
+        static u32 cl_previous = 0;
+        mem::write8(c, buf + 0x5C, 2);  // WPAD_DEV_CLASSIC
+        mem::write8(c, buf + 0x5F, 8);  // WPAD_FMT_CLASSIC_BTN_ACC_DPD
+        mem::write32(c, buf + 0x60, p.cl_buttons);
+        mem::write32(c, buf + 0x64, p.cl_buttons & ~cl_previous);
+        mem::write32(c, buf + 0x68, cl_previous & ~p.cl_buttons);
+        cl_previous = p.cl_buttons;
+        f32(0x6C, p.cl_lx);
+        f32(0x70, p.cl_ly);
+        f32(0x74, p.cl_rx);
+        f32(0x78, p.cl_ry);
+        f32(0x7C, p.cl_l);
+        f32(0x80, p.cl_r);
+    } else {
+        mem::write8(c, buf + 0x5C, 1);  // WPAD_DEV_FREESTYLE
+        mem::write8(c, buf + 0x5F, 5);  // WPAD_FMT_FS_BTN_ACC_DPD
+        f32(0x60, p.stick_x);
+        f32(0x64, p.stick_y);
+        f32(0x68, p.nunchuk_acc[0]);  // Nunchuk acc and magnitude
+        f32(0x6C, p.nunchuk_acc[1]);
+        f32(0x70, p.nunchuk_acc[2]);
+        f32(0x74, std::sqrt(p.nunchuk_acc[0] * p.nunchuk_acc[0] + p.nunchuk_acc[1] * p.nunchuk_acc[1] +
+                            p.nunchuk_acc[2] * p.nunchuk_acc[2]));
+    }
     rt.ret(1);
 }
 
@@ -151,8 +169,8 @@ void Runtime::install_hle() {
             rt.ret((u32)-1);
             return;
         }
-        if (c->gpr[4])
-            mem::write32(c, c->gpr[4], 1);  // WPAD_DEV_FREESTYLE (Nunchuk attached)
+        if (c->gpr[4])  // WPAD_DEV_CLASSIC or WPAD_DEV_FREESTYLE (Nunchuk attached)
+            mem::write32(c, c->gpr[4], rt.input().classic() ? 2 : 1);
         rt.ret(0);
     });
 

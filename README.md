@@ -67,6 +67,11 @@ No game code or data is included. You need your own copy of the game.
    General). The Wii Remote strap screen is skipped and the HOME Menu is disabled. In the menu: D-pad/left stick or arrows/WASD move, South or Enter/Space accept, East or
    Backspace cancel, LB/RB or PageUp/PageDown (Q/E) switch tabs.
 
+   "Classic Controller" (General) switches the emulated controller from Wii Remote + Nunchuk to a
+   Classic Controller, which the game supports; its bindings then show under Controls (defaults:
+   buttons by label, A on the pad's south button, L/R on the analog triggers, ZL/ZR on the
+   bumpers, both sticks; keyboard WASD/IJKL for the sticks, Q/E for L/R, Z/C for ZL/ZR).
+
    A real **Wii Remote** (with Nunchuk) works too: with "Scan for Wii Remotes" on (General, the
    default) just press 1 and 2 on the remote while the game runs, as with Dolphin's continuous
    scanning; pairing it in Windows' Bluetooth settings or a DolphinBar in mode 4 also work. Its

@@ -24,7 +24,7 @@
             <span class="spacer"></span>
         </div>
         <div id="bindings">
-            <div class="section">Wii Remote + Nunchuk</div>
+            <div class="section">{{ classic_controller ? 'Classic Controller' : 'Wii Remote + Nunchuk' }}</div>
             <div class="binding" data-for="row : wii_rows">
                 <span class="name">{{ row.label }}</span>
                 <button class="cell bind" data-class-capturing="capturing == row.index * 10"
@@ -74,6 +74,11 @@
             <span class="name">Rumble</span>
             <input type="range" min="0" max="100" step="10" data-value="rumble"/>
             <span class="value">{{ rumble == 0 ? 'Off' : rumble + '%' }}</span>
+        </div>
+        <div class="setting">
+            <span class="name">Classic Controller</span>
+            <input type="checkbox" data-checked="classic_controller"/>
+            <span class="note">Play with a Classic Controller instead of the Wii Remote and Nunchuk (bindings under Controls)</span>
         </div>
         <div class="setting">
             <span class="name">Free stick direction</span>

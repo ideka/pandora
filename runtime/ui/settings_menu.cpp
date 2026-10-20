@@ -87,6 +87,16 @@ bool SettingsMenu::init(const std::string& asset_dir) {
         });
     c.Bind("remote_status", &remote_status_);
     c.BindFunc(
+        "classic_controller", [this](Rml::Variant& v) { v = settings_.classic_controller; },
+        [this](const Rml::Variant& v) {
+            if (v.Get<bool>() != settings_.classic_controller) {
+                settings_.classic_controller = v.Get<bool>();
+                cancel_capture();
+                refresh_rows();
+                changed();
+            }
+        });
+    c.BindFunc(
         "free_stick", [this](Rml::Variant& v) { v = settings_.free_stick; },
         [this](const Rml::Variant& v) {
             if (v.Get<bool>() != settings_.free_stick) {
@@ -332,6 +342,9 @@ void SettingsMenu::refresh_rows() {
     auto build = [&](std::vector<Row>& rows, int table, size_t count) {
         rows.clear();
         for (size_t i = 0; i < count; i++) {
+            // The bindings table shows the controller in use (Nunchuk or Classic).
+            if (table == WII_TABLE && is_classic_control((Control)i) != settings_.classic_controller)
+                continue;
             const auto& m = mappings(table, (int)i)[dev];
             rows.push_back({table == MENU_TABLE ? menu_action_info((MenuAction)i).label : control_info((Control)i).label,
                             label(m[0]), label(m[1]), can_clear(table, (int)i, 0), can_clear(table, (int)i, 1),
@@ -342,6 +355,7 @@ void SettingsMenu::refresh_rows() {
     build(menu_rows_, MENU_TABLE, kMenuActionCount);
     model_.DirtyVariable("wii_rows");
     model_.DirtyVariable("menu_rows");
+    model_.DirtyVariable("classic_controller");
 }
 
 void SettingsMenu::changed() {

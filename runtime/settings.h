@@ -16,6 +16,7 @@ struct Settings {
     bool wiimote_scan = true;       // scan for Wii Remotes over Bluetooth while none is connected
     bool fps60 = true;              // the game's 60 FPS mode (community code)
     bool free_stick = true;         // stick in any direction (no snapping to the four cardinals)
+    bool classic_controller = false;  // a Classic Controller instead of the Nunchuk
     Bindings bindings = Bindings::defaults();
 
     // Missing or unreadable files leave the defaults; unknown keys are ignored.
