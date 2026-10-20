@@ -6,6 +6,8 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <tuple>
+#include <utility>
 
 namespace {
 
@@ -60,6 +62,15 @@ constexpr ButtonName SCRIPT_BUTTONS[] = {
     {"DOWN", WPAD_DOWN}, {"LEFT", WPAD_LEFT},   {"RIGHT", WPAD_RIGHT}, {"Z", WPAD_Z},
     {"C", WPAD_C},
 };
+// Scripted Nunchuk stick directions (not WPAD buttons): pseudo-bits above the button mask.
+constexpr u32 SCRIPT_STICK_UP = 1u << 28, SCRIPT_STICK_DOWN = 1u << 29, SCRIPT_STICK_LEFT = 1u << 30,
+              SCRIPT_STICK_RIGHT = 1u << 31;
+constexpr ButtonName SCRIPT_STICK[] = {
+    {"StickUp", SCRIPT_STICK_UP},
+    {"StickDown", SCRIPT_STICK_DOWN},
+    {"StickLeft", SCRIPT_STICK_LEFT},
+    {"StickRight", SCRIPT_STICK_RIGHT},
+};
 
 struct MouseName {
     const char* id;
@@ -100,8 +111,28 @@ struct DeviceState {
     SDL_Gamepad* pad;
 };
 
-// 0..1 for one physical input.
-float input_value(const PhysicalInput& in, const DeviceState& d) {
+// Sticks are shaped as vectors: a radial dead zone, full deflection from STICK_FULL (pads rarely
+// reach 1.0, least of all diagonally) and, for the Nunchuk stick, stretched from a circle to a
+// square keeping the direction (a real Nunchuk reaches full deflection on both axes at the
+// diagonals, so a round pad stick held diagonally read as only ~70% before).
+constexpr float STICK_DEAD_ZONE = 0.15f, STICK_FULL = 0.85f;
+
+std::pair<float, float> shape_stick(float x, float y, bool square) {
+    const float mag = std::hypot(x, y);
+    if (mag < STICK_DEAD_ZONE)
+        return {0.0f, 0.0f};
+    const float m = std::min(1.0f, (mag - STICK_DEAD_ZONE) / (STICK_FULL - STICK_DEAD_ZONE));
+    float dx = x / mag, dy = y / mag;
+    if (square) {
+        const float k = 1.0f / std::max(std::fabs(dx), std::fabs(dy));
+        dx *= k;
+        dy *= k;
+    }
+    return {dx * m, dy * m};
+}
+
+// 0..1 for one physical input. raw: axes without the dead zone (sticks are shaped as vectors).
+float input_value(const PhysicalInput& in, const DeviceState& d, bool raw = false) {
     switch (in.kind) {
     case PhysicalInput::Kind::Key:
         return d.keys[in.code] ? 1.0f : 0.0f;
@@ -113,6 +144,8 @@ float input_value(const PhysicalInput& in, const DeviceState& d) {
         if (!d.pad)
             return 0.0f;
         const float v = SDL_GetGamepadAxis(d.pad, (SDL_GamepadAxis)in.code) / 32767.0f * (float)in.sign;
+        if (raw)
+            return std::clamp(v, 0.0f, 1.0f);
         return v < DEAD_ZONE ? 0.0f : std::min(1.0f, (v - DEAD_ZONE) / (1.0f - DEAD_ZONE));
     }
     case PhysicalInput::Kind::None:
@@ -299,6 +332,9 @@ bool Input::add_script(const std::string& spec) {
     for (const auto& b : SCRIPT_BUTTONS)
         if (name == b.name)
             bit = b.bit;
+    for (const auto& b : SCRIPT_STICK)
+        if (name == b.name)
+            bit = b.bit;
     if (!bit)
         return false;
     char* end = nullptr;
@@ -318,7 +354,7 @@ void Input::update(u64 frame, bool use_devices) {
         const DeviceState d{SDL_GetKeyboardState(nullptr), SDL_GetMouseState(nullptr, nullptr), first_gamepad()};
         // Alt+Enter toggles fullscreen; don't let it also press a control bound to Enter.
         const bool alt = SDL_GetModState() & SDL_KMOD_ALT;
-        std::array<float, kControlCount> v{};
+        std::array<float, kControlCount> v{}, raw{};
         for (size_t c = 0; c < kControlCount; c++)
             for (const auto& device : bindings.controls[c])
                 for (const PhysicalInput& in : device) {
@@ -326,15 +362,16 @@ void Input::update(u64 frame, bool use_devices) {
                         (in.code == SDL_SCANCODE_RETURN || in.code == SDL_SCANCODE_KP_ENTER))
                         continue;
                     v[c] = std::max(v[c], input_value(in, d));
+                    raw[c] = std::max(raw[c], input_value(in, d, true));
                 }
         for (size_t c = 0; c < kControlCount; c++)
             if (BUTTON_BITS[c] && v[c] >= 0.5f)
                 s.buttons |= BUTTON_BITS[c];
-        auto val = [&](Control c) { return v[(size_t)c]; };
-        s.stick_x = std::clamp(val(Control::StickRight) - val(Control::StickLeft), -1.0f, 1.0f);
-        s.stick_y = std::clamp(val(Control::StickUp) - val(Control::StickDown), -1.0f, 1.0f);
-        px = val(Control::PointerRight) - val(Control::PointerLeft);
-        py = val(Control::PointerDown) - val(Control::PointerUp);
+        auto val = [&](Control c) { return raw[(size_t)c]; };
+        std::tie(s.stick_x, s.stick_y) = shape_stick(val(Control::StickRight) - val(Control::StickLeft),
+                                                     val(Control::StickUp) - val(Control::StickDown), true);
+        std::tie(px, py) = shape_stick(val(Control::PointerRight) - val(Control::PointerLeft),
+                                       val(Control::PointerDown) - val(Control::PointerUp), false);
         if (px != 0 || py != 0)
             pointer_input_at_ = SDL_GetTicks();
     }
@@ -378,9 +415,19 @@ void Input::update(u64 frame, bool use_devices) {
     s.pointer_x = pointer_x_ * POINTER_RANGE_X;
     s.pointer_y = pointer_y_ * POINTER_RANGE_Y;
 
-    for (const auto& p : script_)
-        if (frame >= p.start && frame < p.start + p.frames)
-            s.buttons |= p.buttons;
+    for (const auto& p : script_) {
+        if (frame < p.start || frame >= p.start + p.frames)
+            continue;
+        s.buttons |= p.buttons & ~(SCRIPT_STICK_UP | SCRIPT_STICK_DOWN | SCRIPT_STICK_LEFT | SCRIPT_STICK_RIGHT);
+        if (p.buttons & SCRIPT_STICK_UP)
+            s.stick_y = 1;
+        if (p.buttons & SCRIPT_STICK_DOWN)
+            s.stick_y = -1;
+        if (p.buttons & SCRIPT_STICK_LEFT)
+            s.stick_x = -1;
+        if (p.buttons & SCRIPT_STICK_RIGHT)
+            s.stick_x = 1;
+    }
     state_ = s;
 
     // Rumble: refreshed every guest frame with a short duration, so it stops by itself when the

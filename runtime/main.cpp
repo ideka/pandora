@@ -32,7 +32,8 @@ static void usage() {
                  "               [--max-blocks N] [--audio-dump <wav>] [--mute] [--unthrottled] [--window <w>x<h>]\n"
                  "               [--profile] [-v|-vv|-vvv]\n"
                  "               [--screenshot <frame>:<file.png>]... [--exit-after <frames>]\n"
-                 "               [--press <button>@<frame>[+<frames>]]...\n"
+                 "               [--press <button>@<frame>[+<frames>]]... (A B 1 2 PLUS MINUS UP DOWN LEFT RIGHT Z C,\n"
+                 "                or StickUp StickDown StickLeft StickRight for the Nunchuk stick)\n"
                  "  debugging: [--watch <symbol>]... [--watch-write <hexaddr>]... [--dump <hexaddr>[:len]]...\n"
                  "             [--trace] [--shot-copy <frame>:<copy>:<file.png>]... [--shot-draw <frame>:<draw>:<file.png>]...\n"
                  "             [--menu-test <frame>:<file.png>] (open the settings menu, capture the window, exit)\n"
@@ -140,6 +141,8 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
     const std::string settings_path = "build/aurora/settings.ini";
     Settings settings;
     settings.load(settings_path);
+    if (const char* fps60 = std::getenv("PANDORA_FPS60"))  // test runs: force the 60 FPS mode on/off
+        settings.fps60 = *fps60 != '0';
 
     AuroraConfig config{};
     config.appName = "Pandora's Tower";
