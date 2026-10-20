@@ -310,7 +310,8 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
         if (!background || poll_in_background) {
             rt.input().poll_wiimote();
             const Wiimote::State& wm = rt.input().wiimote().state();
-            menu.set_remote_buttons(wm.connected ? wm.buttons : 0);
+            static const bool home_menu = std::getenv("PANDORA_HOME_MENU") != nullptr;  // HOME to the game, not the menu
+            menu.set_remote_buttons(wm.connected ? wm.buttons & (home_menu ? ~WPAD_HOME : ~0u) : 0);
             char status[96];
             const auto scan = rt.input().wiimote_scan_status();
             if (!wm.connected && scan == WiimoteScanner::Status::Searching)

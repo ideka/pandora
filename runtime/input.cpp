@@ -392,7 +392,8 @@ void Input::update(u64 frame, bool use_devices) {
     // A real Wii Remote: its buttons (HOME opens the settings menu), Nunchuk, motion and pointer.
     const Wiimote::State& wm = wiimote_.state();
     if (use_devices && wm.connected) {
-        s.buttons |= wm.buttons & ~WPAD_HOME;
+        static const bool home_menu = std::getenv("PANDORA_HOME_MENU") != nullptr;  // HOME to the game instead
+        s.buttons |= wm.buttons & (home_menu ? ~0u : ~WPAD_HOME);
         if (wm.nunchuk && (wm.stick_x != 0 || wm.stick_y != 0)) {
             s.stick_x = wm.stick_x;
             s.stick_y = wm.stick_y;

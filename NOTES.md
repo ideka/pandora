@@ -73,7 +73,8 @@ aids. Open work is in [TODO.md](TODO.md).
   (3), fades out and frees its pages (4) and starts the title after 10 frames (5). State 0 branches
   straight to state 4's cleanup, so the strap is never drawn (no fade-in to flash).
 - The HOME Menu is disabled by never reporting the HOME button (`KPADRead` masks it; there is no
-  Home binding).
+  Home binding). `PANDORA_HOME_MENU=1` sends a real Wii Remote's HOME to the game instead of the
+  settings menu: the HOME Menu's cursor is the quickest check of the pointer.
 
 - 60 FPS mode: the community code `04774AB0 0000003C` (Dolphin forums' 60 FPS list, for PAL and
   NTSC-U) sets the game's frame-rate target, a word in its frame manager (`lbl_80774678` + 0x438;

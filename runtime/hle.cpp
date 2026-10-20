@@ -222,7 +222,11 @@ void Runtime::install_hle() {
             mem::write32(c, buf + off, bits);
         };
         PadState p = rt.input().state();
-        p.buttons &= ~WPAD_HOME;  // the HOME Menu is disabled (a nuisance, and a source of softlocks)
+        // The HOME Menu is disabled (a nuisance, and a source of softlocks); PANDORA_HOME_MENU=1
+        // lets a real Wii Remote's HOME button reach the game (its pointer cursor helps debugging).
+        static const bool home_menu = std::getenv("PANDORA_HOME_MENU") != nullptr;
+        if (!home_menu)
+            p.buttons &= ~WPAD_HOME;
         for (u32 i = 0; i < 0xF0; i += 4)
             mem::write32(c, buf + i, 0);
         mem::write32(c, buf + 0x00, p.buttons);
