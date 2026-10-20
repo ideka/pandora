@@ -68,14 +68,20 @@ Open work only. How things currently work, and why, is in [NOTES.md](NOTES.md).
 - Emulate the locked-cache DMA queue length in HID2 if anything waits on it (DMA currently
   completes instantly).
 
+## 60 FPS mode
+
+- Aeron's cape floats at 60 FPS (reported): reproduce in motion and compare with 30 FPS at the
+  same tick. Suspects: the "second tick only" code in `fn_8000F9A4` and `fn_8007E364` (never runs
+  at 60 FPS); see NOTES.md (How the game keeps time).
+- Audit the other first-tick-gated sites (frame manager +0x448 readers: `fn_800384B0`,
+  `fn_800A168C`, `fn_80197FD8`, `fn_8019D0BC`, `fn_8019EE44`, `fn_8019F8B4`, `fn_804A5780`) for
+  work that should keep a 30 Hz cadence.
+
 ## Performance
 
-- 60 FPS mode needs ~1.3x the current speed in heavy scenes (observatory: 0.78x real time).
-- Inline DolRecomp's FP/paired-single helpers (`binary_single`, `psq_load_value`, ...): they are
-  out-of-line calls into cpu.c from ~31k call sites.
-- Make sure the memory fast path (`pandora_mem_read32` etc.) is inlined everywhere.
-- Bridge (~3.7 ms/frame): the vertex index scan in `prepare_draw`, and a FIFO publish (worker
-  wake-up) per draw.
+- 60 FPS mode needs ~1.35x the current speed in heavy scenes (observatory: ~0.75x real time,
+  ~18.5 ms guest + bridge per frame; the budget is 16.7).
+- Bridge (~3.2 ms/frame): the vertex index scan in `prepare_draw`.
 - Avoid storing `ctx->pc` at every instruction in the generated code.
 - Re-measure boot speed (was ~0.3x real time, dominated by OS alarm/scheduler churn from
   `OSSleepTicks(1)` polling, before the pacing and clang changes).

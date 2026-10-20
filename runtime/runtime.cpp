@@ -553,7 +553,9 @@ int Runtime::finish() {
             top.emplace_back(n, fn);
         std::sort(top.rbegin(), top.rend());
         std::fprintf(stderr, "profile (%u samples):\n", total);
-        for (size_t i = 0; i < top.size() && i < 25; i++)
+        const char* top_env = std::getenv("PANDORA_PROFILE_TOP");  // more lines, e.g. to diff runs
+        const size_t lines = top_env ? (size_t)std::atoi(top_env) : 25;
+        for (size_t i = 0; i < top.size() && i < lines; i++)
             std::fprintf(stderr, "  %5.1f%%  %s\n", 100.0 * top[i].first / total, top[i].second.c_str());
     }
     LOG_INFO("rt", "stopped after %" PRIu64 " blocks (%" PRIu64 " idle skips, %.2f s emulated): %s", blocks_,

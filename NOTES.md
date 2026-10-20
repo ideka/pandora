@@ -68,18 +68,33 @@ aids. Open work is in [TODO.md](TODO.md).
 
 - Instruction patches for the recompiled code live in `config/SX3P01/patches.txt` (address,
   original word, new word; the original is checked). Guest memory keeps the original DOL.
-- The Wii Remote strap screen is skipped there: its state machine (`fn_8034BA78`, state at
-  scene+208) goes from state 0 straight to the button wait, which sees a press at once, so the strap
-  fades out from zero alpha and is cleaned up as usual.
+- The Wii Remote strap screen is removed there: its state machine (`fn_8034BA78`, state at
+  scene+208) fades in (0), waits for the fade (1), waits 60 frames (2), waits for a button or 20 s
+  (3), fades out and frees its pages (4) and starts the title after 10 frames (5). State 0 branches
+  straight to state 4's cleanup, so the strap is never drawn (no fade-in to flash).
 - The HOME Menu is disabled by never reporting the HOME button (`KPADRead` masks it; there is no
   Home binding).
 
 - 60 FPS mode: the community code `04774AB0 0000003C` (Dolphin forums' 60 FPS list, for PAL and
   NTSC-U) sets the game's frame-rate target, a word in its frame manager (`lbl_80774678` + 0x438;
   30 normally, next to 60/30 limits), to 60. It is re-applied every host frame like a cheat code;
-  turning it off writes 30 back. Known side effect: Aeron's cape floats. It roughly doubles the
-  guest's work: the observatory ran at ~47 fps unthrottled (0.78x real time) with it, so heavy
-  scenes run below full speed until the runtime gets faster.
+  turning it off writes 30 back. `PANDORA_FPS60=0/1` overrides the setting for test runs.
+- How the game keeps time: logic always ticks at 60 Hz. `gameFrame` (`fn_804C2844`) runs
+  60/target ticks per rendered frame (2 at 30 FPS, 1 at 60), then renders once. Frame manager
+  +0x448 is set on the first tick of a frame; `lbl_807F04F8` counts ticks, `lbl_807F04FC` frames.
+  Particles (`fn_8048C7B4`) and the cloth (`dynMgrTask`, one 1/60 s step of two substeps per tick)
+  are tick based. Code gated on +0x448 runs once per frame at 30 FPS but every tick at 60, and
+  code gated on its being clear (the second tick) never runs at 60.
+- One such gate: three characters' updates (the player's in `playerDynUpdate`) run an extra cloth
+  step, `dynMgrExtraStep`, only on the second tick of a frame, so at 30 FPS that cloth gets 3 steps
+  per 2 ticks. Those gates are patched out and a hook decides: unchanged with several ticks per
+  frame, every other tick with one. It only fires in some character states (flags `&1` and `&0x40`
+  of the character's state byte), not while standing.
+- Aeron's cape is reported to float at 60 FPS. Standing in the observatory, the cloth state
+  (parameters and every particle) matches 30 FPS within 5 mm at the same tick count. Forcing the
+  first-tick flag on at 30 FPS changes the cape's look, and bisecting points at the "second tick
+  only" sites `fn_8000F9A4` / `fn_8007E364`, but those comparisons were taken at different moments
+  of the idle animation, so they are not conclusive; needs a reproduction in motion.
 
 ## Input
 
@@ -134,6 +149,17 @@ aids. Open work is in [TODO.md](TODO.md).
 
 - Build with clang (`tools/build_clang.bat`): gameplay runs at ~37 fps unthrottled (1.24x real time)
   vs ~21 fps with MSVC.
+- Gameplay cost is almost all per rendered frame: the observatory takes ~20 ms of guest time per
+  frame at 30 FPS (two logic ticks) and ~18.5 ms at 60 (one tick), so 60 FPS needs nearly twice
+  the work per second. Currently ~0.75x real time at 60 FPS there.
+- `runtime/fastmem/cpu/fastfp.h` replaces DolRecomp's out-of-line FP, paired-single and quantized
+  load/store helpers in the chunks with inline versions that keep the results (single rounding,
+  the 25-bit multiplier truncation, quantization) but no FPSCR exception bookkeeping (~15%).
+- Memory accessors inline only the MEM1 path; forcing the whole range check inline at every site
+  made the chunks slower (code size).
+- aurora wakes its FIFO worker every 16 draws instead of every draw (`patches/aurora/0006`).
+- `tools/recompile.sh` only rewrites generated files whose contents changed, so a patch or hook
+  rebuilds a few chunks (seconds) instead of all of them (~13 minutes).
 - Cross-chunk direct calls (`patches/dolrecomp/0001`, enabled by `tools/recompile.sh` with
   `DOLRECOMP_UNSAFE_DIRECT_CALLS=1`) halve dispatches. They bypass dispatch-time checks, which is
   fine while hooks are in-code markers.
@@ -151,3 +177,9 @@ aids. Open work is in [TODO.md](TODO.md).
 - `--audio-dump <wav>` writes the mixer output; `SDL_AUDIO_DRIVER=disk` (with
   `SDL_AUDIO_DISK_OUTPUT_FILE`) tests live output without a sound device.
 - `--window <w>x<h>` sets the window size; `--unthrottled` disables pacing.
+- `--press StickUp@<frame>+<frames>` (StickDown/Left/Right) holds the Nunchuk stick.
+- `PANDORA_PROFILE_TOP=<n>` lists n guest functions in the `--profile` report (to diff runs). The
+  guest profile samples `cpu.pc`, so host time (bridge, HLE) is charged to whatever guest code ran
+  last (e.g. `__LCEnable`, `viFlushRegs`).
+- `tools/dol2elf.py <main.dol> <symbols.txt> <out.elf>` makes an ELF with every section and symbol,
+  for Binary Ninja/Ghidra (`build/SX3P01/main.elf`).

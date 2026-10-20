@@ -10,6 +10,14 @@
 
 #include "../../../extern/DolRecomp/src/cpu/cpu.h"
 
+#if defined(__clang__) || defined(__GNUC__)
+#define PANDORA_INLINE static inline __attribute__((always_inline))
+#define PANDORA_NOINLINE static __attribute__((noinline))
+#else
+#define PANDORA_INLINE static __forceinline
+#define PANDORA_NOINLINE static __declspec(noinline)
+#endif
+
 /* The locked L1 cache: 16 KB of scratchpad at 0xE0000000, owned by the runtime. */
 #define PANDORA_LC_BASE 0xE0000000u
 #define PANDORA_LC_SIZE 0x4000u
@@ -34,11 +42,11 @@ static inline u8* pandora_host(CPUState* c, u32 a, u32 n) {
 
 static inline int pandora_store_fast(CPUState* c) { return !g_mem_write_journal && !c->reserve_valid; }
 
-static inline u8 pandora_mem_read8(CPUState* c, u32 a) {
+PANDORA_NOINLINE u8 pandora_mem_read8_full(CPUState* c, u32 a) {
     const u8* p = pandora_host(c, a, 1);
     return p ? *p : mem_read8(c, a);
 }
-static inline u16 pandora_mem_read16(CPUState* c, u32 a) {
+PANDORA_NOINLINE u16 pandora_mem_read16_full(CPUState* c, u32 a) {
     const u8* p = pandora_host(c, a, 2);
     u16 v;
     if (!p)
@@ -46,7 +54,7 @@ static inline u16 pandora_mem_read16(CPUState* c, u32 a) {
     memcpy(&v, p, 2);
     return bswap16(v);
 }
-static inline u32 pandora_mem_read32(CPUState* c, u32 a) {
+PANDORA_NOINLINE u32 pandora_mem_read32_full(CPUState* c, u32 a) {
     const u8* p = pandora_host(c, a, 4);
     u32 v;
     if (!p)
@@ -54,7 +62,7 @@ static inline u32 pandora_mem_read32(CPUState* c, u32 a) {
     memcpy(&v, p, 4);
     return bswap32(v);
 }
-static inline u64 pandora_mem_read64(CPUState* c, u32 a) {
+PANDORA_NOINLINE u64 pandora_mem_read64_full(CPUState* c, u32 a) {
     const u8* p = pandora_host(c, a, 8);
     u32 hi, lo;
     if (!p)
@@ -63,14 +71,14 @@ static inline u64 pandora_mem_read64(CPUState* c, u32 a) {
     memcpy(&lo, p + 4, 4);
     return (u64)bswap32(hi) << 32 | bswap32(lo);
 }
-static inline void pandora_mem_write8(CPUState* c, u32 a, u8 v) {
+PANDORA_NOINLINE void pandora_mem_write8_full(CPUState* c, u32 a, u8 v) {
     u8* p = pandora_host(c, a, 1);
     if (p && pandora_store_fast(c))
         *p = v;
     else
         mem_write8(c, a, v);
 }
-static inline void pandora_mem_write16(CPUState* c, u32 a, u16 v) {
+PANDORA_NOINLINE void pandora_mem_write16_full(CPUState* c, u32 a, u16 v) {
     u8* p = pandora_host(c, a, 2);
     if (p && pandora_store_fast(c)) {
         v = bswap16(v);
@@ -79,7 +87,7 @@ static inline void pandora_mem_write16(CPUState* c, u32 a, u16 v) {
         mem_write16(c, a, v);
     }
 }
-static inline void pandora_mem_write32(CPUState* c, u32 a, u32 v) {
+PANDORA_NOINLINE void pandora_mem_write32_full(CPUState* c, u32 a, u32 v) {
     u8* p = pandora_host(c, a, 4);
     if (p && pandora_store_fast(c)) {
         v = bswap32(v);
@@ -88,7 +96,7 @@ static inline void pandora_mem_write32(CPUState* c, u32 a, u32 v) {
         mem_write32(c, a, v);
     }
 }
-static inline void pandora_mem_write64(CPUState* c, u32 a, u64 v) {
+PANDORA_NOINLINE void pandora_mem_write64_full(CPUState* c, u32 a, u64 v) {
     u8* p = pandora_host(c, a, 8);
     if (p && pandora_store_fast(c)) {
         u32 hi = bswap32((u32)(v >> 32)), lo = bswap32((u32)v);
@@ -99,6 +107,55 @@ static inline void pandora_mem_write64(CPUState* c, u32 a, u64 v) {
     }
 }
 
+/* The accessors used by the chunks: MEM1 inline (most accesses), everything else out of line.
+   Inlining the whole range check at every site made the chunks slower. */
+#define PANDORA_MEM1(c, a, n, off) const u32 off = (a) - 0x80000000u; if (off <= (c)->ram_size - (n))
+PANDORA_INLINE u8 pandora_mem_read8(CPUState* c, u32 a) {
+    PANDORA_MEM1(c, a, 1, off) return c->ram[off];
+    return pandora_mem_read8_full(c, a);
+}
+PANDORA_INLINE u16 pandora_mem_read16(CPUState* c, u32 a) {
+    PANDORA_MEM1(c, a, 2, off) {
+        u16 v;
+        memcpy(&v, c->ram + off, 2);
+        return bswap16(v);
+    }
+    return pandora_mem_read16_full(c, a);
+}
+PANDORA_INLINE u32 pandora_mem_read32(CPUState* c, u32 a) {
+    PANDORA_MEM1(c, a, 4, off) {
+        u32 v;
+        memcpy(&v, c->ram + off, 4);
+        return bswap32(v);
+    }
+    return pandora_mem_read32_full(c, a);
+}
+PANDORA_INLINE u64 pandora_mem_read64(CPUState* c, u32 a) { return pandora_mem_read64_full(c, a); }
+PANDORA_INLINE void pandora_mem_write8(CPUState* c, u32 a, u8 v) {
+    PANDORA_MEM1(c, a, 1, off) if (pandora_store_fast(c)) {
+        c->ram[off] = v;
+        return;
+    }
+    pandora_mem_write8_full(c, a, v);
+}
+PANDORA_INLINE void pandora_mem_write16(CPUState* c, u32 a, u16 v) {
+    PANDORA_MEM1(c, a, 2, off) if (pandora_store_fast(c)) {
+        v = bswap16(v);
+        memcpy(c->ram + off, &v, 2);
+        return;
+    }
+    pandora_mem_write16_full(c, a, v);
+}
+PANDORA_INLINE void pandora_mem_write32(CPUState* c, u32 a, u32 v) {
+    PANDORA_MEM1(c, a, 4, off) if (pandora_store_fast(c)) {
+        v = bswap32(v);
+        memcpy(c->ram + off, &v, 4);
+        return;
+    }
+    pandora_mem_write32_full(c, a, v);
+}
+PANDORA_INLINE void pandora_mem_write64(CPUState* c, u32 a, u64 v) { pandora_mem_write64_full(c, a, v); }
+
 #define mem_read8 pandora_mem_read8
 #define mem_read16 pandora_mem_read16
 #define mem_read32 pandora_mem_read32
@@ -107,5 +164,7 @@ static inline void pandora_mem_write64(CPUState* c, u32 a, u64 v) {
 #define mem_write16 pandora_mem_write16
 #define mem_write32 pandora_mem_write32
 #define mem_write64 pandora_mem_write64
+
+#include "fastfp.h"
 
 #endif /* PANDORA_FASTMEM_CPU_H */

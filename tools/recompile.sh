@@ -27,5 +27,9 @@ mkdir -p build/SX3P01
 python -I tools/export_map.py config/SX3P01/symbols.txt build/SX3P01.map
 python -I tools/patch_hooks.py orig/SX3P01/main.dol config/SX3P01/symbols.txt config/SX3P01/hooks.txt \
     build/SX3P01/main_hooked.dol config/SX3P01/patches.txt
-rm -rf build/recomp
-"$DOLRECOMP" --cpu broadway --map build/SX3P01.map -j8 build/SX3P01/main_hooked.dol SX3P01 build/recomp
+# Generate into a scratch directory and only replace files whose contents changed, so the build
+# recompiles just the chunks a patch or hook touched (a full rebuild takes ~13 minutes).
+rm -rf build/recomp.new
+"$DOLRECOMP" --cpu broadway --map build/SX3P01.map -j8 build/SX3P01/main_hooked.dol SX3P01 build/recomp.new
+python -I tools/sync_dir.py build/recomp.new build/recomp
+rm -rf build/recomp.new
