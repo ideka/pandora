@@ -24,6 +24,7 @@
 #include "png_write.h"
 #include "settings.h"
 #include "ui/settings_menu.h"
+#include "version.h"
 
 int g_log_level = 1;
 extern "C" int pandora_fp_selftest(void);
@@ -151,6 +152,7 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
     if (const char* fps60 = std::getenv("PANDORA_FPS60"))  // test runs: force the 60 FPS mode on/off
         settings.fps60 = *fps60 != '0';
 
+    LOG_INFO("main", "pandora %s, built %s", PANDORA_VERSION, PANDORA_BUILD_TIME);
     AuroraConfig config{};
     config.appName = "Pandora's Tower";
     config.logCallback = &aurora_log;

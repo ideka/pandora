@@ -81,15 +81,21 @@ Open work only. How things currently work, and why, is in [NOTES.md](NOTES.md).
 
 ## Performance
 
-- 60 FPS mode costs ~9.2 ms of guest time per frame in the observatory on the dev PC (Core Ultra 9
-  275HX laptop): ~45% headroom here, not enough for much weaker machines. The recompiled code is
-  ~60% of it (~5.4 host cycles per guest cycle); every guest register still lives in memory, and
-  the remaining structural fix is register allocation in the code generator (not a text rewrite).
-  Cheaper remaining items: CR field read-modify-write (cmpwi/bc), the bl sequence (call-depth
-  counter), function prologue + entry switch per dispatch.
-- Bridge + command processor: ~1.1 ms/frame on the emulation thread (prepare_draw's index scan is
-  a third of it). Could run on its own thread (the real GP reads the FIFO asynchronously): PE
-  interrupts and the frame-end handshake would have to cross threads.
+- Where it stands: 60 FPS mode costs ~9.2 ms of guest time per frame in the observatory on the
+  dev PC (Core Ultra 9 275HX laptop), down from 20 (fixed-base guest memory, Dolphin-level FP,
+  fewer dispatches). ~45% headroom here, not enough for much weaker machines or for 120 FPS.
+- What is left on the table, biggest first:
+  - Register allocation in the code generator: every guest register still lives in memory
+    (`ctx->gpr[n]` loads/stores around every operation), which is most of the ~5.4 host cycles
+    per guest cycle in the recompiled code (~60% of the time). A DolRecomp change, not a text
+    rewrite; the largest single win left.
+  - CR field read-modify-write on every cmpwi/bc pair (keep a comparison's result in host flags
+    or a local), the bl sequence (call-depth counter + return-address bookkeeping), the function
+    prologue + entry switch paid per dispatch.
+  - Bridge + command processor on their own thread: ~1.1 ms/frame on the emulation thread
+    (prepare_draw's index scan is a third of it). The real GP reads the FIFO asynchronously; PE
+    interrupts and the frame-end handshake would have to cross threads.
+  - Shader/pipeline stalls on first use (see Graphics); unrelated to steady-state fps.
 - Avoid storing `ctx->pc` at every instruction in the generated code.
 - Re-measure boot speed (was ~0.3x real time, dominated by OS alarm/scheduler churn from
   `OSSleepTicks(1)` polling, before the pacing and clang changes).

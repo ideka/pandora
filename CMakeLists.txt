@@ -111,6 +111,14 @@ target_link_libraries(pandora PRIVATE guest aurora::core aurora::gx aurora::vi)
 # The bridge feeds aurora's internal FIFO directly.
 target_include_directories(pandora PRIVATE "${CMAKE_SOURCE_DIR}/extern/aurora/lib")
 
+# The source revision and build time, printed at startup (generated/version.h, refreshed on every
+# build so a stale or uncommitted build is recognisable).
+add_custom_target(pandora_version
+    COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_SOURCE_DIR} -DOUT=${CMAKE_BINARY_DIR}/generated/version.h
+            -P ${CMAKE_SOURCE_DIR}/tools/version.cmake)
+add_dependencies(pandora pandora_version)
+target_include_directories(pandora PRIVATE "${CMAKE_BINARY_DIR}/generated")
+
 # Runtime DLLs (Dawn, SDL3) next to the executable.
 add_custom_command(TARGET pandora POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_RUNTIME_DLLS:pandora> $<TARGET_FILE_DIR:pandora>
