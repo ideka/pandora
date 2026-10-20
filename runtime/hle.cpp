@@ -240,8 +240,9 @@ void Runtime::install_hle() {
         f32(0x18, std::sqrt(p.acc[0] * p.acc[0] + p.acc[1] * p.acc[1] + p.acc[2] * p.acc[2]));
         f32(0x20, p.pointer_x);
         f32(0x24, p.pointer_y);
-        f32(0x34, 1.0f);   // horizon: level
-        f32(0x48, 2.0f);   // dist: 2 m from the sensor bar
+        f32(0x34, p.horizon_x);  // horizon (level unless a real remote rolls)
+        f32(0x38, p.horizon_y);
+        f32(0x48, p.dist);       // dist: metres to the sensor bar (2 unless a real remote reports)
         f32(0x54, 1.0f);   // acc_vertical
         mem::write8(c, buf + 0x5C, 1);                         // WPAD_DEV_FREESTYLE
         mem::write8(c, buf + 0x5D, 0);                         // WPAD_ERR_NONE

@@ -25,9 +25,9 @@ public:
         float stick_x = 0, stick_y = 0;  // -1..1, y up
         float nunchuk_acc[3] = {0, -1, 0};
         bool pointer_valid = false;   // the sensor bar is in view
-        float pointer_x = 0, pointer_y = 0;  // screen units, -1..1 (y down)
-        bool bar_in_view = false;
-        float bar_x = 0, bar_y = 0;   // the bar's midpoint from the camera's centre, roll undone (pixels)
+        float pointer_x = 0, pointer_y = 0;  // KPAD pos: about -1..1 across the screen (y down), as a Wii reports it
+        float horizon_x = 1, horizon_y = 0;  // KPAD horizon: the bar's direction (the remote's roll)
+        float dist = 2;                      // KPAD dist: metres to the bar
         int battery = 0;              // 0..255
     };
     const State& state() const { return state_; }
@@ -35,12 +35,9 @@ public:
     void set_rumble(bool on);
     // Look for the remote's HID device every second for a while (it was just made available).
     void rescan_soon();
+    // The Wii's sensor bar position and IR sensitivity (1-5) settings.
     void set_sensor_bar_above(bool above) { bar_above_ = above; }
-    // Pointer movement per turn of the remote (1 = Dolphin's default: 25 degrees of yaw across).
-    void set_pointer_sensitivity(float s) { sensitivity_ = s; }
-    // Where the bar sits (bar_x, bar_y) when the remote aims at the screen's centre; unset uses a
-    // default offset below or above the aim.
-    void set_pointer_center(bool set, float x, float y) { center_set_ = set, center_x_ = x, center_y_ = y; }
+    void set_ir_sensitivity(int level);
 
 private:
     using Clock = std::chrono::steady_clock;
@@ -52,6 +49,7 @@ private:
     bool read_memory(u32 addr, u16 size, u8* out);
     void setup();
     void setup_extension();
+    void setup_ir();
     void set_reporting();
     // Waits up to timeout_ms for a report with the given id, handling the others meanwhile.
     bool wait_for(u8 id, u8* out, int timeout_ms);
@@ -70,13 +68,11 @@ private:
     State state_;
     bool rumble_ = false;
     bool bar_above_ = false;
-    float sensitivity_ = 1.0f;
-    bool center_set_ = false;
-    float center_x_ = 0, center_y_ = 0;
-    // The bar as last seen whole (vector between its ends and midpoint, image pixels), to keep
-    // the pointer when one end leaves the camera's view.
+    int ir_sensitivity_ = 3, ir_level_set_ = 0;
+    // The bar as last seen whole (vector between its ends and midpoint, KPAD's normalised
+    // coordinates), to keep the pointer when one end leaves the camera's view.
     bool bar_seen_ = false;
-    float bar_dx_ = 0, bar_dy_ = 0, mid_x_ = 512, mid_y_ = 384;
+    float bar_dx_ = 0, bar_dy_ = 0, mid_x_ = 0, mid_y_ = 0;
     bool ext_connected_ = false;
     Clock::time_point next_ext_retry_{};
     // Accelerometer calibration (10-bit units): zero g and one g per axis.

@@ -31,12 +31,21 @@ constexpr u8 IN_STATUS = 0x20, IN_READ_DATA = 0x21, IN_ACK = 0x22, IN_CORE_ACC_I
 
 constexpr u32 IR_REGISTERS = 0xB00000, EXT_REGISTERS = 0xA40000;
 
-// Camera image: 1024 x 768 over about 42 x 31.5 degrees (Dolphin's measurement; WiiBrew says
-// 33 x 23). At 100% sensitivity the pointer spans -1..1 over 25 degrees of yaw and 20 of pitch,
-// as Dolphin's emulated remote does by default, and the bar is taken to sit 2.9 degrees (10 cm at
-// 2 m) below or above the aim at the screen's centre until the centre is calibrated.
-constexpr float PX_PER_DEG = 1024.0f / 42.0f;
-constexpr float HALF_YAW = 12.5f * PX_PER_DEG, HALF_PITCH = 10.0f * PX_PER_DEG, BAR_OFFSET = 2.9f * PX_PER_DEG;
+// The pointer is computed as the game's own KPAD library does (read from this game's copy of
+// KPAD: fn_805E7CA0 and fn_805E76C0 in the DOL), from the sensor bar's two dots in WPAD's
+// coordinates, so a real remote behaves as on a Wii: the Wii's own settings (sensor bar position,
+// IR sensitivity) are the only ones. KPAD's defaults: position scale 1.25, origin 0.2 towards the
+// bar, no play radius; dist = (0.2 m / tan 21 degrees) / the dots' separation (camera 42 degrees
+// wide); dots in the outer 5% of the image are ignored.
+constexpr float KPAD_POS_SCALE = 1.25f, KPAD_BAR_OFFSET = 0.2f, KPAD_DIST_SCALE = 0.2f / 0.383864f;
+constexpr float KPAD_AREA_X = 0.95f, KPAD_AREA_Y = 0.70f;
+
+// IR camera sensitivity blocks for the Wii's five levels (WiiBrew).
+constexpr u8 IR_BLOCK1[5][9] = {
+    {0x02, 0x00, 0x00, 0x71, 0x01, 0x00, 0x64, 0x00, 0xFE}, {0x02, 0x00, 0x00, 0x71, 0x01, 0x00, 0x96, 0x00, 0xB4},
+    {0x02, 0x00, 0x00, 0x71, 0x01, 0x00, 0xAA, 0x00, 0x64}, {0x02, 0x00, 0x00, 0x71, 0x01, 0x00, 0xC8, 0x00, 0x36},
+    {0x07, 0x00, 0x00, 0x71, 0x01, 0x00, 0x72, 0x00, 0x20}};
+constexpr u8 IR_BLOCK2[5][2] = {{0xFD, 0x05}, {0xB3, 0x04}, {0x63, 0x03}, {0x35, 0x03}, {0x1F, 0x03}};
 
 float axis(float raw, float zero, float one) { return one != zero ? (raw - zero) / (one - zero) : 0.0f; }
 
@@ -196,18 +205,7 @@ void Wiimote::setup() {
             acc_one_[i] = (float)(cal[4 + i] << 2 | ((cal[7] >> (2 * (2 - i))) & 3));
         }
     }
-    // IR camera: basic mode (10 bytes for 4 dots), Wii sensitivity level 3.
-    u8 r[2] = {OUT_IR_PIXEL_CLOCK, 0x04};
-    send(r, sizeof r);
-    r[0] = OUT_IR_LOGIC;
-    send(r, sizeof r);
-    const u8 enable = 0x08, block1[] = {0x02, 0x00, 0x00, 0x71, 0x01, 0x00, 0x64, 0x00, 0xFE}, block2[] = {0xFD, 0x05},
-             basic = 0x01;
-    write_register(IR_REGISTERS + 0x30, &enable, 1);
-    write_register(IR_REGISTERS + 0x00, block1, sizeof block1);
-    write_register(IR_REGISTERS + 0x1A, block2, sizeof block2);
-    write_register(IR_REGISTERS + 0x33, &basic, 1);
-    write_register(IR_REGISTERS + 0x30, &enable, 1);
+    setup_ir();
     // The status report says whether an extension is plugged in.
     const u8 status[] = {OUT_STATUS, 0x00};
     send(status, sizeof status);
@@ -222,6 +220,28 @@ void Wiimote::setup() {
 }
 
 // Unencrypted extension access (0x55 to F0, 0x00 to FB), then its id: a Nunchuk ends in A4 20 00 00.
+// IR camera: basic mode (10 bytes for 4 dots) at the Wii's sensitivity level (1-5).
+void Wiimote::setup_ir() {
+    u8 r[2] = {OUT_IR_PIXEL_CLOCK, 0x04};
+    send(r, sizeof r);
+    r[0] = OUT_IR_LOGIC;
+    send(r, sizeof r);
+    const int level = std::clamp(ir_sensitivity_, 1, 5) - 1;
+    const u8 enable = 0x08, basic = 0x01;
+    write_register(IR_REGISTERS + 0x30, &enable, 1);
+    write_register(IR_REGISTERS + 0x00, IR_BLOCK1[level], sizeof IR_BLOCK1[level]);
+    write_register(IR_REGISTERS + 0x1A, IR_BLOCK2[level], sizeof IR_BLOCK2[level]);
+    write_register(IR_REGISTERS + 0x33, &basic, 1);
+    write_register(IR_REGISTERS + 0x30, &enable, 1);
+    ir_level_set_ = ir_sensitivity_;
+}
+
+void Wiimote::set_ir_sensitivity(int level) {
+    ir_sensitivity_ = level;
+    if (dev_ && ir_level_set_ != level)
+        setup_ir();
+}
+
 void Wiimote::setup_extension() {
     const u8 init1 = 0x55, init2 = 0x00;
     write_register(EXT_REGISTERS + 0xF0, &init1, 1);
@@ -315,8 +335,8 @@ void Wiimote::parse_core(const u8* b, const u8* a) {
 }
 
 // Basic IR: two dots per 5 bytes (x and y low bytes, then the high bits of both), 0x3FF = none.
-// In the image x falls as the remote turns right and y falls as it turns up (measured with a real
-// remote and bar), so image coordinates are a right-handed (right, up) frame of the camera's view.
+// WPAD's coordinates: x as the camera reports it (falls as the remote turns right), y flipped
+// (767 - y: rises as the remote turns up); both measured with a real remote and bar.
 void Wiimote::parse_ir(const u8* ir) {
     float dx[4], dy[4];
     int dots = 0;
@@ -324,20 +344,25 @@ void Wiimote::parse_ir(const u8* ir) {
         const u8* p = ir + pair * 5;
         const int x1 = p[0] | ((p[2] >> 4) & 3) << 8, y1 = p[1] | ((p[2] >> 6) & 3) << 8;
         const int x2 = p[3] | (p[2] & 3) << 8, y2 = p[4] | ((p[2] >> 2) & 3) << 8;
-        if (y1 != 0x3FF && x1 != 0x3FF) {
-            dx[dots] = (float)x1;
-            dy[dots++] = (float)y1;
-        }
-        if (y2 != 0x3FF && x2 != 0x3FF) {
-            dx[dots] = (float)x2;
-            dy[dots++] = (float)y2;
-        }
+        // KPAD's normalisation: (x - 511.5) / 512, (y - 383.5) / 512; dots in the outer 5% of the
+        // image are dropped.
+        auto add = [&](int x, int y) {
+            const float nx = ((float)x - 511.5f) / 512.0f, ny = ((float)(767 - y) - 383.5f) / 512.0f;
+            if (std::fabs(nx) < KPAD_AREA_X && std::fabs(ny) < KPAD_AREA_Y) {
+                dx[dots] = nx;
+                dy[dots++] = ny;
+            }
+        };
+        if (y1 != 0x3FF && x1 != 0x3FF)
+            add(x1, y1);
+        if (y2 != 0x3FF && x2 != 0x3FF)
+            add(x2, y2);
     }
     float x1, y1, x2, y2;
     if (dots >= 2) {
-        // The sensor bar's two ends, left to right as the remote is held. The image orders them
-        // by x, the other way round when the remote is upside down (its z axis, up through the
-        // buttons, reads below zero: KPAD's y is its negative), which the dots alone cannot tell.
+        // The sensor bar's two ends, left to right as the remote is held: by x, the other way
+        // round when the remote is upside down (its z axis, up through the buttons, reads below
+        // zero: KPAD's y is its negative), which the dots alone cannot tell.
         x1 = dx[0], y1 = dy[0], x2 = dx[1], y2 = dy[1];
         const bool upside_down = state_.acc[1] > 0;
         if ((x1 > x2) != upside_down) {
@@ -348,8 +373,8 @@ void Wiimote::parse_ir(const u8* ir) {
         bar_dy_ = y2 - y1;
         bar_seen_ = true;
     } else if (dots == 1 && bar_seen_) {
-        // One end left the camera's view (the edge of the screen): the other is a bar's width
-        // away, on the side that keeps the midpoint near where it was.
+        // One end left the camera's view: the other is a bar's width away, on the side that
+        // keeps the midpoint near where it was (as KPAD does with its last separation).
         const float lx = dx[0], ly = dy[0];
         const float ax = lx + bar_dx_ / 2, ay = ly + bar_dy_ / 2;  // midpoint if this is the left end
         const float bx = lx - bar_dx_ / 2, by = ly - bar_dy_ / 2;  // ... the right end
@@ -360,24 +385,25 @@ void Wiimote::parse_ir(const u8* ir) {
         y2 = left ? ly + bar_dy_ : ly;
     } else {
         state_.pointer_valid = false;  // the game hides its cursor, as with a real Wii
-        state_.bar_in_view = false;
         return;
     }
     mid_x_ = (x1 + x2) / 2;
     mid_y_ = (y1 + y2) / 2;
-    // The bar's angle is the remote's roll: undo it, centred on the image.
-    const float angle = std::atan2(y2 - y1, x2 - x1);
-    const float mx = mid_x_ - 512, my = mid_y_ - 384;
-    const float c = std::cos(-angle), s = std::sin(-angle);
-    const float rx = mx * c - my * s, ry = mx * s + my * c;
-    state_.bar_in_view = true;
-    state_.bar_x = rx;
-    state_.bar_y = ry;
-    // Where the bar sits when aiming at the screen's centre: calibrated, or the default offset.
-    const float cx = center_set_ ? center_x_ : 0.0f;
-    const float cy = center_set_ ? center_y_ : (bar_above_ ? BAR_OFFSET : -BAR_OFFSET);
-    state_.pointer_x = std::clamp(-(rx - cx) / HALF_YAW * sensitivity_, -1.0f, 1.0f);
-    state_.pointer_y = std::clamp((ry - cy) / HALF_PITCH * sensitivity_, -1.0f, 1.0f);
+    // KPAD: the midpoint in the bar's frame (roll undone), scaled from the origin, which sits
+    // 0.2 towards the bar; horizon along the bar; dist from the dots' separation.
+    const float len = std::hypot(x2 - x1, y2 - y1);
+    if (len <= 0.0f) {
+        state_.pointer_valid = false;
+        return;
+    }
+    const float ux = (x2 - x1) / len, uy = (y2 - y1) / len;
+    const float rx = ux * mid_x_ + uy * mid_y_, ry = ux * mid_y_ - uy * mid_x_;
+    const float oy = bar_above_ ? -KPAD_BAR_OFFSET : KPAD_BAR_OFFSET;
+    state_.pointer_x = KPAD_POS_SCALE * (0.0f - rx);
+    state_.pointer_y = KPAD_POS_SCALE * (oy - ry);
+    state_.horizon_x = ux;
+    state_.horizon_y = -uy;
+    state_.dist = KPAD_DIST_SCALE / len;
     state_.pointer_valid = true;
 }
 

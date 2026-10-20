@@ -406,8 +406,12 @@ void Input::update(u64 frame, bool use_devices) {
         std::copy(std::begin(wm.acc), std::end(wm.acc), s.acc);
         std::copy(std::begin(wm.nunchuk_acc), std::end(wm.nunchuk_acc), s.nunchuk_acc);
         if (wm.pointer_valid) {
-            pointer_x_ = wm.pointer_x;
-            pointer_y_ = wm.pointer_y;
+            // KPAD units already (a Wii reports past +-1 at the screen's sides).
+            pointer_x_ = std::clamp(wm.pointer_x / POINTER_RANGE_X, -1.0f, 1.0f);
+            pointer_y_ = std::clamp(wm.pointer_y / POINTER_RANGE_Y, -1.0f, 1.0f);
+            s.horizon_x = wm.horizon_x;
+            s.horizon_y = wm.horizon_y;
+            s.dist = wm.dist;
         } else {
             // Not pointing at the screen: the cursor goes away, unless the mouse or bound inputs
             // moved it recently.
@@ -416,6 +420,10 @@ void Input::update(u64 frame, bool use_devices) {
     }
     s.pointer_x = pointer_x_ * POINTER_RANGE_X;
     s.pointer_y = pointer_y_ * POINTER_RANGE_Y;
+    if (use_devices && wm.connected && wm.pointer_valid) {
+        s.pointer_x = wm.pointer_x;
+        s.pointer_y = wm.pointer_y;
+    }
 
     for (const auto& p : script_) {
         if (frame < p.start || frame >= p.start + p.frames)

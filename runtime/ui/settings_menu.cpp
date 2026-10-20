@@ -86,28 +86,6 @@ bool SettingsMenu::init(const std::string& asset_dir) {
             }
         });
     c.Bind("remote_status", &remote_status_);
-    c.Bind("pointer_calibration", &pointer_calibration_);
-    c.BindFunc("pointer_calibrated", [this](Rml::Variant& v) { v = settings_.pointer_calibrated; });
-    c.BindEventCallback("calibrate_pointer", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
-        if (bar_in_view_) {
-            settings_.pointer_calibrated = true;
-            settings_.pointer_center_x = (int)std::lround(bar_x_);
-            settings_.pointer_center_y = (int)std::lround(bar_y_);
-            pointer_calibration_ = "Calibrated";
-            changed();
-        } else {
-            pointer_calibration_ = "The Wii Remote does not see the sensor bar";
-        }
-        model_.DirtyVariable("pointer_calibration");
-        model_.DirtyVariable("pointer_calibrated");
-    });
-    c.BindEventCallback("reset_pointer", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
-        settings_.pointer_calibrated = false;
-        pointer_calibration_ = "";
-        changed();
-        model_.DirtyVariable("pointer_calibration");
-        model_.DirtyVariable("pointer_calibrated");
-    });
     c.BindFunc(
         "free_stick", [this](Rml::Variant& v) { v = settings_.free_stick; },
         [this](const Rml::Variant& v) {
@@ -141,11 +119,11 @@ bool SettingsMenu::init(const std::string& asset_dir) {
             }
         });
     c.BindFunc(
-        "pointer_sensitivity", [this](Rml::Variant& v) { v = settings_.pointer_sensitivity; },
+        "ir_sensitivity", [this](Rml::Variant& v) { v = settings_.ir_sensitivity; },
         [this](const Rml::Variant& v) {
-            const int s = std::clamp((int)std::lround(v.Get<float>()), 50, 300);
-            if (s != settings_.pointer_sensitivity) {
-                settings_.pointer_sensitivity = s;
+            const int s = std::clamp((int)std::lround(v.Get<float>()), 1, 5);
+            if (s != settings_.ir_sensitivity) {
+                settings_.ir_sensitivity = s;
                 changed();
             }
         });

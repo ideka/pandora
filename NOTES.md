@@ -134,21 +134,20 @@ aids. Open work is in [TODO.md](TODO.md).
   id ends A4 20 00 00, retried while it reports busy) and continuous report 0x37 (buttons,
   accelerometer, 10 IR bytes, 6 extension bytes). A status report (extension plugged or unplugged)
   re-initialises the extension and the reporting mode.
-- The pointer (`Wiimote::parse_ir`): the bar's two dots (basic IR mode), ordered left to right as
-  held (by image x, reversed when the accelerometer says the remote is upside down: the dots alone
-  give the roll only modulo 180 degrees), the roll undone from their angle, then the midpoint's
-  offset from where it sits when aiming at the screen's centre, scaled: at 100% sensitivity -1..1
-  spans 25 degrees of yaw and 20 of pitch (Dolphin's defaults for its emulated remote, which the
-  game was tuned against through KPAD), the camera taken as 42 x 31.5 degrees over 1024 x 768 (also
-  Dolphin's figure; WiiBrew says 33 x 23). Axes measured with a real remote and bar: image x falls
-  as the remote turns right and image y as it turns up, so the image is a (right, up) frame; the
-  first version had y inverted and mapped "pointing at the bar" to the screen's edge, which put
-  the top of the screen outside the camera's view. The centre offset defaults to 2.9 degrees below
-  or above the aim (the "sensor bar above" setting) and is calibrated from the menu (aim at the
-  screen's centre, Calibrate: stores the bar's position, `pointer_center` in settings.ini). With
-  one dot in view the other end is assumed a bar's width away (last seen) on the side that keeps
-  the midpoint where it was; past that the bar is out of view and the cursor goes away, as on a
-  Wii. Not verified with a real bar here: the sign of the roll correction between 0 and 180 degrees.
+- The pointer (`Wiimote::parse_ir`) reproduces the game's own KPAD library (its DPD code is in
+  the DOL: `fn_805E7CA0` selects the dots, `fn_805E76C0` makes pos/horizon/dist; constants from
+  `KPADInitEx`, `fn_805E61D0` and the sampling callback `fn_805EA6B0`): dots normalised as
+  (x - 511.5) / 512 and (y - 383.5) / 512 with WPAD's y pointing down (767 - camera y: measured,
+  the camera's y falls as the remote turns up), the outer 5% of the image ignored, the two ends
+  ordered left to right (by x, reversed when the accelerometer says upside down), the midpoint
+  rotated into the bar's frame, then pos = 1.25 * (origin - midpoint) with the origin 0.2 towards
+  the bar (the Wii's Sensor Bar Position setting; `WPADGetSensorBarPosition` in the callback),
+  horizon = the bar's direction, dist = (0.2 m / tan 21 deg) / separation; play radius 0 and
+  sensitivity 1 (KPAD's defaults, the game sets none). The game's cursor reaches the screen's
+  edges at about +-1.22 / +-0.91 (measured), so a Wii needs only ~20 degrees of yaw across. The
+  Wii's IR sensitivity setting (1-5) selects the camera's gain block (WiiBrew's). With one dot in
+  view the other end is assumed a bar's width away on the side that keeps the midpoint where it
+  was (KPAD keeps its last separation the same way).
 - Continuous scanning (`runtime/wiimote_scanner.cpp`, Windows), as in Dolphin: while enabled and
   no remote is connected, a thread runs Bluetooth inquiries (2 x 1.28 s). A "Nintendo
   RVL-CNT-01(-TR)" in discoverable mode (1+2, sync) gets its HID service enabled with

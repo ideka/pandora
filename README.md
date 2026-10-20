@@ -71,10 +71,9 @@ No game code or data is included. You need your own copy of the game.
    default) just press 1 and 2 on the remote while the game runs, as with Dolphin's continuous
    scanning; pairing it in Windows' Bluetooth settings or a DolphinBar in mode 4 also work. Its
    buttons, Nunchuk, motion, pointer and rumble go to the game directly. The pointer needs a
-   sensor bar: under General, set whether it sits above or below the screen, or better, aim at the
-   centre of the screen and press "Calibrate"; "Pointer sensitivity" sets how far the cursor moves
-   as the remote turns (raise it if the cursor cannot reach the edges, e.g. on a monitor at desk
-   distance, which spans more than the remote's camera sees). HOME opens the settings menu (D-pad, A, B, -/+ work there).
+   sensor bar and behaves as on a Wii (the pointer maths is the game's own KPAD library's); the
+   Wii's two settings are under General: "Sensor bar above screen" (Sensor Bar Position) and "IR
+   sensitivity" (the camera's gain, 1-5). HOME opens the settings menu (D-pad, A, B, -/+ work there).
 
    F11 or Alt+Enter toggles fullscreen. Audio plays on the default output device; `--mute`
    disables it. `--background` runs are always muted and never write the settings file.

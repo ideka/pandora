@@ -33,6 +33,8 @@ struct PadState {
     float stick_x = 0, stick_y = 0;      // Nunchuk stick, -1..1 (y up)
     float pointer_x = 0, pointer_y = 0;  // screen pointer, -1..1 (y down), as KPAD reports it
     bool pointer_valid = true;
+    float horizon_x = 1, horizon_y = 0;  // KPAD horizon (the remote's roll) and dist (metres to the bar)
+    float dist = 2;
     bool motion = false;  // accelerometers from a real Wii Remote (otherwise "at rest")
     float acc[3] = {0, -1, 0}, nunchuk_acc[3] = {0, -1, 0};
 };
@@ -115,8 +117,7 @@ public:
     void poll_wiimote();
     const Wiimote& wiimote() const { return wiimote_; }
     void set_sensor_bar_above(bool above) { wiimote_.set_sensor_bar_above(above); }
-    void set_pointer_sensitivity(float s) { wiimote_.set_pointer_sensitivity(s); }
-    void set_pointer_center(bool set, float x, float y) { wiimote_.set_pointer_center(set, x, y); }
+    void set_ir_sensitivity(int level) { wiimote_.set_ir_sensitivity(level); }
     // Continuous Bluetooth scanning for Wii Remotes (press 1+2 to connect).
     void set_wiimote_scanning(bool enabled) { scanner_.set_enabled(enabled); }
     WiimoteScanner::Status wiimote_scan_status() const { return scanner_.status(); }

@@ -97,20 +97,13 @@
         <div class="setting">
             <span class="name">Sensor bar above screen</span>
             <input type="checkbox" data-checked="sensor_bar_above"/>
-            <span class="note">Where the sensor bar sits, for a real Wii Remote's pointer (until its centre is calibrated)</span>
+            <span class="note">The Wii's "Sensor Bar Position" setting, for a real Wii Remote's pointer</span>
         </div>
         <div class="setting">
-            <span class="name">Pointer centre</span>
-            <button class="action" data-event-click="calibrate_pointer()">Calibrate</button>
-            <button class="action" data-if="pointer_calibrated" data-event-click="reset_pointer()">Reset</button>
-            <span class="status">{{ pointer_calibration }}</span>
-            <span class="note">Aim the Wii Remote at the centre of the screen, then press Calibrate</span>
-        </div>
-        <div class="setting">
-            <span class="name">Pointer sensitivity</span>
-            <input type="range" min="50" max="300" step="10" data-value="pointer_sensitivity"/>
-            <span class="value">{{ pointer_sensitivity + '%' }}</span>
-            <span class="note">How far the cursor moves as the remote turns (raise it if it cannot reach the edges)</span>
+            <span class="name">IR sensitivity</span>
+            <input type="range" min="1" max="5" step="1" data-value="ir_sensitivity"/>
+            <span class="value">{{ ir_sensitivity }}</span>
+            <span class="note">The Wii's "Sensitivity" setting: the Wii Remote camera's gain (3 is the Wii's default)</span>
         </div>
         <div class="setting">
             <span class="name">Fullscreen</span>
