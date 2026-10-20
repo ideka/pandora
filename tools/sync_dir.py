@@ -40,6 +40,12 @@ if strip_pc:
             files[rel] = text.encode('utf-8')
             stripped += r
             seen += t
+    import os as _os
+    if not _os.environ.get('PANDORA_MS_ABI'):
+        from strip_pc import sysv_abi
+        for rel in list(files):
+            if _os.path.basename(rel) == 'generated.h':
+                files[rel] = sysv_abi(files[rel].decode('utf-8')).encode('utf-8')
     print(f'strip_pc: removed {stripped} of {seen} pc stores')
 
 if prune:

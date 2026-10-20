@@ -160,7 +160,7 @@ void CommandProcessor::run() {
     running_ = true;
     CPUState* c = &rt_.cpu;
     const u32 ring = end_ + 32 - base_;
-    std::vector<u8> buf;
+    std::vector<u8>& buf = run_buf_;  // kept across calls: run() is called per 32-byte burst
     while (distance_ > 0) {
         // Copy out what is available (handles wraparound), then decode as many commands as fit.
         u32 avail = std::min<u32>(distance_, 0x10000);

@@ -32,6 +32,7 @@ private:
     // For samples outside the executable (system calls, drivers): the nearest return addresses
     // inside it, so waits can be attributed to their callers.
     std::unordered_map<u64, u32> outside_callers_;
+    std::unordered_map<u64, u32> outside_callers2_;  // and the frame above that one
     // PANDORA_PROFILE_THREADS: samples of the process's other threads, per thread id.
     std::unordered_map<u32, std::unordered_map<u64, u32>> other_samples_;
     std::unordered_map<u32, u32> other_totals_;

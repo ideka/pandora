@@ -10,6 +10,7 @@
 #include "ios.h"
 #include "log.h"
 #include "memory.h"
+#include "guest_memory.h"
 #include "runtime.h"
 
 namespace {
@@ -42,7 +43,8 @@ bool Runtime::boot() {
         LOG_ERROR("boot", "cannot load symbol map %s", opts_.map.c_str());
         return false;
     }
-    if (!cpu_init(&cpu) || !cpu_alloc_mem2(&cpu, MEM2_SIZE) || !ios_->init(opts_.disc, opts_.nand))
+    if (!cpu_init(&cpu) || !cpu_alloc_mem2(&cpu, MEM2_SIZE) || !guest_memory::adopt(&cpu) ||
+        !ios_->init(opts_.disc, opts_.nand))
         return false;
     cpu.external_user_data = this;
     cpu.host_call = host_call;

@@ -197,6 +197,12 @@ void AuroraBridge::command(const u8* p, u32 len, const u32* cpreg) {
         forward(p, len, cpreg);
         return;
     }
+    // Timing every command costs ~1 ms/frame itself: only with PANDORA_PROFILE_BRIDGE=1.
+    static const bool time_commands = std::getenv("PANDORA_PROFILE_BRIDGE") != nullptr;
+    if (!time_commands) {
+        forward(p, len, cpreg);
+        return;
+    }
     static const double tick = tsc_seconds_per_tick();
     const u64 start = __rdtsc();
     forward(p, len, cpreg);
@@ -317,7 +323,16 @@ void AuroraBridge::ensure_array(u32 idx, u32 bytes_needed) {
 // Before a draw: map every indexed array far enough for the indices it uses, and send any
 // texture whose registers changed.
 void AuroraBridge::prepare_draw(const u8* p, u32 len, const u32* cpreg) {
-    const VertexLayout layout = vertex_layout(cpreg, p[0] & 7);
+    // The layout depends on five CP registers; draws reuse the same formats, so cache per VAT.
+    const u32 vat = p[0] & 7;
+    LayoutCache& lc = layout_cache_[vat];
+    const u32 key[5] = {cpreg[0x50], cpreg[0x60], cpreg[0x70 + vat], cpreg[0x80 + vat], cpreg[0x90 + vat]};
+    if (!lc.valid || std::memcmp(lc.key, key, sizeof key) != 0) {
+        std::memcpy(lc.key, key, sizeof key);
+        lc.layout = vertex_layout(cpreg, vat);
+        lc.valid = true;
+    }
+    const VertexLayout& layout = lc.layout;
     const u32 count = be16(p + 1);
     if (layout.size && 3 + count * layout.size <= len) {
         for (u32 i = 0; i < layout.num_indices; i++) {
@@ -325,13 +340,24 @@ void AuroraBridge::prepare_draw(const u8* p, u32 len, const u32* cpreg) {
             const u32 none = ix.bytes == 1 ? 0xFF : 0xFFFF;  // "no data" index
             u32 max = 0;
             bool any = false;
-            for (u32 v = 0; v < count; v++) {
-                const u8* q = p + 3 + v * layout.size + ix.offset;
-                for (u32 k = 0; k < ix.count; k++, q += ix.bytes) {
-                    u32 index = ix.bytes == 1 ? *q : be16(q);
-                    if (index != none) {
+            if (ix.bytes == 2 && ix.count == 1) {  // the usual case (INDEX16, one index): a tight loop
+                const u8* q = p + 3 + ix.offset;
+                for (u32 v = 0; v < count; v++, q += layout.size) {
+                    const u32 index = be16(q);
+                    if (index != 0xFFFF) {
                         max = std::max(max, index);
                         any = true;
+                    }
+                }
+            } else {
+                for (u32 v = 0; v < count; v++) {
+                    const u8* q = p + 3 + v * layout.size + ix.offset;
+                    for (u32 k = 0; k < ix.count; k++, q += ix.bytes) {
+                        u32 index = ix.bytes == 1 ? *q : be16(q);
+                        if (index != none) {
+                            max = std::max(max, index);
+                            any = true;
+                        }
                     }
                 }
             }

@@ -1,3 +1,4 @@
+#include "guest_memory.h"
 #include "runtime.h"
 
 #include <algorithm>
@@ -63,13 +64,15 @@ bool cpu_models_spr(u16 spr) {
 Runtime::Runtime(Options opts) : opts_(std::move(opts)) {
     hw_ = std::make_unique<Hardware>(*this);
     ios_ = std::make_unique<Ios>(*this);
-    g_pandora_locked_cache = locked_cache_.data();  // for the recompiled code's fast path
+    locked_cache_ = guest_memory::locked_cache();
+    g_pandora_locked_cache = locked_cache_;  // for DolRecomp-side accesses
 }
 
 Runtime::~Runtime() {
     profiling_ = false;
     if (sampler_.joinable())
         sampler_.join();
+    guest_memory::release(&cpu);  // the window's memory is not cpu_free's to free
     cpu_free(&cpu);
 }
 
@@ -172,7 +175,7 @@ bool Runtime::host_call(CPUState* c, u32 addr) {
 // fast path (DolRecomp's own cpu.c, e.g. dcbz_l).
 u64 Runtime::external_read(CPUState* c, u32 addr, u8 size) {
     Runtime* rt = self(c);
-    if (addr - 0xE0000000u <= rt->locked_cache_.size() - size) {
+    if (addr - 0xE0000000u <= LOCKED_CACHE_SIZE - size) {
         u64 v = 0;
         for (u32 i = 0; i < size; i++)
             v = v << 8 | rt->locked_cache_[addr - 0xE0000000u + i];
@@ -183,7 +186,7 @@ u64 Runtime::external_read(CPUState* c, u32 addr, u8 size) {
 
 void Runtime::external_write(CPUState* c, u32 addr, u64 value, u8 size) {
     Runtime* rt = self(c);
-    if (addr - 0xE0000000u <= rt->locked_cache_.size() - size) {
+    if (addr - 0xE0000000u <= LOCKED_CACHE_SIZE - size) {
         for (u32 i = 0; i < size; i++)
             rt->locked_cache_[addr - 0xE0000000u + i] = (u8)(value >> (8 * (size - 1 - i)));
         return;
@@ -203,7 +206,7 @@ void Runtime::locked_cache_dma(u32 dmal) {
         blocks = 128;
     const u32 len = blocks * 32;
     u8* mem = mem::ptr(&cpu, mem_addr, len);
-    if (!mem || lc_off > locked_cache_.size() - len) {
+    if (!mem || lc_off > LOCKED_CACHE_SIZE - len) {
         LOG_ERROR("lc", "bad locked cache DMA: mem %08X lc %08X len %u", mem_addr, dmal & ~31u, len);
         return;
     }

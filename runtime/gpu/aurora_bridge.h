@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "../guest.h"
+#include "vertex_layout.h"
 
 class Runtime;
 
@@ -82,6 +83,12 @@ private:
 
     // Vertex arrays 0-15: guest base and stride, and what aurora was last given.
     std::array<u32, 16> array_base_{}, array_stride_{};
+    struct LayoutCache {
+        u32 key[5];
+        VertexLayout layout;
+        bool valid = false;
+    };
+    std::array<LayoutCache, 8> layout_cache_{};  // vertex layout per VAT, keyed on its CP registers
     struct Emitted {
         u32 base = 0, size = 0;
     };

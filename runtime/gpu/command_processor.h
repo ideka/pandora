@@ -7,6 +7,7 @@
 #pragma once
 
 #include <array>
+#include <vector>
 #include <deque>
 #include <utility>
 
@@ -75,4 +76,5 @@ private:
 
     u64 commands_ = 0, draws_ = 0, draw_dones_ = 0;
     bool running_ = false;
+    std::vector<u8> run_buf_;  // run()'s copy-out buffer, reused (it used to allocate per burst)
 };

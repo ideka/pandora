@@ -4,7 +4,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define PANDORA_NO_FASTFP /* ppc_* stay DolRecomp's here: that is the side compared against */
 #include "fastmem/cpu/cpu.h"
+#include "generated.h" /* dolrecomp_f32_from_bits / _to_bits */
 
 static u64 rng_state = 0x9E3779B97F4A7C15ull;
 static u64 rng(void) {
@@ -51,8 +53,11 @@ static f64 random_value(void) {
 }
 
 static CPUState a, b;
-static u8 ram_a[0x1000], ram_b[0x1000];
+static u8 ram_a[0x1000];
+static u8* ram_w; /* the fast paths read RAM at its fixed host address: MEM1 in the guest window */
+extern bool pandora_guest_memory_adopt(CPUState* cpu);
 static int failures;
+static u32 last_ea, last_g; static bool last_w;
 
 static void setup(void) {
     memset(&a, 0, sizeof a);
@@ -73,21 +78,35 @@ static void setup(void) {
     for (size_t i = 0; i < sizeof ram_a; i++)
         ram_a[i] = (u8)rng();
     b = a;
-    b.ram = ram_b;
-    memcpy(ram_b, ram_a, sizeof ram_a);
+    b.ram = ram_w;
+    memcpy(ram_w, ram_a, sizeof ram_a);
 }
 
 static void compare(const char* op, int d) {
     const int bad = to_u64(a.fpr[d]) != to_u64(b.fpr[d]) || to_u64(a.ps1[d]) != to_u64(b.ps1[d]) || a.cr != b.cr ||
-                    memcmp(ram_a, ram_b, sizeof ram_a) != 0;
-    if (bad && failures++ < 40)
-        fprintf(stderr, "fp-selftest: %s f%d (NI %d): dolrecomp %016llX %016llX cr %08X, fast %016llX %016llX cr %08X%s\n",
-                op, d, (int)(a.fpscr & 4) != 0, (unsigned long long)to_u64(a.fpr[d]), (unsigned long long)to_u64(a.ps1[d]),
+                    memcmp(ram_a, ram_w, sizeof ram_a) != 0;
+    if (bad && failures++ < 40) {
+        for (size_t k = 0; k < sizeof ram_a; k++)
+            if (ram_a[k] != ram_w[k]) {
+                fprintf(stderr, "fp-selftest:   memory differs first at +%zx: dolrecomp %02X fast %02X\n", k, ram_a[k],
+                        ram_w[k]);
+                break;
+            }
+        fprintf(stderr, "fp-selftest: %s f%d ea %08X w %d gqr %08X (NI %d): dolrecomp %016llX %016llX cr %08X, fast %016llX %016llX cr %08X%s\n",
+                op, d, last_ea, last_w, a.gqr[last_g], (int)(a.fpscr & 4) != 0, (unsigned long long)to_u64(a.fpr[d]), (unsigned long long)to_u64(a.ps1[d]),
                 a.cr, (unsigned long long)to_u64(b.fpr[d]), (unsigned long long)to_u64(b.ps1[d]), b.cr,
-                memcmp(ram_a, ram_b, sizeof ram_a) ? " (memory differs)" : "");
+                memcmp(ram_a, ram_w, sizeof ram_a) ? " (memory differs)" : "");
+    }
 }
 
 int pandora_fp_selftest(void) {
+    {
+        CPUState w;
+        memset(&w, 0, sizeof w);
+        if (!pandora_guest_memory_adopt(&w))
+            return 2;
+        ram_w = w.ram;
+    }
     static const char* names[] = {"fadds", "fsubs", "fmuls", "fdivs", "fadd", "fsub", "fmul", "fdiv", "frsp",
                                   "fma", "fcmp", "ps_add", "ps_sub", "ps_mul", "ps_muls0", "ps_muls1", "ps_madd",
                                   "ps_madds0", "ps_madds1", "ps_sum0", "ps_sum1", "psq_l", "psq_st"};
@@ -135,7 +154,21 @@ int pandora_fp_selftest(void) {
         case 21: ppc_psq_load_inline(&a, d, ea, f1, x & 7, false, 0); pandora_psq_load(&b, d, ea, f1, x & 7, false, 0); break;
         case 22: ppc_psq_store_inline(&a, d, ea, f1, x & 7, false, 0); pandora_psq_store(&b, d, ea, f1, x & 7, false, 0); break;
         }
-        compare(names[op], op == 10 ? 0 : d);
+        last_ea = ea; last_w = f1; last_g = x & 7; compare(names[op], op == 10 ? 0 : d);
+    }
+    /* lfs: every 32-bit pattern; stfs: random doubles and specials. */
+    for (u64 bits = 0; bits < 0x100000000ull; bits++) {
+        const u32 b = (u32)bits;
+        if (to_u64(pandora_f32_from_bits(b)) != to_u64(dolrecomp_f32_from_bits(b)) && failures++ < 40)
+            fprintf(stderr, "fp-selftest: f32_from_bits(%08X): dolrecomp %016llX, fast %016llX\n", b,
+                    (unsigned long long)to_u64(dolrecomp_f32_from_bits(b)),
+                    (unsigned long long)to_u64(pandora_f32_from_bits(b)));
+    }
+    for (int i = 0; i < 20000000; i++) {
+        const f64 v = random_value();
+        if (pandora_f32_to_bits(v) != dolrecomp_f32_to_bits(v) && failures++ < 40)
+            fprintf(stderr, "fp-selftest: f32_to_bits(%016llX): dolrecomp %08X, fast %08X\n",
+                    (unsigned long long)to_u64(v), dolrecomp_f32_to_bits(v), pandora_f32_to_bits(v));
     }
     fprintf(stderr, "fp-selftest: %d mismatches\n", failures);
     return failures ? 1 : 0;

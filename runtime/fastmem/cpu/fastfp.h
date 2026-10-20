@@ -41,7 +41,8 @@ PANDORA_NOINLINE f64 pandora_f25_denormal(u64 bits) {
 }
 PANDORA_INLINE f64 pandora_f25(f64 value) {
     const u64 bits = pandora_u64_from_f64(value);
-    if ((bits & 0x7FF0000000000000ull) == 0 && (bits & 0x000FFFFFFFFFFFFFull) != 0)
+    /* denormal (exponent 0, fraction not 0): magnitude - 1 < 2^52 - 1 */
+    if (__builtin_expect((bits & 0x7FFFFFFFFFFFFFFFull) - 1 < 0x000FFFFFFFFFFFFFull, 0))
         return pandora_f25_denormal(bits);
     return pandora_f64_from_u64((bits & 0xFFFFFFFFF8000000ull) + (bits & 0x0000000008000000ull));
 }
@@ -245,6 +246,23 @@ PANDORA_INLINE f64 pandora_psq_value(CPUState* c, u32 ea, u32 type, f64 factor) 
 
 PANDORA_INLINE bool pandora_psq_load(CPUState* c, u8 d, u32 ea, bool w, u8 gqr, bool indexed, u32 cia) {
     const u32 g = c->gqr[gqr & 7u];
+    /* Floats, no scaling (the GQR's load fields are 0; games keep GQR0 so), in RAM: the common case. */
+    if (__builtin_expect((g & 0x3F070000u) == 0, 1)) {
+        if (__builtin_expect(ea & 3u, 0))
+            return ppc_psq_load(c, d, ea, w, gqr, indexed, cia); /* alignment exception */
+        const u8* p = pandora_fast_host(ea, 8);
+        if (__builtin_expect(p != NULL, 1)) {
+            u32 b0, b1;
+            memcpy(&b0, p, 4);
+            memcpy(&b1, p + 4, 4);
+            c->fpr[d] = pandora_f32_from_bits(__builtin_bswap32(b0));
+            c->ps1[d] = w ? 1.0 : pandora_f32_from_bits(__builtin_bswap32(b1));
+            return true;
+        }
+        c->fpr[d] = pandora_load_f32(c, ea);
+        c->ps1[d] = w ? 1.0 : pandora_load_f32(c, ea + 4);
+        return true;
+    }
     const u32 type = (g >> 16) & 7u;
     if (type == 0) {
         if (ea & 3u)
@@ -287,8 +305,35 @@ PANDORA_INLINE void pandora_psq_put(CPUState* c, u32 ea, u32 type, f64 factor, f
     }
 }
 
+PANDORA_INLINE u32 pandora_f32_store_bits(f64 value) {
+    const f32 f = (f32)value;
+    u32 bits;
+    memcpy(&bits, &f, sizeof bits);
+    if ((bits & 0x7F800000u) == 0 && (bits & 0x007FFFFFu) != 0)
+        bits = 0; /* denormals store as +0 (as DolRecomp) */
+    return bits;
+}
+
 PANDORA_INLINE bool pandora_psq_store(CPUState* c, u8 s, u32 ea, bool w, u8 gqr, bool indexed, u32 cia) {
     const u32 g = c->gqr[gqr & 7u];
+    if (__builtin_expect((g & 0x3F07u) == 0, 1)) { /* floats, no scaling, in RAM */
+        if (__builtin_expect(ea & 3u, 0))
+            return ppc_psq_store(c, s, ea, w, gqr, indexed, cia);
+        u8* p = pandora_fast_host(ea, 8);
+        if (__builtin_expect(p != NULL && !g_mem_write_journal, 1)) {
+            u32 b0 = __builtin_bswap32(pandora_f32_store_bits(c->fpr[s]));
+            memcpy(p, &b0, 4);
+            if (!w) {
+                u32 b1 = __builtin_bswap32(pandora_f32_store_bits(c->ps1[s]));
+                memcpy(p + 4, &b1, 4);
+            }
+            return true;
+        }
+        pandora_store_f32(c, ea, c->fpr[s]);
+        if (!w)
+            pandora_store_f32(c, ea + 4, c->ps1[s]);
+        return true;
+    }
     const u32 type = g & 7u;
     if (type == 0) {
         if (ea & 3u)
@@ -330,13 +375,13 @@ PANDORA_NOINLINE f64 pandora_f32_from_bits_slow(u32 bits) {
     return pandora_f64_from_u64(result);
 }
 PANDORA_INLINE f64 pandora_f32_from_bits(u32 bits) {
-    const u32 exp = (bits >> 23) & 0xFFu;
-    if (exp == 0 && (bits & 0x007FFFFFu) != 0)
-        return pandora_f32_from_bits_slow(bits); /* denormal */
-    const u64 x = bits;
-    const u64 y = (exp > 0 && exp < 255) ? !(exp >> 7) : (exp >> 7); /* normal, or zero/inf/NaN */
-    const u64 z = (y << 61) | (y << 60) | (y << 59);
-    return pandora_f64_from_u64(((x & 0xC0000000u) << 32) | z | ((x & 0x3FFFFFFFu) << 29));
+    /* The hardware conversion is exact for every value but NaNs (it quiets them); those keep their
+       bits through the slow path. Denormals convert exactly (no DAZ). */
+    if (__builtin_expect((bits & 0x7FFFFFFFu) > 0x7F800000u, 0))
+        return pandora_f32_from_bits_slow(bits);
+    f32 f;
+    memcpy(&f, &bits, sizeof f);
+    return (f64)f;
 }
 PANDORA_NOINLINE u32 pandora_f32_to_bits_slow(u64 bits) {
     const u32 exp = (u32)((bits >> 52) & 0x7FFu);

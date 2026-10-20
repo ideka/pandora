@@ -19,8 +19,9 @@ Used by sync_dir.py --prune-entries.
 import re
 import struct
 
-ENTRY_SWITCH = re.compile(r'^(void func_[0-9A-F]{8}\(CPUState\* (?:__restrict )?ctx\) \{\r?\n    switch \(ctx->pc\) \{\r?\n)(.*?)(    default: return;\r?\n    \})',
-                          re.S | re.M)
+ENTRY_SWITCH = re.compile(r'^((?:__attribute__\(\(sysv_abi\)\) )?void func_[0-9A-F]{8}\(CPUState\* (?:__restrict )?ctx\) \{\r?\n'
+                          r'(?:    s64 dc = ctx->downcount;\r?\n)?    switch \(ctx->pc\) \{\r?\n)(.*?)'
+                          r'(    default: (?:return;|\{ ctx->downcount = dc; return; \})\r?\n    \})', re.S | re.M)
 CASE = re.compile(r'    case 0x([0-9A-F]{8})u: goto label_[0-9A-F]{8};\r?\n')
 PC_CONST = re.compile(r'ctx->pc = 0x([0-9A-F]{8})u;')
 ANY_CASE = re.compile(r'case 0x([0-9A-F]{8})u:')
@@ -70,5 +71,6 @@ def prune(text, entries):
     eol = '\r\n' if '\r\n' in m.group(2) else '\n'
     kept = [c for c in cases if int(c, 16) in entries]
     body = ''.join(f'    case 0x{c}u: goto label_{c};{eol}' for c in kept)
-    default = f'    default: dolrecomp_missing_entry(ctx); return;{eol}    }}'
+    ret = '{ ctx->downcount = dc; return; }' if 'ctx->downcount = dc' in m.group(3) else 'return;'
+    default = f'    default: dolrecomp_missing_entry(ctx); {ret}{eol}    }}'
     return text[:m.start()] + m.group(1) + body + default + text[m.end():], len(kept), len(cases)

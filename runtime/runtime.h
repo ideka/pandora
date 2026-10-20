@@ -92,6 +92,7 @@ public:
     std::string describe(u32 addr) const { return syms_.describe(addr); }
     std::string describe_pc() const { return describe(cpu.pc); }
     u64 executed_cycles() const { return executed_cycles_; }
+    u64 blocks() const { return blocks_; }  // dispatches so far
     // --profile: pause/resume both samplers (PANDORA_PROFILE_FROM=<frame>).
     void set_profiling_paused(bool paused) {
         profile_paused_ = paused;
@@ -141,7 +142,8 @@ private:
     std::unordered_map<u32, u32> code_copies_;  // low-memory pc -> original text address
 
     std::array<u32, 1024> spr_{};
-    std::array<u8, 0x4000> locked_cache_{};  // L1 locked cache at 0xE0000000 (16 KB)
+    u8* locked_cache_ = nullptr;  // L1 locked cache at 0xE0000000 (16 KB), in the guest memory window
+    static constexpr u32 LOCKED_CACHE_SIZE = 0x4000;
     void locked_cache_dma(u32 dmal);
     bool dec_pending_ = false;
     s64 cycle_carry_ = 0;

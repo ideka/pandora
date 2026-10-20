@@ -20,10 +20,16 @@
 // Unwinds the suspended thread's stack to the first frame inside the executable.
 void HostProfiler::record_outside_caller(const void* context) {
     CONTEXT c = *static_cast<const CONTEXT*>(context);
-    for (int depth = 0; depth < 32 && c.Rip; depth++) {
+    int inside = 0;  // in-module frames seen: the first is recorded as the caller, the second as its caller
+    for (int depth = 0; depth < 48 && c.Rip; depth++) {
         if (c.Rip >= module_lo_ && c.Rip < module_hi_) {
-            outside_callers_[c.Rip]++;
-            return;
+            if (inside == 0)
+                outside_callers_[c.Rip]++;
+            else {
+                outside_callers2_[c.Rip]++;
+                return;
+            }
+            inside++;
         }
         DWORD64 image_base = 0;
         PRUNTIME_FUNCTION fn = RtlLookupFunctionEntry(c.Rip, &image_base, nullptr);
@@ -192,13 +198,43 @@ void HostProfiler::report(int top) const {
     for (size_t i = 0; i < thread_reports.size() && i < 4; i++)
         LOG_INFO("hostprof", "%s", thread_reports[i].second.c_str());
 
-    std::unordered_map<std::string, u32> by_caller;
+    std::unordered_map<std::string, u32> by_caller, by_caller2;
     for (auto [rip, n] : outside_callers_) {
         auto* sym = reinterpret_cast<SYMBOL_INFO*>(buf);
         sym->SizeOfStruct = sizeof(SYMBOL_INFO);
         sym->MaxNameLen = 255;
         DWORD64 disp = 0;
         by_caller[SymFromAddr(process, rip, &disp, sym) ? sym->Name : "[unknown]"] += n;
+    }
+    for (auto [rip, n] : outside_callers2_) {
+        auto* sym = reinterpret_cast<SYMBOL_INFO*>(buf);
+        sym->SizeOfStruct = sizeof(SYMBOL_INFO);
+        sym->MaxNameLen = 255;
+        DWORD64 disp = 0;
+        by_caller2[SymFromAddr(process, rip, &disp, sym) ? sym->Name : "[unknown]"] += n;
+    }
+    // PANDORA_PROFILE_DUMP=<file>: every sampled address, for instruction-level analysis
+    // (tools/hotspots.py): "<rva> <count> <function>+<disp> <file>:<line>".
+    if (const char* dump = std::getenv("PANDORA_PROFILE_DUMP")) {
+        if (FILE* f = std::fopen(dump, "w")) {
+            std::fprintf(f, "# total %u samples, image base rva 0\n", total_);
+            for (auto [rip, n] : samples_) {
+                if (rip < module_lo_ || rip >= module_hi_)
+                    continue;
+                auto* sym = reinterpret_cast<SYMBOL_INFO*>(buf);
+                sym->SizeOfStruct = sizeof(SYMBOL_INFO);
+                sym->MaxNameLen = 255;
+                DWORD64 disp = 0;
+                const char* name = SymFromAddr(process, rip, &disp, sym) ? sym->Name : "?";
+                IMAGEHLP_LINE64 line{};
+                line.SizeOfStruct = sizeof(line);
+                DWORD ldisp = 0;
+                const bool has_line = SymGetLineFromAddr64(process, rip, &ldisp, &line);
+                std::fprintf(f, "%llx %u %s+%llx %s:%lu\n", (unsigned long long)(rip - module_lo_), n, name,
+                             (unsigned long long)disp, has_line ? line.FileName : "?", has_line ? line.LineNumber : 0ul);
+            }
+            std::fclose(f);
+        }
     }
     // PANDORA_PROFILE_LINES=<n>: the hottest source lines; for the recompiled chunks, with the guest
     // instruction they implement (the nearest "// <address>: <instruction>" comment above).
@@ -266,6 +302,11 @@ void HostProfiler::report(int top) const {
     LOG_INFO("hostprof", "time outside the executable, by nearest caller inside it:");
     for (int i = 0; i < 15 && i < (int)callers.size(); i++)
         LOG_INFO("hostprof", "  %5.1f%%  %s", 100.0 * callers[i].second / total_, callers[i].first.c_str());
+    std::vector<std::pair<std::string, u32>> callers2(by_caller2.begin(), by_caller2.end());
+    std::sort(callers2.begin(), callers2.end(), [](auto& a, auto& b) { return a.second > b.second; });
+    LOG_INFO("hostprof", "  ... and by that caller's caller:");
+    for (int i = 0; i < 15 && i < (int)callers2.size(); i++)
+        LOG_INFO("hostprof", "  %5.1f%%  %s", 100.0 * callers2[i].second / total_, callers2[i].first.c_str());
 }
 
 #else

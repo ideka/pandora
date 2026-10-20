@@ -219,6 +219,18 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
         u32 frames = 0;
     } prof;
     u64 prof_tb = rt.cpu.timebase, prof_cycles = rt.executed_cycles();
+    // Host CPU cycles of this (the emulation) thread, for a host-cycles-per-guest-cycle figure that
+    // does not depend on waits or clock speed.
+    auto thread_cycles = [] {
+#ifdef _WIN32
+        ULONG64 c = 0;
+        QueryThreadCycleTime(GetCurrentThread(), &c);
+        return (u64)c;
+#else
+        return (u64)0;
+#endif
+    };
+    u64 prof_host_cycles = thread_cycles(), prof_blocks = rt.blocks();
     auto prof_start = clock::now();
 
     Pacer pacer(rt.cpu.timebase);
@@ -366,12 +378,18 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
                 const double busy = (double)(rt.executed_cycles() - prof_cycles) / ((double)(rt.cpu.timebase - prof_tb) * 12.0);
                 const auto bt = bridge.take_timing();
                 const double ms = 1000.0 / prof.frames;
+                const u64 host_cycles = thread_cycles();
+                const double guest_cycles = (double)(rt.executed_cycles() - prof_cycles);
                 LOG_INFO("perf",
-                         "%.1f fps, emulated %.2fx real time, guest CPU %.0f%% busy | per frame ms: guest %.2f (bridge %.2f, "
-                         "draw-done wait %.2f x%.1f), pacing+present %.2f, events %.2f | %.0f draws/frame",
-                         prof.frames / wall, emu / wall, 100.0 * busy, (prof.run - bt.forward - bt.drain) * ms, bt.forward * ms,
-                         bt.drain * ms, (double)bt.drains / prof.frames, prof.end * ms, prof.other * ms,
-                         (double)bt.draws / prof.frames);
+                         "%.1f fps, emulated %.2fx real time, guest CPU %.0f%% busy, %.1f host cycles/guest cycle "
+                         "(%.1fM/frame, %.0fk dispatches/frame) | per frame ms: guest %.2f (bridge %.2f, draw-done "
+                         "wait %.2f x%.1f), pacing+present %.2f, events %.2f | %.0f draws/frame",
+                         prof.frames / wall, emu / wall, 100.0 * busy, (double)(host_cycles - prof_host_cycles) / guest_cycles,
+                         guest_cycles / prof.frames / 1e6, (double)(rt.blocks() - prof_blocks) / prof.frames / 1e3,
+                         (prof.run - bt.forward - bt.drain) * ms, bt.forward * ms, bt.drain * ms,
+                         (double)bt.drains / prof.frames, prof.end * ms, prof.other * ms, (double)bt.draws / prof.frames);
+                prof_host_cycles = host_cycles;
+                prof_blocks = rt.blocks();
                 prof = {};
                 prof_tb = rt.cpu.timebase;
                 prof_cycles = rt.executed_cycles();
