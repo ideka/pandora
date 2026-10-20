@@ -31,6 +31,8 @@ public:
     const State& state() const { return state_; }
 
     void set_rumble(bool on);
+    // Look for the remote's HID device every second for a while (it was just made available).
+    void rescan_soon();
     void set_sensor_bar_above(bool above) { bar_above_ = above; }
 
 private:
@@ -57,6 +59,7 @@ private:
     Clock::time_point next_scan_{};
     unsigned device_changes_ = 0;  // SDL_hid_device_change_count at the last scan
     bool scanned_once_ = false;
+    Clock::time_point rescan_until_{};
     State state_;
     bool rumble_ = false;
     bool bar_above_ = false;

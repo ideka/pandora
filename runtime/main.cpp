@@ -176,6 +176,7 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
         rt.input().set_rumble_intensity((float)settings.rumble / 100.0f);
         rt.input().set_mouse_pointer(settings.mouse_pointer);
         rt.input().set_sensor_bar_above(settings.sensor_bar_above);
+        rt.input().set_wiimote_scanning(settings.wiimote_scan && (!background || std::getenv("PANDORA_POLL_WIIMOTE")));
     };
     apply_settings();
     SettingsMenu menu(settings, [&] {
@@ -279,8 +280,13 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
             const Wiimote::State& wm = rt.input().wiimote().state();
             menu.set_remote_buttons(wm.connected ? wm.buttons : 0);
             char status[96];
-            if (!wm.connected)
-                std::snprintf(status, sizeof status, "Not connected (pair it over Bluetooth)");
+            const auto scan = rt.input().wiimote_scan_status();
+            if (!wm.connected && scan == WiimoteScanner::Status::Searching)
+                std::snprintf(status, sizeof status, "Searching... press 1 and 2 on the Wii Remote");
+            else if (!wm.connected && scan == WiimoteScanner::Status::NoAdapter)
+                std::snprintf(status, sizeof status, "No Bluetooth adapter found");
+            else if (!wm.connected)
+                std::snprintf(status, sizeof status, "Not connected (pair it over Bluetooth, or turn on scanning)");
             else
                 std::snprintf(status, sizeof status, "Connected%s, battery %d%%%s", wm.nunchuk ? " with Nunchuk" : "",
                               wm.battery * 100 / 200 > 100 ? 100 : wm.battery * 100 / 200,

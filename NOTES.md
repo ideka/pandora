@@ -97,6 +97,13 @@ aids. Open work is in [TODO.md](TODO.md).
   id ends A4 20 00 00, retried while it reports busy) and continuous report 0x37 (buttons,
   accelerometer, 10 IR bytes, 6 extension bytes). A status report (extension plugged or unplugged)
   re-initialises the extension and the reporting mode.
+- Continuous scanning (`runtime/wiimote_scanner.cpp`, Windows), as in Dolphin: while enabled and
+  no remote is connected, a thread runs Bluetooth inquiries (2 x 1.28 s). A "Nintendo
+  RVL-CNT-01(-TR)" in discoverable mode (1+2, sync) gets its HID service enabled with
+  `BluetoothSetServiceState`, so Windows creates the HID device without pairing; the driver then
+  rescans HID devices every second for 10 s. Unauthenticated remotes Windows remembers but that are
+  not connected are removed first (they block reconnecting); PIN-paired ones are left alone.
+  Inquiries can disturb other Bluetooth devices (audio), hence the setting.
 - Some Windows Bluetooth stacks reject WriteFile on the remote (notably the -TR); output reports
   then go through HidD_SetOutputReport, as in Dolphin.
 - Core buttons have the WPAD bit layout. Accelerometer axes (remote: x left, y towards the camera,

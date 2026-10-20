@@ -40,18 +40,23 @@ float axis(float raw, float zero, float one) { return one != zero ? (raw - zero)
 
 }  // namespace
 
+void Wiimote::rescan_soon() {
+    rescan_until_ = Clock::now() + std::chrono::seconds(10);
+    next_scan_ = {};
+}
+
 void Wiimote::poll() {
     if (!dev_) {
         const auto now = Clock::now();
         if (now < next_scan_)
             return;
-        next_scan_ = now + SCAN_INTERVAL;
+        next_scan_ = now + (now < rescan_until_ ? std::chrono::seconds(1) : SCAN_INTERVAL);
         static const bool hid_ready = SDL_hid_init() == 0;
         if (!hid_ready)
             return;
         // Enumerating costs a few milliseconds; only do it when the system's device list changed.
         const Uint32 changes = SDL_hid_device_change_count();
-        if (changes == device_changes_ && scanned_once_)
+        if (changes == device_changes_ && scanned_once_ && now > rescan_until_)
             return;
         device_changes_ = changes;
         scanned_once_ = true;

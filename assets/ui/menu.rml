@@ -80,6 +80,11 @@
             <span class="status">{{ remote_status }}</span>
         </div>
         <div class="setting">
+            <span class="name">Scan for Wii Remotes</span>
+            <input type="checkbox" data-checked="wiimote_scan"/>
+            <span class="note">Connects a Wii Remote when you press 1 and 2; may disturb other Bluetooth devices</span>
+        </div>
+        <div class="setting">
             <span class="name">Sensor bar above screen</span>
             <input type="checkbox" data-checked="sensor_bar_above"/>
             <span class="note">Where the sensor bar sits, for a real Wii Remote's pointer</span>

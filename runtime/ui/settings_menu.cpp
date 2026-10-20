@@ -87,6 +87,14 @@ bool SettingsMenu::init(const std::string& asset_dir) {
         });
     c.Bind("remote_status", &remote_status_);
     c.BindFunc(
+        "wiimote_scan", [this](Rml::Variant& v) { v = settings_.wiimote_scan; },
+        [this](const Rml::Variant& v) {
+            if (v.Get<bool>() != settings_.wiimote_scan) {
+                settings_.wiimote_scan = v.Get<bool>();
+                changed();
+            }
+        });
+    c.BindFunc(
         "sensor_bar_above", [this](Rml::Variant& v) { v = settings_.sensor_bar_above; },
         [this](const Rml::Variant& v) {
             if (v.Get<bool>() != settings_.sensor_bar_above) {

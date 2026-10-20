@@ -9,6 +9,7 @@
 
 #include "guest.h"
 #include "wiimote.h"
+#include "wiimote_scanner.h"
 
 // KPAD/WPAD core button bits (Nunchuk Z/C as KPAD reports them).
 enum : u32 {
@@ -112,6 +113,9 @@ public:
     void poll_wiimote();
     const Wiimote& wiimote() const { return wiimote_; }
     void set_sensor_bar_above(bool above) { wiimote_.set_sensor_bar_above(above); }
+    // Continuous Bluetooth scanning for Wii Remotes (press 1+2 to connect).
+    void set_wiimote_scanning(bool enabled) { scanner_.set_enabled(enabled); }
+    WiimoteScanner::Status wiimote_scan_status() const { return scanner_.status(); }
 
     // Poll the host devices (when use_devices) and apply scripted presses for this guest frame.
     void update(u64 frame, bool use_devices);
@@ -131,6 +135,7 @@ private:
     bool rumble_on_ = false, rumbling_ = false;
     float rumble_intensity_ = 1.0f;
     Wiimote wiimote_;
+    WiimoteScanner scanner_;
     u64 wiimote_rumble_until_ = 0;  // SDL ticks (ms): the remote's motor has no timeout of its own
     u64 pointer_input_at_ = 0;      // SDL ticks of the last mouse/bound pointer movement
 };
