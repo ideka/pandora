@@ -442,7 +442,8 @@ void Runtime::start() {
         profiling_ = true;
         sampler_ = std::thread([this] {
             while (profiling_) {
-                samples_[(u32) * (volatile u32*)&cpu.pc]++;
+                if (!profile_paused_)
+                    samples_[(u32) * (volatile u32*)&cpu.pc]++;
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
         });

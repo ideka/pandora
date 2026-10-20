@@ -91,6 +91,11 @@ public:
     void halt(std::string reason);
     std::string describe(u32 addr) const { return syms_.describe(addr); }
     std::string describe_pc() const { return describe(cpu.pc); }
+    // --profile: pause/resume both samplers (PANDORA_PROFILE_FROM=<frame>).
+    void set_profiling_paused(bool paused) {
+        profile_paused_ = paused;
+        host_profiler_.set_paused(paused);
+    }
 
     Hardware& hw() { return *hw_; }
     Ios& ios() { return *ios_; }
@@ -128,6 +133,7 @@ private:
     std::unique_ptr<AuroraBridge> bridge_;
     std::atomic<bool> profiling_{false};
     std::thread sampler_;
+    std::atomic<bool> profile_paused_{false};
     HostProfiler host_profiler_;
     std::unordered_map<u32, u32> samples_;
     std::unordered_map<u32, Hook> hooks_;

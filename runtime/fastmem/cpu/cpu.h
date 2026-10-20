@@ -42,6 +42,15 @@ static inline u8* pandora_host(CPUState* c, u32 a, u32 n) {
 
 static inline int pandora_store_fast(CPUState* c) { return !g_mem_write_journal && !c->reserve_valid; }
 
+/* Stores to the write-gather pipe (the GX command stream, ~a million per frame) go straight to
+   the runtime's gather buffer instead of through DolRecomp's MMIO path. */
+#define PANDORA_WGPIPE 0xCC008000u
+#ifdef __cplusplus
+extern "C" void pandora_wgpipe_write(u64 value, u32 size);
+#else
+extern void pandora_wgpipe_write(u64 value, u32 size);
+#endif
+
 PANDORA_NOINLINE u8 pandora_mem_read8_full(CPUState* c, u32 a) {
     const u8* p = pandora_host(c, a, 1);
     return p ? *p : mem_read8(c, a);
@@ -72,6 +81,10 @@ PANDORA_NOINLINE u64 pandora_mem_read64_full(CPUState* c, u32 a) {
     return (u64)bswap32(hi) << 32 | bswap32(lo);
 }
 PANDORA_NOINLINE void pandora_mem_write8_full(CPUState* c, u32 a, u8 v) {
+    if ((a & ~31u) == PANDORA_WGPIPE) {
+        pandora_wgpipe_write(v, 1);
+        return;
+    }
     u8* p = pandora_host(c, a, 1);
     if (p && pandora_store_fast(c))
         *p = v;
@@ -79,6 +92,10 @@ PANDORA_NOINLINE void pandora_mem_write8_full(CPUState* c, u32 a, u8 v) {
         mem_write8(c, a, v);
 }
 PANDORA_NOINLINE void pandora_mem_write16_full(CPUState* c, u32 a, u16 v) {
+    if ((a & ~31u) == PANDORA_WGPIPE) {
+        pandora_wgpipe_write(v, 2);
+        return;
+    }
     u8* p = pandora_host(c, a, 2);
     if (p && pandora_store_fast(c)) {
         v = bswap16(v);
@@ -88,6 +105,10 @@ PANDORA_NOINLINE void pandora_mem_write16_full(CPUState* c, u32 a, u16 v) {
     }
 }
 PANDORA_NOINLINE void pandora_mem_write32_full(CPUState* c, u32 a, u32 v) {
+    if ((a & ~31u) == PANDORA_WGPIPE) {
+        pandora_wgpipe_write(v, 4);
+        return;
+    }
     u8* p = pandora_host(c, a, 4);
     if (p && pandora_store_fast(c)) {
         v = bswap32(v);
@@ -97,6 +118,10 @@ PANDORA_NOINLINE void pandora_mem_write32_full(CPUState* c, u32 a, u32 v) {
     }
 }
 PANDORA_NOINLINE void pandora_mem_write64_full(CPUState* c, u32 a, u64 v) {
+    if ((a & ~31u) == PANDORA_WGPIPE) {
+        pandora_wgpipe_write(v, 8);
+        return;
+    }
     u8* p = pandora_host(c, a, 8);
     if (p && pandora_store_fast(c)) {
         u32 hi = bswap32((u32)(v >> 32)), lo = bswap32((u32)v);
@@ -122,10 +147,17 @@ PANDORA_INLINE u16 pandora_mem_read16(CPUState* c, u32 a) {
     }
     return pandora_mem_read16_full(c, a);
 }
+/* 32-bit reads also inline MEM2 (the game keeps much of its data there). */
 PANDORA_INLINE u32 pandora_mem_read32(CPUState* c, u32 a) {
     PANDORA_MEM1(c, a, 4, off) {
         u32 v;
         memcpy(&v, c->ram + off, 4);
+        return bswap32(v);
+    }
+    const u32 off2 = a - 0x90000000u;
+    if (off2 <= c->mem2_size - 4) {
+        u32 v;
+        memcpy(&v, c->mem2 + off2, 4);
         return bswap32(v);
     }
     return pandora_mem_read32_full(c, a);

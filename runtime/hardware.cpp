@@ -1,6 +1,7 @@
 #include <algorithm>
 #include "hardware.h"
 
+#include <cstdlib>
 #include <cstring>
 
 #include "dsp/dsp.h"
@@ -54,10 +55,21 @@ bool is_pe(u32 phys) { return (phys & 0xFFFFFF80) == 0x0C001000; }
 
 }  // namespace
 
+namespace {
+Hardware* g_hardware = nullptr;  // for the recompiled code's write-gather fast path
+}
+
+extern "C" void pandora_wgpipe_write(u64 value, u32 size) { g_hardware->gather(value, (u8)size); }
+
 Hardware::Hardware(Runtime& rt)
     : rt_(rt), exi_(rt), dsp_(std::make_unique<DSP::DSPManager>(rt)),
-      cp_(std::make_unique<CommandProcessor>(rt, *this)) {}
-Hardware::~Hardware() = default;
+      cp_(std::make_unique<CommandProcessor>(rt, *this)) {
+    g_hardware = this;
+}
+Hardware::~Hardware() {
+    if (g_hardware == this)
+        g_hardware = nullptr;
+}
 
 u64 Hardware::read(u32 addr, u8 size) {
     u32 phys = canonical(addr);
@@ -84,8 +96,9 @@ void Hardware::write(u32 addr, u64 value, u8 size) {
 // the PI CPU FIFO write pointer, which wraps from the FIFO end back to its base (as in Dolphin's
 // GPFifo.cpp). GX display lists rely on this: GXEndDisplayList measures the pointer's advance.
 void Hardware::gather(u64 value, u8 size) {
-    for (int i = size - 1; i >= 0; i--)
-        gather_[gather_count_++] = (u8)(value >> (8 * i));
+    const u64 be = _byteswap_uint64(value << (8 * (8 - size)));  // the value's bytes, big-endian first
+    std::memcpy(gather_ + gather_count_, &be, 8);                // the buffer has 8 bytes of slack
+    gather_count_ += size;
     wgpipe_bytes_ += size;
     while (gather_count_ >= 32) {
         if (u8* dst = mem::ptr(&rt_.cpu, fifo_wptr_, 32))

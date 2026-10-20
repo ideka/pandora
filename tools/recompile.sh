@@ -29,7 +29,13 @@ python -I tools/patch_hooks.py orig/SX3P01/main.dol config/SX3P01/symbols.txt co
     build/SX3P01/main_hooked.dol config/SX3P01/patches.txt
 # Generate into a scratch directory and only replace files whose contents changed, so the build
 # recompiles just the chunks a patch or hook touched (a full rebuild takes ~13 minutes).
-rm -rf build/recomp.new
-"$DOLRECOMP" --cpu broadway --map build/SX3P01.map -j8 build/SX3P01/main_hooked.dol SX3P01 build/recomp.new
-python -I tools/sync_dir.py build/recomp.new build/recomp
-rm -rf build/recomp.new
+# The scratch directory is outside the workspace: editors' indexers otherwise open the new files
+# (and keep them busy) while they are being compared.
+NEW="${TEMP:-/tmp}/pandora-recomp-new"
+rm -rf "$NEW"
+"$DOLRECOMP" --cpu broadway --map build/SX3P01.map -j8 build/SX3P01/main_hooked.dol SX3P01 "$NEW"
+# Drop the per-instruction pc stores (PANDORA_KEEP_PC=1 keeps them, e.g. for precise guest profiles).
+STRIP=--strip-pc
+[ -z "$PANDORA_KEEP_PC" ] || STRIP=
+python -I tools/sync_dir.py $STRIP "$NEW" build/recomp
+rm -rf "$NEW"

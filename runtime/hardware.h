@@ -93,7 +93,9 @@ private:
     u64 ai_count_tb_ = 0;
 
     // Write-gather pipe and the PI CPU FIFO it drains into.
-    void gather(u64 value, u8 size);
+public:
+    void gather(u64 value, u8 size);  // also called by the recompiled code (pandora_wgpipe_write)
+private:
     u8 gather_[64 + 8] = {};
     u32 gather_count_ = 0;
     u32 fifo_base_ = 0, fifo_end_ = 0, fifo_wptr_ = 0;

@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -13,8 +15,37 @@
 #include <windows.h>
 // windows.h first
 #include <dbghelp.h>
+#include <tlhelp32.h>
+
+// Unwinds the suspended thread's stack to the first frame inside the executable.
+void HostProfiler::record_outside_caller(const void* context) {
+    CONTEXT c = *static_cast<const CONTEXT*>(context);
+    for (int depth = 0; depth < 32 && c.Rip; depth++) {
+        if (c.Rip >= module_lo_ && c.Rip < module_hi_) {
+            outside_callers_[c.Rip]++;
+            return;
+        }
+        DWORD64 image_base = 0;
+        PRUNTIME_FUNCTION fn = RtlLookupFunctionEntry(c.Rip, &image_base, nullptr);
+        if (!fn) {  // leaf function: the return address is on top of the stack
+            c.Rip = *reinterpret_cast<DWORD64*>(c.Rsp);
+            c.Rsp += 8;
+            continue;
+        }
+        void* handler_data = nullptr;
+        DWORD64 establisher = 0;
+        RtlVirtualUnwind(UNW_FLAG_NHANDLER, image_base, c.Rip, fn, &c, &handler_data, &establisher, nullptr);
+    }
+}
 
 void HostProfiler::start() {
+    {
+        HMODULE exe = GetModuleHandleW(nullptr);
+        const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(exe);
+        const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(reinterpret_cast<const u8*>(exe) + dos->e_lfanew);
+        module_lo_ = reinterpret_cast<u64>(exe);
+        module_hi_ = module_lo_ + nt->OptionalHeader.SizeOfImage;
+    }
     HANDLE h = nullptr;
     DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &h,
                     THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, 0);
@@ -22,20 +53,70 @@ void HostProfiler::start() {
         return;
     target_ = h;
     running_ = true;
-    thread_ = std::thread([this] {
-        while (running_) {
+    const bool all_threads = std::getenv("PANDORA_PROFILE_THREADS") != nullptr;
+    const DWORD self_tid = GetCurrentThreadId();
+    thread_ = std::thread([this, all_threads, self_tid] {
+        const DWORD sampler_tid = GetCurrentThreadId();
+        std::vector<std::pair<DWORD, HANDLE>> others;
+        for (u32 iteration = 0; running_; iteration++) {
+            if (paused_) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                continue;
+            }
+            // PANDORA_PROFILE_THREADS: also sample the process's other threads (render worker etc.).
+            if (all_threads && iteration % 500 == 0) {
+                for (auto& [tid, handle] : others)
+                    CloseHandle(handle);
+                others.clear();
+                HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+                THREADENTRY32 te{sizeof te};
+                for (BOOL ok = Thread32First(snap, &te); ok; ok = Thread32Next(snap, &te)) {
+                    if (te.th32OwnerProcessID != GetCurrentProcessId() || te.th32ThreadID == self_tid ||
+                        te.th32ThreadID == sampler_tid)
+                        continue;
+                    if (HANDLE th = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION,
+                                               FALSE, te.th32ThreadID))
+                        others.emplace_back(te.th32ThreadID, th);
+                }
+                CloseHandle(snap);
+            }
+            for (auto& [tid, th] : others) {
+                if (SuspendThread(th) == (DWORD)-1)
+                    continue;
+                CONTEXT ctx{};
+                ctx.ContextFlags = CONTEXT_CONTROL;
+                if (GetThreadContext(th, &ctx)) {
+                    other_samples_[tid][ctx.Rip]++;
+                    other_totals_[tid]++;
+                    if (other_names_.find(tid) == other_names_.end()) {
+                        PWSTR desc = nullptr;
+                        std::string name;
+                        if (SUCCEEDED(GetThreadDescription(th, &desc)) && desc) {
+                            for (PWSTR q = desc; *q; q++)
+                                name += (char)*q;
+                            LocalFree(desc);
+                        }
+                        other_names_[tid] = name;
+                    }
+                }
+                ResumeThread(th);
+            }
             HANDLE t = static_cast<HANDLE>(target_);
             if (SuspendThread(t) != (DWORD)-1) {
                 CONTEXT ctx{};
-                ctx.ContextFlags = CONTEXT_CONTROL;
+                ctx.ContextFlags = CONTEXT_FULL;
                 if (GetThreadContext(t, &ctx)) {
                     samples_[ctx.Rip]++;
                     total_++;
+                    if (ctx.Rip < module_lo_ || ctx.Rip >= module_hi_)
+                        record_outside_caller(&ctx);
                 }
                 ResumeThread(t);
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
+        for (auto& [tid, handle] : others)
+            CloseHandle(handle);
     });
 }
 
@@ -75,12 +156,61 @@ void HostProfiler::report(int top) const {
         }
         by_fn[name] += n;
     }
+    // Other threads: the busiest ones (samples outside wait functions), each with its hot spots.
+    std::vector<std::pair<u32, std::string>> thread_reports;
+    for (auto& [tid, rips] : other_samples_) {
+        std::unordered_map<std::string, u32> fns;
+        u32 busy = 0;
+        for (auto [rip, n] : rips) {
+            auto* sym = reinterpret_cast<SYMBOL_INFO*>(buf);
+            sym->SizeOfStruct = sizeof(SYMBOL_INFO);
+            sym->MaxNameLen = 255;
+            DWORD64 disp = 0;
+            std::string name = SymFromAddr(process, rip, &disp, sym) ? sym->Name : "[unknown]";
+            const bool waiting = name.find("Wait") != std::string::npos || name.find("Delay") != std::string::npos ||
+                                 name.find("RemoveIoCompletion") != std::string::npos ||
+                                 name.find("AlertByThreadId") != std::string::npos;
+            if (!waiting)
+                busy += n;
+            fns[name] += n;
+        }
+        std::vector<std::pair<std::string, u32>> top_fns(fns.begin(), fns.end());
+        std::sort(top_fns.begin(), top_fns.end(), [](auto& a, auto& b) { return a.second > b.second; });
+        std::string report;
+        char line[400];
+        std::snprintf(line, sizeof line, "thread %lu \"%s\": %u samples, %.1f%% busy", (unsigned long)tid,
+                      other_names_.at(tid).c_str(), other_totals_.at(tid), 100.0 * busy / std::max(1u, other_totals_.at(tid)));
+        report += line;
+        for (size_t i = 0; i < top_fns.size() && i < 12; i++) {
+            std::snprintf(line, sizeof line, "\n[hostprof]       %5.1f%%  %s", 100.0 * top_fns[i].second / other_totals_.at(tid),
+                          top_fns[i].first.c_str());
+            report += line;
+        }
+        thread_reports.emplace_back(busy, report);
+    }
+    std::sort(thread_reports.rbegin(), thread_reports.rend());
+    for (size_t i = 0; i < thread_reports.size() && i < 4; i++)
+        LOG_INFO("hostprof", "%s", thread_reports[i].second.c_str());
+
+    std::unordered_map<std::string, u32> by_caller;
+    for (auto [rip, n] : outside_callers_) {
+        auto* sym = reinterpret_cast<SYMBOL_INFO*>(buf);
+        sym->SizeOfStruct = sizeof(SYMBOL_INFO);
+        sym->MaxNameLen = 255;
+        DWORD64 disp = 0;
+        by_caller[SymFromAddr(process, rip, &disp, sym) ? sym->Name : "[unknown]"] += n;
+    }
     SymCleanup(process);
     std::vector<std::pair<std::string, u32>> sorted(by_fn.begin(), by_fn.end());
     std::sort(sorted.begin(), sorted.end(), [](auto& a, auto& b) { return a.second > b.second; });
     LOG_INFO("hostprof", "host profile of the emulation thread (%u samples):", total_);
     for (int i = 0; i < top && i < (int)sorted.size(); i++)
         LOG_INFO("hostprof", "  %5.1f%%  %s", 100.0 * sorted[i].second / total_, sorted[i].first.c_str());
+    std::vector<std::pair<std::string, u32>> callers(by_caller.begin(), by_caller.end());
+    std::sort(callers.begin(), callers.end(), [](auto& a, auto& b) { return a.second > b.second; });
+    LOG_INFO("hostprof", "time outside the executable, by nearest caller inside it:");
+    for (int i = 0; i < 15 && i < (int)callers.size(); i++)
+        LOG_INFO("hostprof", "  %5.1f%%  %s", 100.0 * callers[i].second / total_, callers[i].first.c_str());
 }
 
 #else

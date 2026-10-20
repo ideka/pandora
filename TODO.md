@@ -79,9 +79,11 @@ Open work only. How things currently work, and why, is in [NOTES.md](NOTES.md).
 
 ## Performance
 
-- 60 FPS mode needs ~1.35x the current speed in heavy scenes (observatory: ~0.75x real time,
-  ~18.5 ms guest + bridge per frame; the budget is 16.7).
-- Bridge (~3.2 ms/frame): the vertex index scan in `prepare_draw`.
+- 60 FPS mode is at ~1.0x real time in the observatory on the dev PC (Ryzen-class desktop): no
+  headroom for weaker machines yet. The guest's own code dominates (render code around
+  `func_804991E0`, `func_804451E0`, `func_805511E0`); next steps are in the code generator (keep
+  guest registers in locals across a block instead of ctx loads/stores).
+- Bridge (~1.9 ms/frame): the vertex index scan in `prepare_draw`, `vertex_layout`.
 - Avoid storing `ctx->pc` at every instruction in the generated code.
 - Re-measure boot speed (was ~0.3x real time, dominated by OS alarm/scheduler churn from
   `OSSleepTicks(1)` polling, before the pacing and clang changes).

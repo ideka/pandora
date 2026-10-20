@@ -61,8 +61,13 @@ static void send_window_to_background() {
         return;
     auto hwnd = static_cast<HWND>(
         SDL_GetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
-    if (hwnd)
-        SetWindowPos(hwnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+    if (!hwnd)
+        return;
+    // Past the right edge of the virtual desktop rather than just behind other windows: Windows
+    // throttles presents of covered windows (gameplay measured ~15% slower), and this way it is
+    // still not visible.
+    const int x = GetSystemMetrics(SM_XVIRTUALSCREEN) + GetSystemMetrics(SM_CXVIRTUALSCREEN) + 64;
+    SetWindowPos(hwnd, HWND_BOTTOM, x, 0, 0, 0, SWP_NOACTIVATE | SWP_NOSIZE);
 #endif
 }
 
@@ -148,7 +153,7 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
     config.appName = "Pandora's Tower";
     config.logCallback = &aurora_log;
     config.logLevel = g_log_level >= 2 ? LOG_DEBUG : LOG_INFO;
-    config.vsync = true;
+    config.vsync = std::getenv("PANDORA_NO_VSYNC") == nullptr;  // test runs: PANDORA_NO_VSYNC=1
     config.windowPosX = SDL_WINDOWPOS_CENTERED;  // aurora takes 0, 0 literally (title bar off screen)
     config.windowPosY = SDL_WINDOWPOS_CENTERED;
     config.windowWidth = win_w;
@@ -320,6 +325,9 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
             mem::write32(&rt.cpu, FRAME_RATE_TARGET, 60);
         else if (mem::read32(&rt.cpu, FRAME_RATE_TARGET) == 60)
             mem::write32(&rt.cpu, FRAME_RATE_TARGET, 30);
+        static const u64 profile_from = std::getenv("PANDORA_PROFILE_FROM") ? std::strtoull(std::getenv("PANDORA_PROFILE_FROM"), nullptr, 10) : 0;
+        if (profile_from && rt.options().profile)
+            rt.set_profiling_paused(bridge.frames() < profile_from);
         rt.input().update(bridge.frames(), !background && !menu.is_open());  // the menu takes input while open
         for (const auto& [frame, path] : rt.options().screenshots)
             if (bridge.frames() == frame)

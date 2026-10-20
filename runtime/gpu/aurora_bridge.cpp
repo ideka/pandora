@@ -1,10 +1,13 @@
 #include "aurora_bridge.h"
 
+#include <intrin.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <thread>
 
 #include <dolphin/gx/GXAurora.h>
 
@@ -174,6 +177,19 @@ namespace {
 double seconds_since(std::chrono::steady_clock::time_point t) {
     return std::chrono::duration<double>(std::chrono::steady_clock::now() - t).count();
 }
+
+// --profile times every forwarded command; the time stamp counter is much cheaper than
+// steady_clock (QueryPerformanceCounter), which cost ~7% of the emulation thread.
+double tsc_seconds_per_tick() {
+    static const double value = [] {
+        const auto t0 = std::chrono::steady_clock::now();
+        const u64 c0 = __rdtsc();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        const u64 c1 = __rdtsc();
+        return seconds_since(t0) / (double)(c1 - c0);
+    }();
+    return value;
+}
 }  // namespace
 
 void AuroraBridge::command(const u8* p, u32 len, const u32* cpreg) {
@@ -181,9 +197,10 @@ void AuroraBridge::command(const u8* p, u32 len, const u32* cpreg) {
         forward(p, len, cpreg);
         return;
     }
-    const auto start = std::chrono::steady_clock::now();
+    static const double tick = tsc_seconds_per_tick();
+    const u64 start = __rdtsc();
     forward(p, len, cpreg);
-    timing_.forward += seconds_since(start);
+    timing_.forward += (double)(__rdtsc() - start) * tick;
 }
 
 void AuroraBridge::forward(const u8* p, u32 len, const u32* cpreg) {
@@ -246,7 +263,7 @@ void AuroraBridge::forward(const u8* p, u32 len, const u32* cpreg) {
         }
         prepare_draw(p, len, cpreg);
         write(p, len);
-        aurora::gx::fifo::publish();
+        aurora::gx::fifo::finish_draw();  // publishes every few draws (waking the FIFO worker per draw is costly)
         return;
     } else if (op == 0x40) {
         return;  // display lists are inlined by the command processor

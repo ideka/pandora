@@ -211,6 +211,55 @@ PANDORA_INLINE bool pandora_psq_store(CPUState* c, u8 s, u32 ea, bool w, u8 gqr,
     return true;
 }
 
+/* lfs/stfs bit conversions (Gekko-exact, as DolRecomp's dolrecomp_f32_from_bits/_to_bits): the
+   common cases inline, denormals out of line. tools/strip_pc.py renames the chunks' calls. */
+PANDORA_NOINLINE f64 pandora_f32_from_bits_slow(u32 bits) {
+    u64 x = bits;
+    u64 exp = (x >> 23) & 0xFFu;
+    u64 frac = x & 0x007FFFFFu;
+    u64 result;
+    if (exp == 0 && frac != 0) {
+        exp = 1023 - 126;
+        do {
+            frac <<= 1;
+            exp -= 1;
+        } while ((frac & 0x00800000u) == 0);
+        result = ((x & 0x80000000u) << 32) | (exp << 52) | ((frac & 0x007FFFFFu) << 29);
+    } else {
+        u64 y = exp >> 7;
+        u64 z = (y << 61) | (y << 60) | (y << 59);
+        result = ((x & 0xC0000000u) << 32) | z | ((x & 0x3FFFFFFFu) << 29);
+    }
+    return pandora_f64_from_u64(result);
+}
+PANDORA_INLINE f64 pandora_f32_from_bits(u32 bits) {
+    const u32 exp = (bits >> 23) & 0xFFu;
+    if (exp > 0 && exp < 255) {
+        const u64 x = bits;
+        const u64 y = !(exp >> 7);
+        const u64 z = (y << 61) | (y << 60) | (y << 59);
+        return pandora_f64_from_u64(((x & 0xC0000000u) << 32) | z | ((x & 0x3FFFFFFFu) << 29));
+    }
+    return pandora_f32_from_bits_slow(bits);
+}
+PANDORA_NOINLINE u32 pandora_f32_to_bits_slow(u64 bits) {
+    const u32 exp = (u32)((bits >> 52) & 0x7FFu);
+    if (exp >= 874) {
+        u32 result = (u32)(0x80000000u | ((bits & 0x000FFFFFFFFFFFFFull) >> 21));
+        result >>= 905 - exp;
+        result |= (u32)((bits >> 32) & 0x80000000u);
+        return result;
+    }
+    return (u32)(((bits >> 32) & 0xC0000000u) | ((bits >> 29) & 0x3FFFFFFFu));
+}
+PANDORA_INLINE u32 pandora_f32_to_bits(f64 value) {
+    const u64 bits = pandora_u64_from_f64(value);
+    const u32 exp = (u32)((bits >> 52) & 0x7FFu);
+    if (exp > 896 || (bits & 0x7FFFFFFFFFFFFFFFull) == 0)
+        return (u32)(((bits >> 32) & 0xC0000000u) | ((bits >> 29) & 0x3FFFFFFFu));
+    return pandora_f32_to_bits_slow(bits);
+}
+
 #define ppc_fadds pandora_fadds
 #define ppc_fsubs pandora_fsubs
 #define ppc_fmuls pandora_fmuls

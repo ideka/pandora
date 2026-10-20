@@ -149,15 +149,28 @@ aids. Open work is in [TODO.md](TODO.md).
 
 - Build with clang (`tools/build_clang.bat`): gameplay runs at ~37 fps unthrottled (1.24x real time)
   vs ~21 fps with MSVC.
-- Gameplay cost is almost all per rendered frame: the observatory takes ~20 ms of guest time per
-  frame at 30 FPS (two logic ticks) and ~18.5 ms at 60 (one tick), so 60 FPS needs nearly twice
-  the work per second. Currently ~0.75x real time at 60 FPS there.
+- Gameplay cost is almost all per rendered frame: two logic ticks (30 FPS) cost little more than
+  one (60 FPS), so 60 FPS needs nearly twice the work per second. The observatory at 60 FPS now
+  runs at ~1.0x real time unthrottled (~15 ms guest including ~1.9 ms bridge per frame); 30 FPS at
+  ~1.6x.
+- Measuring: a window covered by other windows has its presents throttled by Windows, which
+  backs up into aurora's two frame slots and stalls the emulation thread (~15% in gameplay);
+  `--background` therefore puts the window off-screen. `PANDORA_PROFILE_FROM=<frame>` limits
+  `--profile` to gameplay, `PANDORA_PROFILE_THREADS=1` adds the other threads, and samples outside
+  the executable are attributed to their nearest caller inside it (waits show up that way).
 - `runtime/fastmem/cpu/fastfp.h` replaces DolRecomp's out-of-line FP, paired-single and quantized
   load/store helpers in the chunks with inline versions that keep the results (single rounding,
   the 25-bit multiplier truncation, quantization) but no FPSCR exception bookkeeping (~15%).
 - Memory accessors inline only the MEM1 path; forcing the whole range check inline at every site
   made the chunks slower (code size).
-- aurora wakes its FIFO worker every 16 draws instead of every draw (`patches/aurora/0006`).
+- aurora wakes its FIFO worker every 16 draws instead of every draw (`patches/aurora/0006`), and
+  the bridge goes through `fifo::finish_draw` (it used to publish after every draw itself).
+- The generated code's per-instruction `ctx->pc` stores are removed by `tools/strip_pc.py` (run by
+  `recompile.sh`; `PANDORA_KEEP_PC=1` keeps them). Branches still set the pc, so the guest profile
+  and crash logs only see the last branch target.
+- Write-gather pipe stores (`0xCC008000`) go straight from the chunks to `Hardware::gather`
+  (`pandora_wgpipe_write`); 32-bit reads inline MEM2 too; lfs/stfs bit conversions inline their
+  common case.
 - `tools/recompile.sh` only rewrites generated files whose contents changed, so a patch or hook
   rebuilds a few chunks (seconds) instead of all of them (~13 minutes).
 - Cross-chunk direct calls (`patches/dolrecomp/0001`, enabled by `tools/recompile.sh` with
@@ -179,7 +192,9 @@ aids. Open work is in [TODO.md](TODO.md).
 - `--window <w>x<h>` sets the window size; `--unthrottled` disables pacing.
 - `--press StickUp@<frame>+<frames>` (StickDown/Left/Right) holds the Nunchuk stick.
 - `PANDORA_PROFILE_TOP=<n>` lists n guest functions in the `--profile` report (to diff runs). The
-  guest profile samples `cpu.pc`, so host time (bridge, HLE) is charged to whatever guest code ran
-  last (e.g. `__LCEnable`, `viFlushRegs`).
+  guest profile samples `cpu.pc`, which is only updated at branches (see strip_pc), and host time
+  (bridge, HLE) is charged to whatever guest code ran last; rebuild with `PANDORA_KEEP_PC=1` for a
+  precise one.
+- `PANDORA_NO_VSYNC=1` turns vsync off (to measure headroom).
 - `tools/dol2elf.py <main.dol> <symbols.txt> <out.elf>` makes an ELF with every section and symbol,
   for Binary Ninja/Ghidra (`build/SX3P01/main.elf`).
