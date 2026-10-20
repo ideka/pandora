@@ -57,6 +57,9 @@ public:
     void request_screenshot(std::string path);
     // Read back the index-th EFB texture copy of the given frame (RGBA8 and RGB565 copies).
     void request_copy_shot(u64 frame, u32 index, std::string path);
+    // The output gamma exponent applied when presenting (the Wii's VI gamma), also applied to frame
+    // screenshots so they show what the window shows.
+    void set_output_gamma(float exponent) { output_gamma_ = exponent; }
     // Capture the EFB just before the given draw of a frame (draws counted from 0).
     void request_draw_shot(u64 frame, u32 draw, std::string path);
     void poll_screenshot();
@@ -113,6 +116,7 @@ private:
     u32 copy_src_ = 0, copy_size_ = 0, copy_dest_ = 0;
 
     bool frame_end_ = false;
+    u32 display_gamma_ = 99, display_filter_[2] = {};  // the display copy's gamma (BP 0x52 bits 7-8) and copy filter (0x53/0x54), logged on change
     // A display copy's clear, deferred to the next frame: aurora presents the EFB itself, so
     // clearing at the copy would wipe the frame before it is shown.
     struct PendingClear {
@@ -137,8 +141,10 @@ private:
         u64 stream = 0;
         std::unique_ptr<u8> key;  // its address identifies our own copies to aurora
         u32 w = 0, h = 0, format = 6, polls = 0;
+        float gamma = 1.0f;
         std::string path;
     };
+    float output_gamma_ = 1.0f;
     std::vector<Shot> shots_;
     void capture_efb(u32 x, u32 y, u32 w, u32 h, std::string path);
     bool capture_copy(const void* src, u32 w, u32 h, u32 format, std::string path);

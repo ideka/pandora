@@ -36,7 +36,8 @@ static void usage() {
                  "               [--profile] [-v|-vv|-vvv]\n"
                  "               [--screenshot <frame>:<file.png>]... [--exit-after <frames>]\n"
                  "               [--press <button>@<frame>[+<frames>]]... (A B 1 2 PLUS MINUS UP DOWN LEFT RIGHT Z C,\n"
-                 "                or StickUp StickDown StickLeft StickRight for the Nunchuk stick)\n"
+                 "                or StickUp StickDown StickLeft StickRight for the Nunchuk stick,\n"
+                 "                or Pointer:<x>,<y> for the pointer in screen units -1..1, y down)\n"
                  "  debugging: [--watch <symbol>]... [--watch-write <hexaddr>]... [--dump <hexaddr>[:len]]...\n"
                  "             [--trace] [--shot-copy <frame>:<copy>:<file.png>]... [--shot-draw <frame>:<draw>:<file.png>]...\n"
                  "             [--menu-test <frame>:<file.png>] (open the settings menu, capture the window, exit)\n"
@@ -276,6 +277,21 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
             menu_test_wait = t + 30;
         }
         aurora_set_preserve_frame(user_paused);  // keep showing the paused game
+        // The game's Brightness setting is the video encoder's gamma (VISetGamma, fn_8055F360: index
+        // n is gamma n/10; the slider's ten levels are 0.4-1.3, 1.0 neutral). The Wii's encoder applies
+        // it to the output, so it is applied when presenting: color^(1/gamma).
+        {
+            constexpr u32 VI_GAMMA = 0x807F2804;  // VISetGamma's current value (SDA r13-20924)
+            static u32 vi_gamma = ~0u;
+            if (const u32 g = mem::read32(&rt.cpu, VI_GAMMA); g != vi_gamma) {
+                vi_gamma = g;
+                const float exponent = g >= 1 && g <= 30 ? 10.0f / (float)g : 1.0f;
+                aurora_set_present_gamma(exponent);
+                if (rt.bridge())
+                    rt.bridge()->set_output_gamma(exponent);
+                LOG_INFO("main", "VI gamma %u.%u", g / 10, g % 10);
+            }
+        }
         if (!aurora_begin_frame())
             continue;
         // --menu-test: play the scripted keys through SDL's event queue, then capture the window and exit.

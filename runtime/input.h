@@ -132,6 +132,11 @@ private:
         u64 start, frames;
     };
     std::vector<Scripted> script_;
+    struct ScriptedPointer {
+        u64 start, frames;
+        float x, y;  // screen units, -1..1 (y down)
+    };
+    std::vector<ScriptedPointer> pointer_script_;
     const Bindings* bindings_ = nullptr;
     PadState state_;
     float pointer_x_ = 0, pointer_y_ = 0;

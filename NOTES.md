@@ -40,6 +40,16 @@ aids. Open work is in [TODO.md](TODO.md).
 - The game uses the EFB's top-left quadrant as scratch space for small passes and restores it by
   redrawing a full-frame copy, so any offset in viewport mapping shows up there first.
 
+- The game's Brightness setting (pause menu > settings) is the video encoder's gamma, not a GX
+  feature: the slider (`fn_8038D6D0`) stores its level 0-9, and closing the menu calls
+  `fn_8006DC5C(0.4 + 0.1 * level)`, which calls `VISetGamma(clamp(f * 10 + 0.5, 1, 30))`
+  (`fn_8055F360`: VI gamma index n = gamma n/10) and `VIFlush`. On a Wii the AVE encoder applies
+  it to the output; Dolphin doesn't, hence its "lighter image" (its wiki's pow(c, 1.3) shader
+  approximates the default level's gamma 0.8). The main loop reads the index (`0x807F2804`) every
+  frame and aurora's present pass applies color^(10/n) (`patches/aurora/0007`), before the UI
+  overlays; `--screenshot` applies the same curve. The display copy's own gamma field stays 1.0
+  and the copy filter is unchanged by the setting.
+
 ## Settings menu
 
 - RmlUi through aurora's integration (`AURORA_ENABLE_RMLUI`): `runtime/ui/settings_menu.cpp`

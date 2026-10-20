@@ -324,6 +324,17 @@ bool Input::add_script(const std::string& spec) {
     if (at == std::string::npos)
         return false;
     const std::string name = spec.substr(0, at);
+    // "Pointer:<x>,<y>@<frame>+<frames>": the pointer at x, y (screen units, -1..1, y down).
+    if (name.rfind("Pointer:", 0) == 0) {
+        float x = 0, y = 0;
+        if (std::sscanf(name.c_str() + 8, "%f,%f", &x, &y) != 2)
+            return false;
+        char* end = nullptr;
+        const u64 start = std::strtoull(spec.c_str() + at + 1, &end, 10);
+        const u64 frames = *end == '+' ? std::strtoull(end + 1, nullptr, 10) : 6;
+        pointer_script_.push_back({start, frames, x, y});
+        return true;
+    }
     u32 bit = 0;
     for (const auto& b : SCRIPT_BUTTONS)
         if (name == b.name)
@@ -437,6 +448,15 @@ void Input::update(u64 frame, bool use_devices) {
             s.stick_x = -1;
         if (p.buttons & SCRIPT_STICK_RIGHT)
             s.stick_x = 1;
+    }
+    for (const auto& p : pointer_script_) {
+        if (frame < p.start || frame >= p.start + p.frames)
+            continue;
+        pointer_x_ = p.x, pointer_y_ = p.y;
+        s.pointer_x = p.x * POINTER_RANGE_X;
+        s.pointer_y = p.y * POINTER_RANGE_Y;
+        s.pointer_valid = true;
+        pointer_input_at_ = SDL_GetTicks();
     }
     state_ = s;
 

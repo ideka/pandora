@@ -479,6 +479,16 @@ void AuroraBridge::bp_reg(u32 value) {
 
 void AuroraBridge::efb_copy(u32 control) {
     if ((control >> 14) & 1) {
+        if (const u32 gamma = (control >> 7) & 3; gamma != display_gamma_ || bp_[0x53] != display_filter_[0] ||
+                                                 bp_[0x54] != display_filter_[1]) {
+            display_gamma_ = gamma;
+            display_filter_[0] = bp_[0x53];
+            display_filter_[1] = bp_[0x54];
+            const u32 c[7] = {bp_[0x53] & 63,         (bp_[0x53] >> 6) & 63,  (bp_[0x53] >> 12) & 63, (bp_[0x53] >> 18) & 63,
+                              bp_[0x54] & 63,         (bp_[0x54] >> 6) & 63,  (bp_[0x54] >> 12) & 63};
+            LOG_INFO("bridge", "display copy gamma %u, copy filter %u %u %u %u %u %u %u (sum %u/64)", gamma, c[0], c[1],
+                     c[2], c[3], c[4], c[5], c[6], c[0] + c[1] + c[2] + c[3] + c[4] + c[5] + c[6]);
+        }
         if (frame_shot_requested_) {
             frame_shot_requested_ = false;
             capture_efb(copy_src_ & 0x3FF, (copy_src_ >> 10) & 0x3FF, (copy_size_ & 0x3FF) + 1,
@@ -637,8 +647,10 @@ void AuroraBridge::capture_efb(u32 x, u32 y, u32 w, u32 h, std::string path) {
     put8(0x61);
     put32(0x52000000 | (12u << 3));  // texture copy, RGBA8 (target format 12), no clear
     aurora::gx::fifo::publish();
-    if (capture_copy(key.get(), w, h, 6, std::move(path)))
+    if (capture_copy(key.get(), w, h, 6, std::move(path))) {
         shots_.back().key = std::move(key);
+        shots_.back().gamma = output_gamma_;
+    }
 }
 
 void AuroraBridge::poll_screenshot() {
@@ -681,6 +693,13 @@ void AuroraBridge::poll_screenshot() {
                     o[3] = 255;  // EFB alpha is often 0 or unused; keep the image visible
                 }
             }
+        if (s.gamma != 1.0f) {
+            u8 lut[256];
+            for (int v = 0; v < 256; v++)
+                lut[v] = (u8)std::lround(std::pow(v / 255.0f, s.gamma) * 255.0f);
+            for (size_t i = 0; i < rgba.size(); i += 4)
+                rgba[i] = lut[rgba[i]], rgba[i + 1] = lut[rgba[i + 1]], rgba[i + 2] = lut[rgba[i + 2]];
+        }
         if (write_png_rgba(s.path, rgba.data(), s.w, s.h))
             LOG_INFO("shot", "wrote %s (%ux%u)", s.path.c_str(), s.w, s.h);
         else
