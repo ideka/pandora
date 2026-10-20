@@ -79,7 +79,7 @@ Open work only. How things currently work, and why, is in [NOTES.md](NOTES.md).
 
 ## Performance
 
-- 60 FPS mode is at ~1.0x real time in the observatory on the dev PC (Ryzen-class desktop): no
+- 60 FPS mode is at ~1.0x real time in the observatory on the dev PC (Core Ultra 9 275HX laptop): no
   headroom for weaker machines yet. The guest's own code dominates (render code around
   `func_804991E0`, `func_804451E0`, `func_805511E0`); next steps are in the code generator (keep
   guest registers in locals across a block instead of ctx loads/stores).
