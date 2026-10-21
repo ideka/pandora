@@ -154,6 +154,8 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
         settings.fps60 = *fps60 != '0';
     if (const char* classic = std::getenv("PANDORA_CLASSIC"))  // test runs: force the controller type
         settings.classic_controller = *classic != '0';
+    if (const char* free_stick = std::getenv("PANDORA_FREE_STICK"))  // test runs: force the free stick on/off
+        settings.free_stick = *free_stick != '0';
     if (const char* aniso = std::getenv("PANDORA_ANISO"))  // test runs: force the anisotropic filtering level
         settings.anisotropy = std::atoi(aniso);
 

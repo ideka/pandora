@@ -150,7 +150,8 @@ struct DeviceState {
 constexpr float STICK_DEAD_ZONE = 0.15f, STICK_FULL = 0.85f;
 
 // The game's stick processing (fn_804F1318) snaps the stick to a pure cardinal direction whenever
-// one axis exceeds 0.995. Free direction keeps the stick inside a circle just short of that.
+// one axis exceeds 0.995. Free direction keeps the stick inside a circle just short of that, except
+// while Z is held: Z + a fully pushed stick is the dodge, which a stick short of 1 never triggers.
 constexpr float FREE_STICK_RADIUS = 0.994f;
 
 std::pair<float, float> shape_stick(float x, float y, float radius) {
@@ -423,6 +424,7 @@ void Input::update(u64 frame, bool use_devices) {
 
     PadState s;
     bool shake = false;
+    auto stick_radius = [&] { return free_stick_ && !(s.buttons & WPAD_Z) ? FREE_STICK_RADIUS : 1.0f; };
     float px = 0, py = 0;
     if (use_devices) {
         const DeviceState d{SDL_GetKeyboardState(nullptr), SDL_GetMouseState(nullptr, nullptr), first_gamepad()};
@@ -459,7 +461,7 @@ void Input::update(u64 frame, bool use_devices) {
         }
         std::tie(s.stick_x, s.stick_y) = shape_stick(val(Control::StickRight) - val(Control::StickLeft),
                                                      val(Control::StickUp) - val(Control::StickDown),
-                                                     free_stick_ ? FREE_STICK_RADIUS : 1.0f);
+                                                     stick_radius());
         std::tie(px, py) = shape_stick(val(Control::PointerRight) - val(Control::PointerLeft),
                                        val(Control::PointerDown) - val(Control::PointerUp), 1.0f);
         if (px != 0 || py != 0)
@@ -490,9 +492,9 @@ void Input::update(u64 frame, bool use_devices) {
         if (wm.nunchuk && (wm.stick_x != 0 || wm.stick_y != 0)) {
             s.stick_x = wm.stick_x;
             s.stick_y = wm.stick_y;
-            if (const float mag = std::hypot(s.stick_x, s.stick_y); free_stick_ && mag > FREE_STICK_RADIUS) {
-                s.stick_x *= FREE_STICK_RADIUS / mag;
-                s.stick_y *= FREE_STICK_RADIUS / mag;
+            if (const float mag = std::hypot(s.stick_x, s.stick_y), r = stick_radius(); mag > r) {
+                s.stick_x *= r / mag;
+                s.stick_y *= r / mag;
             }
         }
         s.motion = true;
@@ -518,6 +520,7 @@ void Input::update(u64 frame, bool use_devices) {
         s.pointer_y = wm.pointer_y;
     }
 
+    bool scripted_stick = false;
     for (const auto& p : script_) {
         if (frame < p.start || frame >= p.start + p.frames)
             continue;
@@ -533,7 +536,11 @@ void Input::update(u64 frame, bool use_devices) {
             s.stick_x = -1;
         if (p.buttons & SCRIPT_STICK_RIGHT)
             s.stick_x = 1;
+        if (p.buttons & (SCRIPT_STICK_UP | SCRIPT_STICK_DOWN | SCRIPT_STICK_LEFT | SCRIPT_STICK_RIGHT))
+            scripted_stick = true;
     }
+    if (scripted_stick && !classic_)  // shaped as the devices' stick is
+        std::tie(s.stick_x, s.stick_y) = shape_stick(s.stick_x, s.stick_y, stick_radius());
     // Shake: the remote's acceleration swings +-3 g on every axis at 6 Hz, as Dolphin's emulated
     // shake does (in place of a real remote's motion while held).
     if (shake) {

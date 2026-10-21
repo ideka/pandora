@@ -166,6 +166,10 @@ aids. Open work is in [TODO.md](TODO.md).
   left and right stick at 0x6C and 0x74 (-1..1, y up), analog L/R at 0x7C/0x80 (0..1). The Classic's
   controls are their own bindings (`Control::ClA`...); only the active controller's bindings are
   read. Scripted presses map onto it in Classic mode (`PANDORA_CLASSIC=1` forces the mode).
+- Free stick (General): the game's stick processing (`fn_804F1318`) snaps the Nunchuk stick to a
+  pure cardinal direction once an axis passes 0.995, so the stick is kept within radius 0.994 -
+  except while Z is held: the dodge (Z + stick) needs a fully pushed stick (at 0.994 Aeron only
+  strafes). Scripted stick presses are shaped the same way (`PANDORA_FREE_STICK` forces the setting).
 - Shake (a binding, and `--press Shake@<frame>`): while held, the remote's acceleration swings
   +-3 g on all three axes at 6 Hz (like Dolphin's emulated shake), replacing a real remote's.
   Which game actions read it is not traced yet (KPADRead returns one sample per call, and the
