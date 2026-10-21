@@ -55,9 +55,10 @@ No game code or data is included. You need your own copy of the game.
    **Esc** (keyboard) or **Guide** (gamepad) opens the settings menu. The game keeps running behind
    it (without input); **F5** pauses and resumes the game. Under Controls, the Gamepad and
    Keyboard & Mouse sections each give every Wii Remote/Nunchuk control and every menu action
-   (open/close, accept, cancel, directions, previous/next tab) two mappings; select one and press
-   the new input, or clear it with x (Open/Close Menu and Accept reset their first mapping to the
-   default instead). Holding a direction in the menu repeats it. Volume and
+   (open/close, accept, cancel, previous/next tab) two mappings; select one and press the new
+   input, or clear it with x (Open/Close Menu and Accept reset their first mapping to the default
+   instead). The menu's directions are fixed (D-pad and left stick, arrows and WASD) and repeat
+   while held; the right stick scrolls the bindings. Volume and
    fullscreen are under Sound and General. Settings are saved to `build/aurora/settings.ini`.
 
    Default controls (Wii Remote + Nunchuk): gamepad east/south/north/west = A/B/1/2 (by

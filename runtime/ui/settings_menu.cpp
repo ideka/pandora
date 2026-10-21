@@ -25,10 +25,6 @@ constexpr float AXIS_PRESS = 0.5f, AXIS_RELEASE = 0.35f;  // stick/trigger defle
 
 constexpr int WII_TABLE = 0, MENU_TABLE = 1;
 
-bool is_direction(MenuAction a) {
-    return a == MenuAction::Up || a == MenuAction::Down || a == MenuAction::Left || a == MenuAction::Right;
-}
-
 }  // namespace
 
 SettingsMenu::SettingsMenu(Settings& settings, std::function<void()> on_change)
@@ -333,12 +329,17 @@ void SettingsMenu::update() {
     const auto now = Clock::now();
     if (capturing_ >= 0 && now > capture_deadline_)
         cancel_capture();
-    if (open_)
+    const float seconds = last_update_ == Clock::time_point{} ? 0.0f
+                                                              : std::chrono::duration<float>(now - last_update_).count();
+    last_update_ = now;
+    if (open_) {
         mark_focused_row();
+        scroll(std::min(seconds, 0.1f));
+    }
     if (!open_ || capturing_ >= 0)
         return;
     for (size_t a = 0; a < kMenuActionCount; a++)
-        if (held_[a] > 0 && is_direction((MenuAction)a) && now >= next_repeat_[a]) {
+        if (held_[a] > 0 && is_menu_direction((MenuAction)a) && now >= next_repeat_[a]) {
             action((MenuAction)a);
             next_repeat_[a] = std::max(next_repeat_[a] + REPEAT_INTERVAL, now);
         }
@@ -357,6 +358,19 @@ void SettingsMenu::mark_focused_row() {
             e->SetClass("focused", false);
     if (row)
         row->SetClass("focused", true);
+}
+
+// The right stick scrolls the bindings table (faster the further it is pushed); the focus stays.
+void SettingsMenu::scroll(float seconds) {
+    constexpr float DEAD_ZONE = 0.2f, SPEED = 1400.0f;  // dp per second at full deflection
+    const float a = std::abs(scroll_axis_);
+    if (a < DEAD_ZONE || tab_ != "controls")
+        return;
+    if (Rml::Element* bindings = doc_->GetElementById("bindings")) {
+        const float t = (a - DEAD_ZONE) / (1.0f - DEAD_ZONE);
+        const float dp = aurora::rmlui::get_context()->GetDensityIndependentPixelRatio();
+        bindings->SetScrollTop(bindings->GetScrollTop() + std::copysign(t * t * SPEED * dp * seconds, scroll_axis_));
+    }
 }
 
 // --- Bindings tables --------------------------------------------------------------------------
@@ -388,6 +402,8 @@ void SettingsMenu::refresh_rows() {
         for (size_t i = 0; i < count; i++) {
             // The bindings table shows the controller in use (Nunchuk or Classic).
             if (table == WII_TABLE && is_classic_control((Control)i) != settings_.classic_controller)
+                continue;
+            if (table == MENU_TABLE && is_menu_direction((MenuAction)i))
                 continue;
             const auto& m = mappings(table, (int)i)[dev];
             rows.push_back({table == MENU_TABLE ? menu_action_info((MenuAction)i).label : control_info((Control)i).label,
@@ -576,8 +592,10 @@ void SettingsMenu::release_source(in::InputSource::Kind kind) {
         }
         return false;
     });
-    if (kind == in::InputSource::Kind::Controller)
+    if (kind == in::InputSource::Kind::Controller) {
         axis_on_ = {};
+        scroll_axis_ = 0;
+    }
     update_held(false);
 }
 
@@ -612,6 +630,8 @@ in::EventResult SettingsMenu::handle(const in::InputEvent& event) {
             aurora::rmlui::process_input(event);
         return open_ ? in::EventResult::Consume : in::EventResult::Pass;
     }
+    if (const auto* a = event.payload.get_if<in::InputEvent::AxisChanged>(); a && a->axis == SDL_GAMEPAD_AXIS_RIGHTY)
+        scroll_axis_ = a->value;
     const std::vector<Edge> es = edges(event);
     if (open_ && capturing_ >= 0) {
         apply_actions(es, false);  // keep held state current without running actions
@@ -644,6 +664,15 @@ void SettingsMenu::navigate(int key) {
                 row[i]->Focus(true);
             return;
         }
+    // Up from Back to game goes to the page's last control (spatial navigation would pick whatever
+    // is nearest above it, often the tabs).
+    if (key == Rml::Input::KI_UP && before && before->GetId() == "back") {
+        if (Rml::Element* last = last_page_control()) {
+            last->Focus(true);
+            last->ScrollIntoView(Rml::ScrollAlignment::Nearest);
+        }
+        return;
+    }
     if (key == Rml::Input::KI_LEFT || key == Rml::Input::KI_RIGHT) {
         auto* input = dynamic_cast<Rml::ElementFormControlInput*>(ctx->GetFocusElement());
         if (input && input->GetAttribute<Rml::String>("type", "") == "range") {
@@ -694,10 +723,20 @@ bool SettingsMenu::navigate_bindings(int key) {
             column--;
         return cells[column];
     };
-    auto go = [](Rml::Element* target) {
+    Rml::Element* table = doc_->GetElementById("bindings");
+    auto go = [&](Rml::Element* target) {
         if (!target)
             return false;
         target->Focus(true);
+        // The first row and the device switch above show the table's top; a section's first
+        // row brings its heading into view too.
+        Rml::Element* row = target->IsClassSet("cell") ? target->GetParentNode() : nullptr;
+        if (target->IsClassSet("device") || row == rows.front()) {
+            if (table)
+                table->SetScrollTop(0);
+        } else if (Rml::Element* prev = row ? row->GetPreviousSibling() : nullptr; prev && prev->IsClassSet("section")) {
+            prev->ScrollIntoView(Rml::ScrollAlignment::Nearest);
+        }
         target->ScrollIntoView(Rml::ScrollAlignment::Nearest);
         return true;
     };
@@ -736,6 +775,30 @@ bool SettingsMenu::navigate_bindings(int key) {
     if (key == Rml::Input::KI_UP && focus->GetId() == "reset")
         return go(cell(rows.back(), 0));
     return false;
+}
+
+// The current page's last focusable control (the reset button on Controls).
+Rml::Element* SettingsMenu::last_page_control() {
+    if (tab_ == "controls")
+        return doc_->GetElementById("reset");
+    Rml::ElementList pages;
+    doc_->GetElementsByClassName(pages, "page");
+    for (Rml::Element* page : pages) {
+        if (!page->IsVisible())
+            continue;
+        Rml::Element* last = nullptr;
+        std::vector<Rml::Element*> stack{page};
+        while (!stack.empty()) {  // depth first, in document order
+            Rml::Element* e = stack.back();
+            stack.pop_back();
+            if (e != page && (e->GetTagName() == "input" || e->GetTagName() == "button") && e->IsVisible())
+                last = e;
+            for (int i = e->GetNumChildren() - 1; i >= 0; i--)
+                stack.push_back(e->GetChild(i));
+        }
+        return last;
+    }
+    return nullptr;
 }
 
 void SettingsMenu::switch_tab(int delta) {

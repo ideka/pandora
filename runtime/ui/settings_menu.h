@@ -76,6 +76,8 @@ private:
     void navigate(int key);  // an Rml::Input::KeyIdentifier
     bool navigate_bindings(int key);
     void mark_focused_row();
+    void scroll(float seconds);
+    Rml::Element* last_page_control();
     void switch_tab(int delta);
 
     Mappings& mappings(int table, int index);
@@ -108,4 +110,6 @@ private:
     Rml::String remote_status_;
     std::array<Clock::time_point, kMenuActionCount> next_repeat_{};
     std::array<std::array<bool, 2>, SDL_GAMEPAD_AXIS_COUNT> axis_on_{};  // [axis][negative, positive] pressed
+    float scroll_axis_ = 0;          // the right stick's vertical deflection: scrolls the bindings
+    Clock::time_point last_update_{};
 };

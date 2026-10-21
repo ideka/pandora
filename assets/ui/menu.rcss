@@ -214,6 +214,8 @@ input.checkbox:focus { border-color: #ffffff; }
     padding-top: 12dp;
 }
 .footer .note { color: #8d897f; font-size: 14dp; }
+.footer .status { color: #d6b37a; }
+.fill { flex: 1; }
 .action { padding: 8dp 18dp; }
 
 #hints {

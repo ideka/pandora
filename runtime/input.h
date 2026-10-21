@@ -88,6 +88,10 @@ constexpr bool is_classic_control(Control c) { return c >= Control::ClA && c < C
 // The settings menu's actions.
 enum class MenuAction : u8 { Toggle, Accept, Cancel, Up, Down, Left, Right, PrevTab, NextTab, Count };
 constexpr size_t kMenuActionCount = (size_t)MenuAction::Count;
+// The menu's directions are fixed (D-pad and left stick, arrows and WASD): not bindable or saved.
+constexpr bool is_menu_direction(MenuAction a) {
+    return a == MenuAction::Up || a == MenuAction::Down || a == MenuAction::Left || a == MenuAction::Right;
+}
 
 struct BindingInfo {
     const char* id;     // settings file key

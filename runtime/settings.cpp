@@ -37,7 +37,7 @@ PhysicalInput* find_mapping(Bindings& b, const std::string& key) {
                 return &b.controls[c][dev][s];
     } else if (prefix == "menu") {
         for (size_t a = 0; a < kMenuActionCount; a++)
-            if (id == menu_action_info((MenuAction)a).id)
+            if (id == menu_action_info((MenuAction)a).id && !is_menu_direction((MenuAction)a))
                 return &b.menu[a][dev][s];
     }
     return nullptr;
@@ -125,6 +125,7 @@ bool Settings::save(const std::string& path) const {
     for (size_t c = 0; c < kControlCount; c++)
         write("bind", control_info((Control)c).id, bindings.controls[c]);
     for (size_t a = 0; a < kMenuActionCount; a++)
-        write("menu", menu_action_info((MenuAction)a).id, bindings.menu[a]);
+        if (!is_menu_direction((MenuAction)a))
+            write("menu", menu_action_info((MenuAction)a).id, bindings.menu[a]);
     return true;
 }

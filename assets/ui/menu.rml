@@ -111,10 +111,6 @@
             <span class="note">Move the mouse over the window to aim the Wii Remote pointer</span>
         </div>
         <div class="setting">
-            <span class="name">Wii Remote</span>
-            <span class="status">{{ remote_status }}</span>
-        </div>
-        <div class="setting">
             <span class="name">Scan for Wii Remotes</span>
             <input type="checkbox" data-checked="wiimote_scan"/>
             <span class="note">Connects a Wii Remote when you press 1 and 2; may disturb other Bluetooth devices</span>
@@ -130,13 +126,17 @@
             <span class="value">{{ ir_sensitivity }}</span>
             <span class="note">The Wii's "Sensitivity" setting: the Wii Remote camera's gain (3 is the Wii's default)</span>
         </div>
+        <div class="fill"></div>
+        <div class="footer">
+            <span class="note">Wii Remote: <span class="status">{{ remote_status }}</span></span>
+        </div>
     </div>
 
     <div id="hints">
         <span>F5: pause game</span>
         <span>F11: fullscreen</span>
         <span>Menu buttons: Controls &#8250; Menu</span>
-        <button class="action" data-event-click="close()">Back to game</button>
+        <button id="back" class="action" data-event-click="close()">Back to game</button>
     </div>
 </div>
 </body>
