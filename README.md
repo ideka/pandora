@@ -60,10 +60,10 @@ No game code or data is included. You need your own copy of the game.
    default instead). Holding a direction in the menu repeats it. Volume and
    fullscreen are under Sound and General. Settings are saved to `build/aurora/settings.ini`.
 
-   Default controls (Wii Remote + Nunchuk): gamepad south/east/west/north = A/B/1/2,
-   start/back = +/-, LB = C, LT = Z, left stick = Nunchuk, right stick = pointer. Keyboard and
+   Default controls (Wii Remote + Nunchuk): gamepad east/south/north/west = A/B/1/2 (by
+   position, as on Nintendo's pads), RT = B too, RB = shake, start/back = +/-, LB = C, LT = Z, left stick = Nunchuk, right stick = pointer. Keyboard and
    mouse: the mouse aims the pointer, left click = B, Enter/Space = A, Backspace = B, arrows = D-pad,
-   WASD = stick, IJKL = pointer, Z/C, 1/2, =/-. Rumble plays on the gamepad (intensity under
+   WASD = stick, IJKL = pointer, R = shake, Z/C, 1/2, =/-. Rumble plays on the gamepad (intensity under
    General). The Wii Remote strap screen is skipped and the HOME Menu is disabled. In the menu: D-pad/left stick or arrows/WASD move, East or Enter/Space accept, South or
    Backspace cancel, LB/RB or PageUp/PageDown (Q/E) switch tabs.
 

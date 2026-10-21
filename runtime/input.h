@@ -73,6 +73,7 @@ enum class Control : u8 {
     Z, C,
     StickUp, StickDown, StickLeft, StickRight,
     PointerUp, PointerDown, PointerLeft, PointerRight,
+    Shake,  // shakes the Wii Remote (its accelerometer) while held
     // Classic Controller
     ClA, ClB, ClX, ClY, ClL, ClR, ClZL, ClZR, ClPlus, ClMinus,
     ClUp, ClDown, ClLeft, ClRight,

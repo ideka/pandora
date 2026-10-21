@@ -32,6 +32,7 @@ constexpr BindingInfo CONTROLS[kControlCount] = {
     {"pointer_down", "Pointer Down", false},
     {"pointer_left", "Pointer Left", false},
     {"pointer_right", "Pointer Right", false},
+    {"shake", "Shake", false},
     {"cl_a", "A", false},
     {"cl_b", "B", false},
     {"cl_x", "X", false},
@@ -95,7 +96,10 @@ constexpr ButtonName SCRIPT_BUTTONS[] = {
 // Scripted Nunchuk stick directions (not WPAD buttons): pseudo-bits above the button mask.
 constexpr u32 SCRIPT_STICK_UP = 1u << 28, SCRIPT_STICK_DOWN = 1u << 29, SCRIPT_STICK_LEFT = 1u << 30,
               SCRIPT_STICK_RIGHT = 1u << 31;
+// A scripted shake of the Wii Remote, likewise.
+constexpr u32 SCRIPT_SHAKE = 1u << 27;
 constexpr ButtonName SCRIPT_STICK[] = {
+    {"Shake", SCRIPT_SHAKE},
     {"StickUp", SCRIPT_STICK_UP},
     {"StickDown", SCRIPT_STICK_DOWN},
     {"StickLeft", SCRIPT_STICK_LEFT},
@@ -296,12 +300,14 @@ Bindings Bindings::defaults() {
         m[KBM] = {kbm1, kbm2};
     };
     auto control = [&](Control c) -> Mappings& { return b.controls[(size_t)c]; };
-    set(control(Control::A), P::button(SDL_GAMEPAD_BUTTON_SOUTH), none, P::key(SDL_SCANCODE_RETURN),
+    // Wii Remote: buttons by position as on Nintendo's pads (A east, B south, 1 north, 2 west: an
+    // Xbox pad's labels swapped), B also on the right trigger.
+    set(control(Control::A), P::button(SDL_GAMEPAD_BUTTON_EAST), none, P::key(SDL_SCANCODE_RETURN),
         P::key(SDL_SCANCODE_SPACE));
-    set(control(Control::B), P::button(SDL_GAMEPAD_BUTTON_EAST), none, P::key(SDL_SCANCODE_BACKSPACE),
-        P::mouse(SDL_BUTTON_LEFT));
-    set(control(Control::One), P::button(SDL_GAMEPAD_BUTTON_WEST), none, P::key(SDL_SCANCODE_1), none);
-    set(control(Control::Two), P::button(SDL_GAMEPAD_BUTTON_NORTH), none, P::key(SDL_SCANCODE_2), none);
+    set(control(Control::B), P::button(SDL_GAMEPAD_BUTTON_SOUTH), P::axis(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, 1),
+        P::key(SDL_SCANCODE_BACKSPACE), P::mouse(SDL_BUTTON_LEFT));
+    set(control(Control::One), P::button(SDL_GAMEPAD_BUTTON_NORTH), none, P::key(SDL_SCANCODE_1), none);
+    set(control(Control::Two), P::button(SDL_GAMEPAD_BUTTON_WEST), none, P::key(SDL_SCANCODE_2), none);
     set(control(Control::Plus), P::button(SDL_GAMEPAD_BUTTON_START), none, P::key(SDL_SCANCODE_EQUALS), none);
     set(control(Control::Minus), P::button(SDL_GAMEPAD_BUTTON_BACK), none, P::key(SDL_SCANCODE_MINUS), none);
     set(control(Control::DpadUp), P::button(SDL_GAMEPAD_BUTTON_DPAD_UP), none, P::key(SDL_SCANCODE_UP), none);
@@ -319,6 +325,7 @@ Bindings Bindings::defaults() {
     set(control(Control::PointerDown), P::axis(SDL_GAMEPAD_AXIS_RIGHTY, 1), none, P::key(SDL_SCANCODE_K), none);
     set(control(Control::PointerLeft), P::axis(SDL_GAMEPAD_AXIS_RIGHTX, -1), none, P::key(SDL_SCANCODE_J), none);
     set(control(Control::PointerRight), P::axis(SDL_GAMEPAD_AXIS_RIGHTX, 1), none, P::key(SDL_SCANCODE_L), none);
+    set(control(Control::Shake), P::button(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER), none, P::key(SDL_SCANCODE_R), none);
     // Classic Controller: buttons by position, as on the real one (A east, B south, X north, Y
     // west: an Xbox pad's labels swapped), the analog L/R on the triggers, the digital ZL/ZR on the
     // shoulders.
@@ -415,6 +422,7 @@ void Input::update(u64 frame, bool use_devices) {
     const Bindings& bindings = bindings_ ? *bindings_ : default_bindings;
 
     PadState s;
+    bool shake = false;
     float px = 0, py = 0;
     if (use_devices) {
         const DeviceState d{SDL_GetKeyboardState(nullptr), SDL_GetMouseState(nullptr, nullptr), first_gamepad()};
@@ -433,6 +441,7 @@ void Input::update(u64 frame, bool use_devices) {
                     raw[c] = std::max(raw[c], input_value(in, d, true));
                 }
         }
+        shake = v[(size_t)Control::Shake] >= 0.5f;
         for (size_t c = 0; c < kControlCount; c++)
             if (BUTTON_BITS[c] && v[c] >= 0.5f)
                 s.buttons |= BUTTON_BITS[c];
@@ -512,7 +521,10 @@ void Input::update(u64 frame, bool use_devices) {
     for (const auto& p : script_) {
         if (frame < p.start || frame >= p.start + p.frames)
             continue;
-        s.buttons |= p.buttons & ~(SCRIPT_STICK_UP | SCRIPT_STICK_DOWN | SCRIPT_STICK_LEFT | SCRIPT_STICK_RIGHT);
+        s.buttons |=
+            p.buttons & ~(SCRIPT_STICK_UP | SCRIPT_STICK_DOWN | SCRIPT_STICK_LEFT | SCRIPT_STICK_RIGHT | SCRIPT_SHAKE);
+        if (p.buttons & SCRIPT_SHAKE)
+            shake = true;
         if (p.buttons & SCRIPT_STICK_UP)
             s.stick_y = 1;
         if (p.buttons & SCRIPT_STICK_DOWN)
@@ -521,6 +533,16 @@ void Input::update(u64 frame, bool use_devices) {
             s.stick_x = -1;
         if (p.buttons & SCRIPT_STICK_RIGHT)
             s.stick_x = 1;
+    }
+    // Shake: the remote's acceleration swings +-3 g on every axis at 6 Hz, as Dolphin's emulated
+    // shake does (in place of a real remote's motion while held).
+    if (shake) {
+        const float phase = (float)(SDL_GetTicks() % 1000) / 1000.0f * 6.0f * 2.0f * 3.14159265f;
+        const float a = 3.0f * std::sin(phase);
+        s.acc[0] = a;
+        s.acc[1] = -1.0f + a;
+        s.acc[2] = a;
+        s.motion = true;
     }
     s.classic = classic_;
     if (classic_) {

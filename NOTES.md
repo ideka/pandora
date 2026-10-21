@@ -166,6 +166,10 @@ aids. Open work is in [TODO.md](TODO.md).
   left and right stick at 0x6C and 0x74 (-1..1, y up), analog L/R at 0x7C/0x80 (0..1). The Classic's
   controls are their own bindings (`Control::ClA`...); only the active controller's bindings are
   read. Scripted presses map onto it in Classic mode (`PANDORA_CLASSIC=1` forces the mode).
+- Shake (a binding, and `--press Shake@<frame>`): while held, the remote's acceleration swings
+  +-3 g on all three axes at 6 Hz (like Dolphin's emulated shake), replacing a real remote's.
+  Which game actions read it is not traced yet (KPADRead returns one sample per call, and the
+  hook leaves acc_speed at 0).
 - The cursor (`fn_8007B77C`, the object's +12 is the device type) follows the pointer with a Wii
   Remote alone (`fn_8007BC48`: DPD-valid and pos of the KPAD samples) and the right stick with a
   Classic (`fn_8007BF24`, which moves the cursor from where it is: +164). The Classic call goes

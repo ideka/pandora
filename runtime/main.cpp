@@ -36,7 +36,7 @@ static void usage() {
                  "               [--profile] [-v|-vv|-vvv]\n"
                  "               [--screenshot <frame>:<file.png>]... [--exit-after <frames>]\n"
                  "               [--press <button>@<frame>[+<frames>]]... (A B 1 2 PLUS MINUS UP DOWN LEFT RIGHT Z C,\n"
-                 "                or StickUp StickDown StickLeft StickRight for the Nunchuk stick,\n"
+                 "                or StickUp StickDown StickLeft StickRight for the Nunchuk stick, Shake,\n"
                  "                or Pointer:<x>,<y> for the pointer in screen units -1..1, y down)\n"
                  "  debugging: [--watch <symbol>]... [--watch-write <hexaddr>]... [--dump <hexaddr>[:len]]...\n"
                  "             [--trace] [--shot-copy <frame>:<copy>:<file.png>]... [--shot-draw <frame>:<draw>:<file.png>]...\n"
