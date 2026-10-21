@@ -728,14 +728,20 @@ bool SettingsMenu::navigate_bindings(int key) {
         if (!target)
             return false;
         target->Focus(true);
-        // The first row and the device switch above show the table's top; a section's first
-        // row brings its heading into view too.
-        Rml::Element* row = target->IsClassSet("cell") ? target->GetParentNode() : nullptr;
-        if (target->IsClassSet("device") || row == rows.front()) {
-            if (table)
-                table->SetScrollTop(0);
-        } else if (Rml::Element* prev = row ? row->GetPreviousSibling() : nullptr; prev && prev->IsClassSet("section")) {
-            prev->ScrollIntoView(Rml::ScrollAlignment::Nearest);
+        // A row keeps some distance from the table's visible edges (30% of its height), so the
+        // view scrolls ahead of the cursor: near the top or bottom it reaches the table's ends.
+        if (table && target->IsClassSet("cell")) {
+            constexpr float MARGIN = 0.3f;
+            Rml::Element* row = target->GetParentNode();
+            const float view = table->GetClientHeight(), margin = view * MARGIN;
+            const float y = row->GetAbsoluteOffset(Rml::BoxArea::Border).y -
+                            table->GetAbsoluteOffset(Rml::BoxArea::Padding).y;  // within the view
+            const float h = row->GetOffsetHeight();
+            if (y < margin)
+                table->SetScrollTop(table->GetScrollTop() - (margin - y));
+            else if (y + h > view - margin)
+                table->SetScrollTop(table->GetScrollTop() + (y + h - (view - margin)));
+            return true;
         }
         target->ScrollIntoView(Rml::ScrollAlignment::Nearest);
         return true;
