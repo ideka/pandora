@@ -223,6 +223,14 @@ void Runtime::install_hle() {
         rt.ret(c->gpr[3]);
     });
 
+    // The game's cursor (fn_8007B77C) follows the pointer with a Wii Remote alone (fn_8007BC48)
+    // and the right stick with a Classic Controller (fn_8007BF24); the latter's call comes here
+    // (patches.txt) to follow the pointer while it is in use. Both move the same position (the
+    // stick from wherever the cursor is), so it can go back and forth. A tail call: LR is the caller's.
+    hook("hostCursorUpdate", [](Runtime& rt) {
+        rt.cpu.pc = rt.input().state().pointer_active ? 0x8007BC48 : 0x8007BF24;
+    });
+
     // s32 WPADGetStatus(void): WPAD_STATE_SETUP (3). The game's remote sound system (fn_801250B4)
     // only initialises in that state; WPADInit is stubbed, so the library's own state byte stays 0.
     hook("WPADGetStatus", [](Runtime& rt) { rt.ret(3); });

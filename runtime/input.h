@@ -61,6 +61,9 @@ struct PadState {
     bool classic = false;
     u32 cl_buttons = 0;
     float cl_lx = 0, cl_ly = 0, cl_rx = 0, cl_ry = 0, cl_l = 0, cl_r = 0;
+    // The pointer is in use (the mouse moved lately, or a real remote points at the screen): with
+    // a Classic Controller the game's cursor follows it instead of the right stick.
+    bool pointer_active = false;
 };
 
 // The emulated controls that can be bound.

@@ -64,13 +64,14 @@ No game code or data is included. You need your own copy of the game.
    start/back = +/-, LB = C, LT = Z, left stick = Nunchuk, right stick = pointer. Keyboard and
    mouse: the mouse aims the pointer, left click = B, Enter/Space = A, Backspace = B, arrows = D-pad,
    WASD = stick, IJKL = pointer, Z/C, 1/2, =/-. Rumble plays on the gamepad (intensity under
-   General). The Wii Remote strap screen is skipped and the HOME Menu is disabled. In the menu: D-pad/left stick or arrows/WASD move, South or Enter/Space accept, East or
+   General). The Wii Remote strap screen is skipped and the HOME Menu is disabled. In the menu: D-pad/left stick or arrows/WASD move, East or Enter/Space accept, South or
    Backspace cancel, LB/RB or PageUp/PageDown (Q/E) switch tabs.
 
    "Classic Controller" (General) switches the emulated controller from Wii Remote + Nunchuk to a
    Classic Controller, which the game supports; its bindings then show under Controls (defaults:
-   buttons by label, A on the pad's south button, L/R on the analog triggers, ZL/ZR on the
-   bumpers, both sticks; keyboard WASD/IJKL for the sticks, Q/E for L/R, Z/C for ZL/ZR).
+   buttons by position as on the real one, A/B/X/Y on the pad's east/south/north/west, ZL/ZR on
+   the triggers, L/R on the bumpers, both sticks; keyboard WASD/IJKL for the sticks, Q/E for L/R,
+   Z/C for ZL/ZR). The cursor follows the right stick, or the mouse while it moves.
 
    A real **Wii Remote** (with Nunchuk) works too: with "Scan for Wii Remotes" on (General, the
    default) just press 1 and 2 on the remote while the game runs, as with Dolphin's continuous

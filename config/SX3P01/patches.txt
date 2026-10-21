@@ -27,3 +27,7 @@
 8000FABC 88030448 485DA2FD  # lbz r0, 1096(r3) -> bl hostTickGate (fn_8000F9A4: the zoom's slow-time event (task groups paused))
 800385A8 88030448 485B1811  # lbz r0, 1096(r3) -> bl hostTickGate (fn_800384B0)
 8007E5C8 88030448 4856B7F1  # lbz r0, 1096(r3) -> bl hostTickGate (fn_8007E364: the zoom's screen effect fade)
+
+# Classic Controller: the cursor update (fn_8007B77C) calls the right-stick cursor (fn_8007BF24)
+# through hostCursorUpdate, which follows the pointer instead while the mouse is in use.
+8007B87C 480006A9 4856942D  # bl fn_8007BF24 -> bl hostCursorUpdate

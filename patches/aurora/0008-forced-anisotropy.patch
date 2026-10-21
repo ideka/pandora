@@ -5,8 +5,8 @@ diff --git a/include/aurora/aurora.h b/include/aurora/aurora.h
  /** Output gamma applied when presenting (before UI overlays): color = color^exponent. Default 1.0f
   * (e.g. the Wii's video encoder gamma g is exponent 1/g). */
  void aurora_set_present_gamma(float exponent);
-+/** Anisotropic filtering forced on every mipmapped, linearly filtered texture (like Dolphin's
-+ * enhancement); 1 = only what the game requests (GX max_aniso). Takes effect on the next draws. */
++/** Anisotropic filtering for every mipmapped, linearly filtered texture, in place of what the
++ * game requests (GX max_aniso); 0 = the game's request. Takes effect on the next draws. */
 +void aurora_set_forced_anisotropy(uint16_t level);
  
  SDL_Window* aurora_get_window();
@@ -18,7 +18,7 @@ diff --git a/lib/gfx/texture.cpp b/lib/gfx/texture.cpp
    }
  }
  
-+u16 g_forcedAnisotropy = 1;
++u16 g_forcedAnisotropy = 0;
 +
  u16 wgpu_aniso(GXAnisotropy aniso) {
    switch (aniso) {
@@ -27,7 +27,7 @@ diff --git a/lib/gfx/texture.cpp b/lib/gfx/texture.cpp
      minLod = 0.f;
      maxLod = 0.f;
    }
-+  if (g_forcedAnisotropy > maxAnisotropy && minFilter == wgpu::FilterMode::Linear) {
++  if (g_forcedAnisotropy != 0 && minFilter == wgpu::FilterMode::Linear) {
 +    maxAnisotropy = g_forcedAnisotropy;
 +  }
    if ((ref && ref->hasArbitraryMips) || !mipsEnabled) {
@@ -38,4 +38,4 @@ diff --git a/lib/gfx/texture.cpp b/lib/gfx/texture.cpp
  }
  } // namespace aurora::gfx
 +
-+void aurora_set_forced_anisotropy(uint16_t level) { aurora::gfx::g_forcedAnisotropy = level > 1 ? level : 1; }
++void aurora_set_forced_anisotropy(uint16_t level) { aurora::gfx::g_forcedAnisotropy = level; }

@@ -319,18 +319,18 @@ Bindings Bindings::defaults() {
     set(control(Control::PointerDown), P::axis(SDL_GAMEPAD_AXIS_RIGHTY, 1), none, P::key(SDL_SCANCODE_K), none);
     set(control(Control::PointerLeft), P::axis(SDL_GAMEPAD_AXIS_RIGHTX, -1), none, P::key(SDL_SCANCODE_J), none);
     set(control(Control::PointerRight), P::axis(SDL_GAMEPAD_AXIS_RIGHTX, 1), none, P::key(SDL_SCANCODE_L), none);
-    // Classic Controller: buttons by label (A on the pad's south button), L/R on the analog
-    // triggers, ZL/ZR on the shoulders.
-    set(control(Control::ClA), P::button(SDL_GAMEPAD_BUTTON_SOUTH), none, P::key(SDL_SCANCODE_RETURN),
+    // Classic Controller: buttons by position, as on the real one (A east, B south, X north, Y
+    // west: an Xbox pad's labels swapped), ZL/ZR on the triggers, L/R on the shoulders.
+    set(control(Control::ClA), P::button(SDL_GAMEPAD_BUTTON_EAST), none, P::key(SDL_SCANCODE_RETURN),
         P::key(SDL_SCANCODE_SPACE));
-    set(control(Control::ClB), P::button(SDL_GAMEPAD_BUTTON_EAST), none, P::key(SDL_SCANCODE_BACKSPACE),
+    set(control(Control::ClB), P::button(SDL_GAMEPAD_BUTTON_SOUTH), none, P::key(SDL_SCANCODE_BACKSPACE),
         P::mouse(SDL_BUTTON_LEFT));
-    set(control(Control::ClX), P::button(SDL_GAMEPAD_BUTTON_WEST), none, P::key(SDL_SCANCODE_1), none);
-    set(control(Control::ClY), P::button(SDL_GAMEPAD_BUTTON_NORTH), none, P::key(SDL_SCANCODE_2), none);
-    set(control(Control::ClL), P::axis(SDL_GAMEPAD_AXIS_LEFT_TRIGGER, 1), none, P::key(SDL_SCANCODE_Q), none);
-    set(control(Control::ClR), P::axis(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, 1), none, P::key(SDL_SCANCODE_E), none);
-    set(control(Control::ClZL), P::button(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER), none, P::key(SDL_SCANCODE_Z), none);
-    set(control(Control::ClZR), P::button(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER), none, P::key(SDL_SCANCODE_C), none);
+    set(control(Control::ClX), P::button(SDL_GAMEPAD_BUTTON_NORTH), none, P::key(SDL_SCANCODE_1), none);
+    set(control(Control::ClY), P::button(SDL_GAMEPAD_BUTTON_WEST), none, P::key(SDL_SCANCODE_2), none);
+    set(control(Control::ClL), P::button(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER), none, P::key(SDL_SCANCODE_Q), none);
+    set(control(Control::ClR), P::button(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER), none, P::key(SDL_SCANCODE_E), none);
+    set(control(Control::ClZL), P::axis(SDL_GAMEPAD_AXIS_LEFT_TRIGGER, 1), none, P::key(SDL_SCANCODE_Z), none);
+    set(control(Control::ClZR), P::axis(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, 1), none, P::key(SDL_SCANCODE_C), none);
     set(control(Control::ClPlus), P::button(SDL_GAMEPAD_BUTTON_START), none, P::key(SDL_SCANCODE_EQUALS), none);
     set(control(Control::ClMinus), P::button(SDL_GAMEPAD_BUTTON_BACK), none, P::key(SDL_SCANCODE_MINUS), none);
     set(control(Control::ClUp), P::button(SDL_GAMEPAD_BUTTON_DPAD_UP), none, P::key(SDL_SCANCODE_UP), none);
@@ -348,9 +348,10 @@ Bindings Bindings::defaults() {
 
     auto action = [&](MenuAction a) -> Mappings& { return b.menu[(size_t)a]; };
     set(action(MenuAction::Toggle), P::button(SDL_GAMEPAD_BUTTON_GUIDE), none, P::key(SDL_SCANCODE_ESCAPE), none);
-    set(action(MenuAction::Accept), P::button(SDL_GAMEPAD_BUTTON_SOUTH), none, P::key(SDL_SCANCODE_RETURN),
+    // Accept on the east button and Cancel on the south one, as in Nintendo's own menus.
+    set(action(MenuAction::Accept), P::button(SDL_GAMEPAD_BUTTON_EAST), none, P::key(SDL_SCANCODE_RETURN),
         P::key(SDL_SCANCODE_SPACE));
-    set(action(MenuAction::Cancel), P::button(SDL_GAMEPAD_BUTTON_EAST), none, P::key(SDL_SCANCODE_BACKSPACE), none);
+    set(action(MenuAction::Cancel), P::button(SDL_GAMEPAD_BUTTON_SOUTH), none, P::key(SDL_SCANCODE_BACKSPACE), none);
     set(action(MenuAction::Up), P::button(SDL_GAMEPAD_BUTTON_DPAD_UP), P::axis(SDL_GAMEPAD_AXIS_LEFTY, -1),
         P::key(SDL_SCANCODE_UP), P::key(SDL_SCANCODE_W));
     set(action(MenuAction::Down), P::button(SDL_GAMEPAD_BUTTON_DPAD_DOWN), P::axis(SDL_GAMEPAD_AXIS_LEFTY, 1),
@@ -550,6 +551,7 @@ void Input::update(u64 frame, bool use_devices) {
         s.pointer_valid = true;
         pointer_input_at_ = SDL_GetTicks();
     }
+    s.pointer_active = (use_devices && wm.connected && wm.pointer_valid) || SDL_GetTicks() - pointer_input_at_ < 1000;
     state_ = s;
 
     // Rumble: refreshed every guest frame with a short duration, so it stops by itself when the

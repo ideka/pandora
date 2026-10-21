@@ -50,11 +50,13 @@ aids. Open work is in [TODO.md](TODO.md).
   overlays; `--screenshot` applies the same curve. The display copy's own gamma field stays 1.0
   and the copy filter is unchanged by the setting.
 
-- Graphics settings: "Anisotropic filtering" forces 2-16x on every mipmapped, linearly filtered
-  texture (`aurora_set_forced_anisotropy`, `patches/aurora/0008`; aurora otherwise only honours
-  the game's own GX max_aniso, which is 1x here; samplers are cached by descriptor, so the level
-  changes live). About 40% of sampler uses qualify; unmipmapped textures are unaffected, as in
-  Dolphin. "Anti-aliasing" is aurora's 4x MSAA (`AuroraConfig.msaa`, fixed when the device is
+- Graphics settings: "Anisotropic filtering" sets the level (1x = off to 16x) on every
+  mipmapped, linearly filtered texture, in place of the game's request (`aurora_set_forced_anisotropy`,
+  `patches/aurora/0008`; samplers are cached by descriptor, so the level changes live). The game
+  asks for GX_ANISO_2 on its world textures, which aurora alone turns into 8x (half its
+  `textureAnisotropy`), so a setting that only raised the level looked unchanged. In the tower
+  every world texture is mipmapped with trilinear filtering (GX_LIN_MIP_LIN); the single-level
+  ones are the HUD, text, EFB copies and a few 512x512 I8 maps, where anisotropy does nothing. "Anti-aliasing" is aurora's 4x MSAA (`AuroraConfig.msaa`, fixed when the device is
   created, so it applies after a restart; 4 is the only count WebGPU guarantees). With MSAA aurora
   disables its asynchronous readback, so `--screenshot` captures nothing then (the game itself does
   not use readback). `PANDORA_ANISO` and `PANDORA_MSAA` override the settings in test runs.
@@ -164,6 +166,14 @@ aids. Open work is in [TODO.md](TODO.md).
   left and right stick at 0x6C and 0x74 (-1..1, y up), analog L/R at 0x7C/0x80 (0..1). The Classic's
   controls are their own bindings (`Control::ClA`...); only the active controller's bindings are
   read. Scripted presses map onto it in Classic mode (`PANDORA_CLASSIC=1` forces the mode).
+- The cursor (`fn_8007B77C`, the object's +12 is the device type) follows the pointer with a Wii
+  Remote alone (`fn_8007BC48`: DPD-valid and pos of the KPAD samples) and the right stick with a
+  Classic (`fn_8007BF24`, which moves the cursor from where it is: +164). The Classic call goes
+  through `hostCursorUpdate` (a padding word, `0x805E4CA8`), which tail-calls the pointer path
+  instead while the pointer is in use (`PadState::pointer_active`: the mouse moved in the last
+  second, or a real remote points at the screen), so the mouse works in both modes.
+- Settings files record `bindings_version`; loading an older one moves the mappings still at a
+  default that changed to the new default (`migrate_v1_defaults`), leaving rebound ones alone.
 
 ## Real Wii Remote
 

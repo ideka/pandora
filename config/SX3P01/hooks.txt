@@ -14,6 +14,7 @@ WPADIsMotorEnabled  # always on: the menu's rumble setting decides
 WPADGetStatus  # WPAD_STATE_SETUP (3): the game's remote sound system only initialises then
 hostTickGate  # a padding word: the second-tick gates (patches.txt) call it for the flag to test
 hostContinue  # a padding word: guest functions the host calls (Runtime::call_guest) return here
+hostCursorUpdate  # a padding word: the cursor update calls it with a Classic Controller (patches.txt) to pick pointer or stick
 WPADControlSpeaker  # speaker on/play/off: the callback runs at once; the host decides where the sound plays
 WPADCanSendStreamData  # true while the speaker plays
 WPADSendStreamData  # the speaker packets are decoded into the host mixer
