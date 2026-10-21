@@ -172,8 +172,6 @@ aids. Open work is in [TODO.md](TODO.md).
   through `hostCursorUpdate` (a padding word, `0x805E4CA8`), which tail-calls the pointer path
   instead while the pointer is in use (`PadState::pointer_active`: the mouse moved in the last
   second, or a real remote points at the screen), so the mouse works in both modes.
-- Settings files record `bindings_version`; loading an older one moves the mappings still at a
-  default that changed to the new default (`migrate_v1_defaults`), leaving rebound ones alone.
 
 ## Real Wii Remote
 

@@ -71,7 +71,7 @@ No game code or data is included. You need your own copy of the game.
    Classic Controller, which the game supports; its bindings then show under Controls (defaults:
    buttons by position as on the real one, A/B/X/Y on the pad's east/south/north/west, the analog
    L/R on the triggers, the digital ZL/ZR on the bumpers, both sticks; keyboard WASD/IJKL for the sticks, Q/E for L/R,
-   Z/C for ZL/ZR). The cursor follows the right stick, or the mouse while it moves.
+   Z/C for ZL/ZR, left click ZR (fire), right click R (aim)). The cursor follows the right stick, or the mouse while it moves.
 
    A real **Wii Remote** (with Nunchuk) works too: with "Scan for Wii Remotes" on (General, the
    default) just press 1 and 2 on the remote while the game runs, as with Dolphin's continuous

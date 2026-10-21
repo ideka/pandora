@@ -1,7 +1,5 @@
 #include "settings.h"
 
-#include <SDL3/SDL.h>
-
 #include <algorithm>
 #include <cstdlib>
 #include <fstream>
@@ -45,40 +43,11 @@ PhysicalInput* find_mapping(Bindings& b, const std::string& key) {
     return nullptr;
 }
 
-// Version 2 moved some gamepad defaults: the Classic Controller's buttons by position (A east, B
-// south, X north, Y west) and the settings menu's Accept/Cancel to east/south. A file from before
-// keeps its mappings, except those still at the old default, which move to the new one.
-constexpr int BINDINGS_VERSION = 2;
-
-void migrate_v1_defaults(Bindings& b) {
-    using P = PhysicalInput;
-    const Bindings now = Bindings::defaults();
-    constexpr size_t PAD = 0;  // the gamepad's first mapping
-    const std::pair<Control, P> controls[] = {
-        {Control::ClA, P::button(SDL_GAMEPAD_BUTTON_SOUTH)},
-        {Control::ClB, P::button(SDL_GAMEPAD_BUTTON_EAST)},
-        {Control::ClX, P::button(SDL_GAMEPAD_BUTTON_WEST)},
-        {Control::ClY, P::button(SDL_GAMEPAD_BUTTON_NORTH)},
-    };
-    for (const auto& [c, old] : controls)
-        if (b.controls[(size_t)c][PAD][0] == old)
-            b.controls[(size_t)c][PAD][0] = now.controls[(size_t)c][PAD][0];
-    const std::pair<MenuAction, P> menu[] = {
-        {MenuAction::Accept, P::button(SDL_GAMEPAD_BUTTON_SOUTH)},
-        {MenuAction::Cancel, P::button(SDL_GAMEPAD_BUTTON_EAST)},
-    };
-    for (const auto& [a, old] : menu)
-        if (b.menu[(size_t)a][PAD][0] == old)
-            b.menu[(size_t)a][PAD][0] = now.menu[(size_t)a][PAD][0];
-}
-
 }  // namespace
 
 void Settings::load(const std::string& path) {
     std::ifstream in(path);
     std::string line;
-    int bindings_version = 1;
-    bool any_binding = false;
     while (std::getline(in, line)) {
         const size_t eq = line.find('=');
         if (line.empty() || line[0] == '#' || eq == std::string::npos)
@@ -112,8 +81,6 @@ void Settings::load(const std::string& path) {
             anisotropy = a >= 16 ? 16 : a >= 8 ? 8 : a >= 4 ? 4 : a >= 2 ? 2 : 1;
         } else if (key == "msaa") {
             msaa = std::atoi(value.c_str()) >= 4 ? 4 : 1;
-        } else if (key == "bindings_version") {
-            bindings_version = std::atoi(value.c_str());
         } else {
             // Files from before the two-mapping layout: bind.<id>.controller / .keyboard.
             const size_t dot = key.rfind('.');
@@ -124,14 +91,10 @@ void Settings::load(const std::string& path) {
                 else if (old == "keyboard")
                     key = key.substr(0, dot) + ".kbm.1";
             }
-            if (PhysicalInput* m = find_mapping(bindings, key)) {
+            if (PhysicalInput* m = find_mapping(bindings, key))
                 *m = PhysicalInput::parse(value);
-                any_binding = true;
-            }
         }
     }
-    if (any_binding && bindings_version < 2)
-        migrate_v1_defaults(bindings);
 }
 
 bool Settings::save(const std::string& path) const {
@@ -153,7 +116,6 @@ bool Settings::save(const std::string& path) const {
     out << "classic_controller=" << (classic_controller ? 1 : 0) << "\n";
     out << "anisotropy=" << anisotropy << "\n";
     out << "msaa=" << msaa << "\n";
-    out << "bindings_version=" << BINDINGS_VERSION << "\n";
     auto write = [&](const char* prefix, const char* id, const Mappings& m) {
         for (size_t d = 0; d < kDeviceCount; d++)
             for (size_t s = 0; s < kMappingsPerDevice; s++)

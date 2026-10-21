@@ -324,14 +324,15 @@ Bindings Bindings::defaults() {
     // shoulders.
     set(control(Control::ClA), P::button(SDL_GAMEPAD_BUTTON_EAST), none, P::key(SDL_SCANCODE_RETURN),
         P::key(SDL_SCANCODE_SPACE));
-    set(control(Control::ClB), P::button(SDL_GAMEPAD_BUTTON_SOUTH), none, P::key(SDL_SCANCODE_BACKSPACE),
-        P::mouse(SDL_BUTTON_LEFT));
+    set(control(Control::ClB), P::button(SDL_GAMEPAD_BUTTON_SOUTH), none, P::key(SDL_SCANCODE_BACKSPACE), none);
     set(control(Control::ClX), P::button(SDL_GAMEPAD_BUTTON_NORTH), none, P::key(SDL_SCANCODE_1), none);
     set(control(Control::ClY), P::button(SDL_GAMEPAD_BUTTON_WEST), none, P::key(SDL_SCANCODE_2), none);
     set(control(Control::ClL), P::axis(SDL_GAMEPAD_AXIS_LEFT_TRIGGER, 1), none, P::key(SDL_SCANCODE_Q), none);
-    set(control(Control::ClR), P::axis(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, 1), none, P::key(SDL_SCANCODE_E), none);
+    set(control(Control::ClR), P::axis(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, 1), none, P::key(SDL_SCANCODE_E),
+        P::mouse(SDL_BUTTON_RIGHT));  // aim
     set(control(Control::ClZL), P::button(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER), none, P::key(SDL_SCANCODE_Z), none);
-    set(control(Control::ClZR), P::button(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER), none, P::key(SDL_SCANCODE_C), none);
+    set(control(Control::ClZR), P::button(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER), none, P::key(SDL_SCANCODE_C),
+        P::mouse(SDL_BUTTON_LEFT));  // fire
     set(control(Control::ClPlus), P::button(SDL_GAMEPAD_BUTTON_START), none, P::key(SDL_SCANCODE_EQUALS), none);
     set(control(Control::ClMinus), P::button(SDL_GAMEPAD_BUTTON_BACK), none, P::key(SDL_SCANCODE_MINUS), none);
     set(control(Control::ClUp), P::button(SDL_GAMEPAD_BUTTON_DPAD_UP), none, P::key(SDL_SCANCODE_UP), none);
