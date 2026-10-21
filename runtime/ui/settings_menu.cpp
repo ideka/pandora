@@ -333,6 +333,8 @@ void SettingsMenu::update() {
     const auto now = Clock::now();
     if (capturing_ >= 0 && now > capture_deadline_)
         cancel_capture();
+    if (open_)
+        mark_focused_row();
     if (!open_ || capturing_ >= 0)
         return;
     for (size_t a = 0; a < kMenuActionCount; a++)
@@ -340,6 +342,21 @@ void SettingsMenu::update() {
             action((MenuAction)a);
             next_repeat_[a] = std::max(next_repeat_[a] + REPEAT_INTERVAL, now);
         }
+}
+
+// The settings row holding the focused control gets the "focused" class (RmlUi has no
+// :focus-within), so sliders and checkboxes show where the cursor is.
+void SettingsMenu::mark_focused_row() {
+    Rml::Element* row = aurora::rmlui::get_context()->GetFocusElement();
+    while (row && !row->IsClassSet("setting"))
+        row = row->GetParentNode();
+    Rml::ElementList marked;
+    doc_->GetElementsByClassName(marked, "focused");
+    for (Rml::Element* e : marked)
+        if (e != row)
+            e->SetClass("focused", false);
+    if (row)
+        row->SetClass("focused", true);
 }
 
 // --- Bindings tables --------------------------------------------------------------------------
@@ -613,6 +630,20 @@ in::EventResult SettingsMenu::handle(const in::InputEvent& event) {
 // Sends a navigation key to the document. Left/right adjust a focused slider instead of moving.
 void SettingsMenu::navigate(int key) {
     Rml::Context* ctx = aurora::rmlui::get_context();
+    Rml::Element* before = ctx->GetFocusElement();
+    auto in_row = [](Rml::Element* e, const char* cls) { return e && e->IsClassSet(cls); };
+    // Left/right along the tabs and the device switch stop at the row's ends (spatial navigation
+    // would leave it, e.g. from the last tab to the Back to game button).
+    for (const char* cls : {"tab", "device"})
+        if ((key == Rml::Input::KI_LEFT || key == Rml::Input::KI_RIGHT) && in_row(before, cls)) {
+            Rml::ElementList row;
+            before->GetParentNode()->GetElementsByClassName(row, cls);
+            const auto it = std::find(row.begin(), row.end(), before);
+            const int i = (int)(it - row.begin()) + (key == Rml::Input::KI_LEFT ? -1 : 1);
+            if (it != row.end() && i >= 0 && i < (int)row.size())
+                row[i]->Focus(true);
+            return;
+        }
     if (key == Rml::Input::KI_LEFT || key == Rml::Input::KI_RIGHT) {
         auto* input = dynamic_cast<Rml::ElementFormControlInput*>(ctx->GetFocusElement());
         if (input && input->GetAttribute<Rml::String>("type", "") == "range") {
@@ -626,6 +657,15 @@ void SettingsMenu::navigate(int key) {
     if (!navigate_bindings(key)) {
         ctx->ProcessKeyDown((Rml::Input::KeyIdentifier)key, 0);
         ctx->ProcessKeyUp((Rml::Input::KeyIdentifier)key, 0);
+    }
+    // Entering the tabs or the device switch from elsewhere lands on the active one, not the nearest.
+    Rml::Element* after = ctx->GetFocusElement();
+    if (in_row(after, "tab") && !in_row(before, "tab")) {
+        if (Rml::Element* tab = doc_->GetElementById("tab-" + tab_))
+            tab->Focus(true);
+    } else if (in_row(after, "device") && !in_row(before, "device")) {
+        if (Rml::Element* device = doc_->GetElementById("dev-" + device_))
+            device->Focus(true);
     }
 }
 

@@ -75,6 +75,7 @@ private:
 
     void navigate(int key);  // an Rml::Input::KeyIdentifier
     bool navigate_bindings(int key);
+    void mark_focused_row();
     void switch_tab(int delta);
 
     Mappings& mappings(int table, int index);

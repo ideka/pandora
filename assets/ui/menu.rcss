@@ -101,7 +101,9 @@ button:active { background-color: rgba(214, 169, 92, 140); }
     color: #a9a59c;
 }
 .device.selected { color: #1b1610; background-color: #d6a95c; border-color: #d6a95c; }
-.device.selected:focus { background-color: #e8bf75; }
+/* The focus ring: subtabs, sliders and checkboxes (whose selected/checked look is already gold). */
+.device:focus, input.checkbox:focus, input.range:focus sliderbar { box-shadow: #f3e3c3 0 0 0 3dp; }
+.device.selected:focus { background-color: #f0cd8a; border-color: #ffffff; }
 
 .section {
     margin: 10dp 12dp 4dp 12dp;
@@ -157,7 +159,12 @@ scrollbarvertical sliderarrowdec, scrollbarvertical sliderarrowinc { width: 0; h
     flex-direction: row;
     align-items: center;
     padding: 10dp 12dp;
+    border-radius: 8dp;
+    border-left: 3dp transparent;
 }
+/* The row of the focused control (SettingsMenu::update sets the class). */
+.setting.focused { background-color: rgba(214, 169, 92, 34); border-left-color: #d6a95c; }
+.setting.focused .name { color: #ffffff; }
 .setting .name { width: 200dp; }
 .setting .value { margin-left: 14dp; width: 60dp; }
 .setting .note { margin-left: 14dp; color: #8d897f; font-size: 14dp; }
@@ -180,7 +187,8 @@ input.range sliderbar {
     border-radius: 9dp;
     background-color: #e8e6e1;
 }
-input.range:focus sliderbar { background-color: #d6a95c; }
+input.range:focus slidertrack { background-color: rgba(214, 169, 92, 150); }
+input.range:focus sliderbar { background-color: #ffffff; }
 input.range sliderarrowdec, input.range sliderarrowinc { width: 0; height: 0; }
 
 input.checkbox {
@@ -190,8 +198,13 @@ input.checkbox {
     border: 2dp rgba(255, 255, 255, 90);
     background-color: rgba(255, 255, 255, 10);
 }
-input.checkbox:checked { background-color: #d6a95c; border-color: #d6a95c; }
-input.checkbox:focus { border-color: #f3e3c3; }
+input.checkbox:checked {
+    background-color: #d6a95c;
+    border-color: #d6a95c;
+    decorator: image(check.png);
+    image-color: #1b1610;
+}
+input.checkbox:focus { border-color: #ffffff; }
 
 .footer {
     display: flex;
