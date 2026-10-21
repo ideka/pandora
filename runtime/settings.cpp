@@ -46,9 +46,8 @@ PhysicalInput* find_mapping(Bindings& b, const std::string& key) {
 }
 
 // Version 2 moved some gamepad defaults: the Classic Controller's buttons by position (A east, B
-// south, X north, Y west) with ZL/ZR on the triggers and L/R on the shoulders, and the settings
-// menu's Accept/Cancel to east/south. A file from before keeps its mappings, except those still
-// at the old default, which move to the new one.
+// south, X north, Y west) and the settings menu's Accept/Cancel to east/south. A file from before
+// keeps its mappings, except those still at the old default, which move to the new one.
 constexpr int BINDINGS_VERSION = 2;
 
 void migrate_v1_defaults(Bindings& b) {
@@ -60,10 +59,6 @@ void migrate_v1_defaults(Bindings& b) {
         {Control::ClB, P::button(SDL_GAMEPAD_BUTTON_EAST)},
         {Control::ClX, P::button(SDL_GAMEPAD_BUTTON_WEST)},
         {Control::ClY, P::button(SDL_GAMEPAD_BUTTON_NORTH)},
-        {Control::ClL, P::axis(SDL_GAMEPAD_AXIS_LEFT_TRIGGER, 1)},
-        {Control::ClR, P::axis(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, 1)},
-        {Control::ClZL, P::button(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER)},
-        {Control::ClZR, P::button(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER)},
     };
     for (const auto& [c, old] : controls)
         if (b.controls[(size_t)c][PAD][0] == old)

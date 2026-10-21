@@ -69,8 +69,8 @@ No game code or data is included. You need your own copy of the game.
 
    "Classic Controller" (General) switches the emulated controller from Wii Remote + Nunchuk to a
    Classic Controller, which the game supports; its bindings then show under Controls (defaults:
-   buttons by position as on the real one, A/B/X/Y on the pad's east/south/north/west, ZL/ZR on
-   the triggers, L/R on the bumpers, both sticks; keyboard WASD/IJKL for the sticks, Q/E for L/R,
+   buttons by position as on the real one, A/B/X/Y on the pad's east/south/north/west, the analog
+   L/R on the triggers, the digital ZL/ZR on the bumpers, both sticks; keyboard WASD/IJKL for the sticks, Q/E for L/R,
    Z/C for ZL/ZR). The cursor follows the right stick, or the mouse while it moves.
 
    A real **Wii Remote** (with Nunchuk) works too: with "Scan for Wii Remotes" on (General, the
