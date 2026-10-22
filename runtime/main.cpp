@@ -175,7 +175,10 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
     // user profile.
     std::filesystem::create_directories("build/aurora");
     config.userPath = "build/aurora";
-    config.cachePath = "build/aurora";
+    // PANDORA_CACHE_DIR=<dir>: pipeline and Dawn caches elsewhere (test runs start from an empty one).
+    static const std::string cache_dir = std::getenv("PANDORA_CACHE_DIR") ? std::getenv("PANDORA_CACHE_DIR") : "build/aurora";
+    std::filesystem::create_directories(cache_dir);
+    config.cachePath = cache_dir.c_str();
     config.mem1Size = 0;  // guest memory lives in the runtime
     config.mem2Size = 0;
     config.startFullscreen = settings.fullscreen && !background;
