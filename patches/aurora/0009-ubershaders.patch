@@ -34,10 +34,37 @@ diff --git a/include/aurora/gfx.hpp b/include/aurora/gfx.hpp
  inline constexpr size_t MaxColorAttachments = 8;
  inline constexpr uint32_t SceneColorAttachmentIndex = 0;
  
+diff --git a/lib/gfx/pipeline_cache.cpp b/lib/gfx/pipeline_cache.cpp
+--- a/lib/gfx/pipeline_cache.cpp
++++ b/lib/gfx/pipeline_cache.cpp
+@@ -5,6 +5,7 @@
+ #include "resources.hpp"
+ #include "hash.hpp"
+ #include "../gx/pipeline.hpp"
++#include "../gx/ubershader.hpp"
+ #include "../io.hpp"
+ #ifdef AURORA_ENABLE_RMLUI
+ #include "../rmlui/pipeline.hpp"
+@@ -1124,6 +1125,15 @@ void rebuild_pipeline_cache() {
+     }
+   }
+   std::ranges::sort(known, {}, &KnownPipeline::firstFrameUsed);
++  // The ubershader modules first (compiling one takes most of a second, and on a first run the
++  // game would otherwise wait for it on first use); pipelines for other fixed-function states
++  // reuse the compiled shader.
++  for (const auto& config : gx::uber_prewarm_configs()) {
++    resolve_pipeline(ShaderType::GX, config, scene, PipelinePriority::Background);
++    if (offscreen.key != scene.key) {
++      resolve_pipeline(ShaderType::GX, config, offscreen, PipelinePriority::Background);
++    }
++  }
+   for (const auto& pipeline : known) {
+     std::visit(
+         [&](const auto& config) {
 diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
 --- a/lib/gx/command_processor.cpp
 +++ b/lib/gx/command_processor.cpp
-@@ -10,6 +10,7 @@
+@@ -10,10 +10,12 @@
  #include "regs.hpp"
  #include "shader_info.hpp"
  #include "texture.hpp"
@@ -45,29 +72,36 @@ diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
  
  #include <tracy/Tracy.hpp>
  
-@@ -141,6 +142,11 @@ struct DrawCache {
+ #include <algorithm>
++#include <chrono>
+ #include <cmath>
+ #include <cstdint>
+ #include <span>
+@@ -141,6 +143,12 @@ struct DrawCache {
    FogRangeLutKey fogRangeKey{};
    bool hasFogRange = false;
    GXVtxFmt lastDrawFmt = GX_MAX_VTXFMT;
 +  // Ubershader fallback (ubershader.hpp) while the pipeline compiles
 +  bool pipelineReady = false;
 +  gfx::PipelineRef uberPipeline{};
-+  gfx::Range uberCfgRange{};
++  bool hasUberConfig = false;
++  UberConfig uberConfig{};
 +  gfx::Range uberUniformRange{};
  };
  DrawCache sDrawCache;
  
-@@ -411,6 +417,9 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
+@@ -411,6 +419,10 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
      cache.fmt = fmt;
      cache.lineMode = lineMode;
      cache.hasPipeline = true;
 +    cache.pipelineReady = false;
 +    cache.uberPipeline = {};
-+    cache.uberCfgRange = {};
++    cache.hasUberConfig = false;
++    cache.uberUniformRange = {};
      state.dirty = (state.dirty & ~DirtyPipeline) | DirtyUniform;
      if (!hadPipeline || prevSampledTextures != cache.shaderInfo.sampledTextures ||
          prevSampledIndTextures != cache.shaderInfo.sampledIndTextures) {
-@@ -435,8 +444,29 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
+@@ -435,8 +447,35 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
    const bool uniformValid = (state.dirty & DirtyUniform) == 0 && cache.uniformRange.size != 0;
    if (!uniformValid) {
      cache.uniformRange = build_uniform(cache.shaderInfo);
@@ -84,30 +118,26 @@ diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
 +  const bool useUber = uberMode == UberShaderMode::Force || (uberMode == UberShaderMode::Fallback && !cache.pipelineReady);
 +  if (useUber) {
 +    if (cache.uberPipeline == 0) {
++      const auto start = std::chrono::steady_clock::now();
 +      cache.uberPipeline =
 +          gfx::find_pipeline(make_uber_pipeline_config(cache.config), gfx::get_render_target_layout(), true);
++      const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
++      if (ms > 20.0) {
++        Log.info("Waited {:.1f} ms for an ubershader pipeline", ms);
++      }
 +    }
-+    if (cache.uberCfgRange.size == 0) {
-+      cache.uberCfgRange = push_uber_config(cache.config.shaderConfig, cache.shaderInfo);
++    if (!cache.hasUberConfig) {
++      pack_uber_config(cache.config.shaderConfig, cache.shaderInfo, cache.uberConfig);
++      cache.hasUberConfig = true;
 +    }
 +    if (cache.uberUniformRange.size == 0) {
-+      cache.uberUniformRange = build_uber_uniform(lineMode);
++      cache.uberUniformRange = build_uber_uniform(cache.config.shaderConfig, cache.uberConfig);
 +    }
 +  }
    if (cache.config.shaderConfig.fogRangeEnabled) {
      const auto key = fog_range_lut_key();
      if (!cache.hasFogRange || cache.fogRangeKey != key) {
-@@ -446,6 +476,9 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
-     }
-   }
-   immediates.fogRangeBase = cache.fogRange.offset / sizeof(u32);
-+  if (useUber) {
-+    immediates._pad = cache.uberCfgRange.offset / sizeof(u32); // the ubershader's cfg_base
-+  }
- 
-   state.dirty &= ~DirtyImmediates;
- 
-@@ -469,6 +502,8 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
+@@ -469,6 +508,8 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
        .indexCount = numIndices,
        .instanceCount = instanceCount,
        .dstAlpha = state.dstAlpha,
@@ -116,19 +146,30 @@ diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
    });
  }
  
-@@ -781,6 +816,8 @@ void handle_aurora(ByteReader& reader) noexcept {
+@@ -781,6 +822,7 @@ void handle_aurora(ByteReader& reader) noexcept {
  void clear_draw_cache() noexcept {
    sDrawCache.bindGeneration = 0;
    sDrawCache.uniformRange = {};
-+  sDrawCache.uberCfgRange = {};
 +  sDrawCache.uberUniformRange = {};
    sDrawCache.fogRange = {};
    sDrawCache.hasFogRange = false;
  }
+diff --git a/lib/gx/gx.hpp b/lib/gx/gx.hpp
+--- a/lib/gx/gx.hpp
++++ b/lib/gx/gx.hpp
+@@ -65,7 +65,7 @@ constexpr u32 MaxIndTexMtxs = 3;
+ constexpr u32 MaxVtxFmt = GX_MAX_VTXFMT;
+ constexpr u32 MaxPnMtx = (GX_PNMTX9 / 3) + 1;
+ constexpr u32 MaxIndexAttr = 12; // VA_POS -> VA_TEX7
+-constexpr u32 MaxUniformSize = 3840;
++constexpr u32 MaxUniformSize = 4608; // the ubershader's uniform is 4496 bytes
+ constexpr u32 XfRegCount = 0x58; // 0x1000-0x1057
+ 
+ enum DirtyFlag : u8 {
 diff --git a/lib/gx/pipeline.cpp b/lib/gx/pipeline.cpp
 --- a/lib/gx/pipeline.cpp
 +++ b/lib/gx/pipeline.cpp
-@@ -7,16 +7,24 @@
+@@ -7,16 +7,25 @@
  
  #include "gx_fmt.hpp"
  #include "shader_info.hpp"
@@ -149,12 +190,13 @@ diff --git a/lib/gx/pipeline.cpp b/lib/gx/pipeline.cpp
    const auto create = [&](const PipelineOptions& options, const char* passName) {
 -    const auto shader = build_shader(config.shaderConfig, layout, options.dstAlphaMode);
 +    const auto shader = is_uber_config(config.shaderConfig)
-+                            ? build_uber_shader(config.shaderConfig.lineMode, layout, options.dstAlphaMode)
++                            ? build_uber_shader(config.shaderConfig.lineMode, config.shaderConfig.pad1, layout,
++                                                options.dstAlphaMode)
 +                            : build_shader(config.shaderConfig, layout, options.dstAlphaMode);
      const auto label = fmt::format("GX Pipeline {:x} {}", hash, passName);
      return build_pipeline(config, layout, options, {}, shader, label.c_str());
    };
-@@ -50,21 +58,32 @@ gfx::CompiledPipeline create_pipeline(const PipelineConfig& config, const gfx::R
+@@ -50,21 +59,32 @@ gfx::CompiledPipeline create_pipeline(const PipelineConfig& config, const gfx::R
        options.alphaUpdate = false;
      }
    }
@@ -194,13 +236,12 @@ diff --git a/lib/gx/pipeline.cpp b/lib/gx/pipeline.cpp
 diff --git a/lib/gx/pipeline.hpp b/lib/gx/pipeline.hpp
 --- a/lib/gx/pipeline.hpp
 +++ b/lib/gx/pipeline.hpp
-@@ -15,6 +15,11 @@ struct DrawData {
+@@ -15,6 +15,10 @@ struct DrawData {
    uint32_t indexCount;
    uint32_t instanceCount;
    uint32_t dstAlpha;
 +  // The ubershader fallback (ubershader.hpp), recorded when the pipeline wasn't ready: its
-+  // pipeline and uniform (MaxUniformSize bytes at this offset); its packed config's word offset is
-+  // in immediateData._pad, which the specialized shaders don't read.
++  // pipeline and uniform (with the packed shader config).
 +  gfx::PipelineRef uberPipeline = 0;
 +  uint32_t uberUniformOffset = 0;
  };
@@ -209,14 +250,23 @@ diff --git a/lib/gx/pipeline.hpp b/lib/gx/pipeline.hpp
 diff --git a/lib/gx/shader_info.cpp b/lib/gx/shader_info.cpp
 --- a/lib/gx/shader_info.cpp
 +++ b/lib/gx/shader_info.cpp
-@@ -499,4 +499,96 @@ gfx::Range build_uniform(const ShaderInfo& info) noexcept {
+@@ -1,6 +1,7 @@
+ #include "shader_info.hpp"
+ 
+ #include "../gfx/recording.hpp"
++#include "ubershader.hpp"
+ 
+ #include <cmath>
+ 
+@@ -499,4 +500,122 @@ gfx::Range build_uniform(const ShaderInfo& info) noexcept {
    fill_uniform(buf, info);
    return gfx::push_uniform(buf.data(), buf.size());
  }
 +
 +// The ubershader's uniform (ubershader.cpp, struct Uniform): the same values as fill_uniform, all
 +// of them, in a fixed order.
-+gfx::Range build_uber_uniform(u8 lineMode) noexcept {
++gfx::Range build_uber_uniform(const ShaderConfig& shader, const UberConfig& config) noexcept {
++  const u8 lineMode = shader.lineMode;
 +  ZoneScoped;
 +  static ByteBuffer buf;
 +  buf.clear();
@@ -302,7 +352,32 @@ diff --git a/lib/gx/shader_info.cpp b/lib/gx/shader_info.cpp
 +  for (int i = 0; i < MaxTextures; ++i) {
 +    buf.append(texture_size_bias(get_texture(static_cast<GXTexMapID>(i))));
 +  }
-+  CHECK(buf.size() == MaxUniformSize, "ubershader uniform is {} bytes, expected {}", buf.size(), MaxUniformSize);
++  buf.append(config);
++  // Each stage's konst color and alpha, as color_arg_reg / alpha_arg_reg (shader.cpp) select them
++  for (u32 s = 0; s < MaxTevStages; ++s) {
++    const auto& st = shader.tevStages[s];
++    Vec4<float> k{0.f, 0.f, 0.f, 0.f};
++    const u32 kc = st.kcSel;
++    if (kc < 8) {
++      const float f = static_cast<float>(8 - kc) / 8.f;
++      k = {f, f, f, 0.f};
++    } else if (kc >= GX_TEV_KCSEL_K0 && kc <= GX_TEV_KCSEL_K3) {
++      const auto& c = g_gxState.kcolors[kc - GX_TEV_KCSEL_K0];
++      k = {c[0], c[1], c[2], 0.f};
++    } else if (kc >= GX_TEV_KCSEL_K0_R) {
++      const auto& c = g_gxState.kcolors[(kc - GX_TEV_KCSEL_K0_R) % 4];
++      const float f = c[(kc - GX_TEV_KCSEL_K0_R) / 4];
++      k = {f, f, f, 0.f};
++    }
++    const u32 ka = st.kaSel;
++    if (ka < 8) {
++      k[3] = static_cast<float>(8 - ka) / 8.f;
++    } else if (ka >= GX_TEV_KASEL_K0_R) {
++      k[3] = g_gxState.kcolors[(ka - GX_TEV_KASEL_K0_R) % 4][(ka - GX_TEV_KASEL_K0_R) / 4];
++    }
++    buf.append(k);
++  }
++  CHECK(buf.size() == UberUniformSize, "ubershader uniform is {} bytes, expected {}", buf.size(), UberUniformSize);
 +  return gfx::push_uniform(buf.data(), buf.size());
 +}
  } // namespace aurora::gx
@@ -313,14 +388,14 @@ diff --git a/lib/gx/shader_info.hpp b/lib/gx/shader_info.hpp
  namespace aurora::gx {
  ShaderInfo build_shader_info(const ShaderConfig& config) noexcept;
  gfx::Range build_uniform(const ShaderInfo& info) noexcept;
-+gfx::Range build_uber_uniform(u8 lineMode) noexcept; // ubershader.hpp
++gfx::Range build_uber_uniform(const ShaderConfig& shader, const std::array<u32, 100>& config) noexcept; // ubershader.hpp
  u8 color_channel(GXChannelID id) noexcept;
  }; // namespace aurora::gx
 diff --git a/lib/gx/ubershader.cpp b/lib/gx/ubershader.cpp
 new file mode 100644
 --- /dev/null
 +++ b/lib/gx/ubershader.cpp
-@@ -0,0 +1,1235 @@
+@@ -0,0 +1,1397 @@
 +#include "ubershader.hpp"
 +
 +#include "aurora/aurora.h"
@@ -343,23 +418,27 @@ new file mode 100644
 +
 +std::atomic<UberShaderMode> sMode = UberShaderMode::Fallback;
 +
-+// Packed shader config (words in the storage buffer, read by the shader through cfg()):
++// Packed shader config (words at the end of the uniform, read by the shader through cfg()):
 +constexpr u32 CfgHeader = 0;      // tevStageCount 5 | numIndStages 3 | fogType 5 | fogRange 1 | lineMode 2 |
 +                                  // vtxStride 8 | hasNormal 1 | nbt3 1
 +constexpr u32 CfgAlphaCmp = 1;    // comp0 3 | op 2 | comp1 3 | enabled 1 | ... | ref0 8 @16 | ref1 8 @24
-+constexpr u32 CfgMasks = 2;       // sampledTexCoords 8 | sampledColorChannels 2 | usedIndStages 4 | loadsTevReg 4
++constexpr u32 CfgMasks = 2;       // sampledTexCoords 8 | sampledColorChannels 2 | usedIndStages 4 | loadsTevReg 4 |
++                                  // wrap prev color 1 | wrap prev alpha 1
 +constexpr u32 CfgSwap = 3;        // 4 swap tables x (r, g, b, a) x 2 bits
 +constexpr u32 CfgChannels = 4;    // 4 channels x 8 bits: matSrc 1 | ambSrc 1 | diffFn 2 | attnFn 2 | lighting 1
 +constexpr u32 CfgTcg = 5;         // 8: type 4 | src 5 | mtx 7 | postMtx 7 | normalize 1 | embossSrc 3
 +constexpr u32 CfgIndStages = 13;  // 2 words, 16 bits per stage: texCoord 4 | texMap 4 | scaleS 4 | scaleT 4
 +constexpr u32 CfgAttrs = 15;      // 21: attrType 2 | cnt 4 | compType 4 | offset 8 | stride 8 | frac 5 | le 1
 +constexpr u32 CfgTev = 36;        // 16 x 4 words (see push_uber_config)
-+constexpr u32 CfgWords = CfgTev + 4 * MaxTevStages;
++static_assert(CfgTev + 4 * MaxTevStages == UberCfgWords);
 +
 +constexpr std::string_view UberSource = R"""(
 +diagnostic(off, derivative_uniformity);
 +@@ENABLE@@
 +const LINE_MODE: u32 = @@LINE_MODE@@u;
++// Indirect texturing, comparison TEV ops and bump alpha; without them (most draws) the module
++// leaves their code out.
++const ADVANCED: bool = @@ADVANCED@@;
 +
 +struct Light {
 +    pos: vec3f,
@@ -397,6 +476,8 @@ new file mode 100644
 +    texcoord_scale: array<vec4f, 8>,
 +    ind_mtx: array<mat2x4f, 3>,
 +    tex_size_bias: array<vec4f, 8>,
++    cfg: array<vec4u, 25>, // the packed shader config (pack_uber_config)
++    konst: array<vec4f, 16>, // each stage's konst color (rgb) and alpha, selected on the CPU
 +};
 +struct Immediate {
 +    vtx_start: u32,
@@ -435,7 +516,7 @@ new file mode 100644
 +// --- Config --------------------------------------------------------------------------------
 +
 +fn cfg(i: u32) -> u32 {
-+    return abuf[imm.cfg_base + i];
++    return ubuf.cfg[i / 4u][i % 4u];
 +}
 +fn bits(v: u32, shift: u32, count: u32) -> u32 {
 +    return extractBits(v, shift, count);
@@ -701,8 +782,11 @@ new file mode 100644
 +    let diff_fn = bits(c, 2u, 2u);
 +    let attn_fn = bits(c, 4u, 2u);
 +    var lighting = amb;
-+    for (var l = 0u; l < 8u; l++) {
-+        if ((ubuf.light_state[ch] & (1u << l)) == 0u) { continue; }
++    // Run-time bounds (the highest light in the mask) keep the compiler from unrolling the loop.
++    let light_mask = ubuf.light_state[ch] & 0xFFu;
++    let light_count = 32u - countLeadingZeros(light_mask);
++    for (var l = 0u; l < light_count; l++) {
++        if ((light_mask & (1u << l)) == 0u) { continue; }
 +        let light = ubuf.lights[l];
 +        var ldir = light.pos - mv_pos;
 +        let dist2 = dot(ldir, ldir);
@@ -736,6 +820,99 @@ new file mode 100644
 +        lighting = lighting + (attn * diff * light.color);
 +    }
 +    return mat * clamp(lighting, vec4f(0.0), vec4f(1.0));
++}
++
++// Texture coordinate generation, per texcoord (no arrays indexed at run time: they would live in
++// local memory). A TEXCOORDn source is texgen n's own source, as in shader.cpp.
++struct TexgenInput {
++    in_vidx: u32,
++    vidx: u32,
++    pnmtxidx: u32,
++    pos: vec3f,
++    nrm: vec3f,
++    binrm: vec3f,
++    tangent: vec3f,
++    cc0: vec4f,
++    cc1: vec4f,
++    mv_pos: vec3f,
++};
++
++fn texgen_direct_source(i: u32, v: TexgenInput) -> vec4f {
++    let src = bits(tcg(i), 4u, 5u);
++    if (src >= 4u && src <= 11u) {
++        return vec4f(load_tex(src - 4u, v.in_vidx), 1.0, 1.0);
++    }
++    switch (src) {
++        case 0u: { return vec4f(v.pos, 1.0); }
++        case 1u: { return vec4f(v.nrm, 1.0); }
++        case 2u: { return vec4f(v.binrm, 1.0); }
++        case 3u: { return vec4f(v.tangent, 1.0); }
++        case 19u: { return v.cc0; }
++        case 20u: { return v.cc1; }
++        default: { return vec4f(0.0); }
++    }
++}
++fn texgen_source(i: u32, v: TexgenInput) -> vec4f {
++    let src = bits(tcg(i), 4u, 5u);
++    return texgen_direct_source(select(i, src - 12u, src >= 12u && src <= 18u), v);
++}
++
++// A (non-emboss) texgen's projected coordinate.
++fn texgen_proj(i: u32, v: TexgenInput) -> vec3f {
++    let g = tcg(i);
++    let ty = bits(g, 0u, 4u);
++    let mtx = bits(g, 9u, 7u);
++    let post = bits(g, 16u, 7u);
++    let tc = texgen_source(i, v);
++    var tmp: vec3f;
++    if (ty <= 1u) {
++        if (attr_type(1u + i) != 0u) {
++            tmp = tc * ubuf.postex_mtx[load_texmtxidx(i, v.in_vidx) / 3u];
++        } else if (mtx == 60u) {
++            tmp = tc.xyz;
++        } else {
++            tmp = tc * ubuf.postex_mtx[mtx / 3u];
++        }
++        if (ty == 1u) {
++            tmp.z = 1.0;
++        }
++    } else {
++        tmp = vec3f(tc.xy, 1.0);
++    }
++    if (bits(g, 23u, 1u) != 0u) {
++        tmp = normalize(tmp);
++    }
++    var proj = tmp;
++    if (post != 125u) {
++        proj = vec4f(tmp.xyz, 1.0) * ubuf.postmtx[(post - 64u) / 3u];
++    }
++    if (LINE_MODE == 3u) {
++        if ((ubuf.line_texcoord_mask & (1u << i)) != 0u) {
++            if ((v.vidx & 1u) != 0u) { proj.x += ubuf.line_tex_offset; }
++            if (v.vidx >= 2u) { proj.y += ubuf.line_tex_offset; }
++        }
++    } else if (LINE_MODE != 0u) {
++        if ((ubuf.line_texcoord_mask & (1u << i)) != 0u && (v.vidx & 1u) != 0u) {
++            proj.y += ubuf.line_tex_offset;
++        }
++    }
++    return proj;
++}
++
++// A texgen's output (uvw for GX_TG_MTX3x4, uv and 1 otherwise).
++fn texgen(i: u32, v: TexgenInput) -> vec3f {
++    let g = tcg(i);
++    let ty = bits(g, 0u, 4u);
++    let emboss = ty >= 2u && ty <= 9u;
++    // Emboss bump: the source texcoord, offset by the light projected onto tangent/binormal
++    let proj = texgen_proj(select(i, bits(g, 24u, 3u), emboss), v);
++    if (emboss) {
++        let bump_ldir = normalize(ubuf.lights[ty - 2u].pos - v.mv_pos);
++        let bump_tan = vec4f(v.tangent, 0.0) * ubuf.nrm_mtx[v.pnmtxidx];
++        let bump_bin = vec4f(v.binrm, 0.0) * ubuf.nrm_mtx[v.pnmtxidx];
++        return vec3f(proj.xy + vec2f(dot(bump_ldir, bump_tan), dot(bump_ldir, bump_bin)), 1.0);
++    }
++    return select(vec3f(proj.xy, 1.0), proj, ty == 0u);
 +}
 +
 +@vertex
@@ -811,98 +988,43 @@ new file mode 100644
 +    out.mv_nrm = mv_nrm;
 +
 +    // Color channels
-+    var cc: array<vec4f, 2>;
-+    for (var i = 0u; i < 2u; i++) {
-+        if ((sampled_channels() & (1u << i)) == 0u) { continue; }
-+        let clr = load_clr(i, in_vidx);
-+        cc[i] = light_channel(i, false, mv_pos, mv_nrm, clr);
-+        cc[i].a = light_channel(i, true, mv_pos, mv_nrm, clr).a;
++    var cc0 = vec4f(0.0);
++    var cc1 = vec4f(0.0);
++    let channels = sampled_channels();
++    if ((channels & 1u) != 0u) {
++        let clr = load_clr(0u, in_vidx);
++        cc0 = light_channel(0u, false, mv_pos, mv_nrm, clr);
++        cc0.a = light_channel(0u, true, mv_pos, mv_nrm, clr).a;
 +    }
-+    out.cc0 = cc[0];
-+    out.cc1 = cc[1];
++    if ((channels & 2u) != 0u) {
++        let clr = load_clr(1u, in_vidx);
++        cc1 = light_channel(1u, false, mv_pos, mv_nrm, clr);
++        cc1.a = light_channel(1u, true, mv_pos, mv_nrm, clr).a;
++    }
++    out.cc0 = cc0;
++    out.cc1 = cc1;
 +
 +    // Texture coordinates
-+    let in_binrm = load_nbt(1u, in_vidx);
-+    let in_tangent = load_nbt(2u, in_vidx);
-+    var tc: array<vec4f, 8>;
-+    var tc_proj: array<vec3f, 8>;
-+    var tex_out: array<vec3f, 8>;
-+    for (var i = 0u; i < 8u; i++) {
-+        if ((sampled_texcoords() & (1u << i)) == 0u) { continue; }
-+        let g = tcg(i);
-+        let ty = bits(g, 0u, 4u);
-+        let src = bits(g, 4u, 5u);
-+        let mtx = bits(g, 9u, 7u);
-+        let post = bits(g, 16u, 7u);
-+        if (ty >= 2u && ty <= 9u) {
-+            // Emboss bump: the source texcoord offset by the light projected onto tangent/binormal
-+            let bump_ldir = normalize(ubuf.lights[ty - 2u].pos - mv_pos);
-+            let bump_tan = vec4f(in_tangent, 0.0) * ubuf.nrm_mtx[in_pnmtxidx];
-+            let bump_bin = vec4f(in_binrm, 0.0) * ubuf.nrm_mtx[in_pnmtxidx];
-+            tex_out[i] = vec3f(tc_proj[bits(g, 24u, 3u)].xy + vec2f(dot(bump_ldir, bump_tan), dot(bump_ldir, bump_bin)),
-+                               1.0);
-+            continue;
-+        }
-+        if (src >= 4u && src <= 11u) {
-+            tc[i] = vec4f(load_tex(src - 4u, in_vidx), 1.0, 1.0);
-+        } else if (src >= 12u && src <= 18u) {
-+            tc[i] = tc[src - 12u];
-+        } else if (src == 0u) {
-+            tc[i] = vec4f(in_pos, 1.0);
-+        } else if (src == 1u) {
-+            tc[i] = vec4f(in_nrm, 1.0);
-+        } else if (src == 19u) {
-+            tc[i] = out.cc0;
-+        } else if (src == 20u) {
-+            tc[i] = out.cc1;
-+        } else if (src == 2u) {
-+            tc[i] = vec4f(in_binrm, 1.0);
-+        } else if (src == 3u) {
-+            tc[i] = vec4f(in_tangent, 1.0);
-+        }
-+        var tmp: vec3f;
-+        if (ty <= 1u) {
-+            if (attr_type(1u + i) != 0u) {
-+                tmp = tc[i] * ubuf.postex_mtx[load_texmtxidx(i, in_vidx) / 3u];
-+            } else if (mtx == 60u) {
-+                tmp = tc[i].xyz;
-+            } else {
-+                tmp = tc[i] * ubuf.postex_mtx[mtx / 3u];
-+            }
-+            if (ty == 1u) {
-+                tmp.z = 1.0;
-+            }
-+        } else {
-+            tmp = vec3f(tc[i].xy, 1.0);
-+        }
-+        if (bits(g, 23u, 1u) != 0u) {
-+            tmp = normalize(tmp);
-+        }
-+        var proj = tmp;
-+        if (post != 125u) {
-+            proj = vec4f(tmp.xyz, 1.0) * ubuf.postmtx[(post - 64u) / 3u];
-+        }
-+        if (LINE_MODE == 3u) {
-+            if ((ubuf.line_texcoord_mask & (1u << i)) != 0u) {
-+                if ((vidx & 1u) != 0u) { proj.x += ubuf.line_tex_offset; }
-+                if (vidx >= 2u) { proj.y += ubuf.line_tex_offset; }
-+            }
-+        } else if (LINE_MODE != 0u) {
-+            if ((ubuf.line_texcoord_mask & (1u << i)) != 0u && (vidx & 1u) != 0u) {
-+                proj.y += ubuf.line_tex_offset;
++    let tcs = sampled_texcoords();
++    if (tcs != 0u) {
++        let v = TexgenInput(in_vidx, vidx, in_pnmtxidx, in_pos, in_nrm, load_nbt(1u, in_vidx), load_nbt(2u, in_vidx),
++                            cc0, cc1, mv_pos);
++        let tc_count = 32u - countLeadingZeros(tcs); // a run-time bound: not unrolled
++        for (var i = 0u; i < tc_count; i++) {
++            if ((tcs & (1u << i)) == 0u) { continue; }
++            let t = texgen(i, v);
++            switch (i) {
++                case 0u: { out.tex0 = t; }
++                case 1u: { out.tex1 = t; }
++                case 2u: { out.tex2 = t; }
++                case 3u: { out.tex3 = t; }
++                case 4u: { out.tex4 = t; }
++                case 5u: { out.tex5 = t; }
++                case 6u: { out.tex6 = t; }
++                default: { out.tex7 = t; }
 +            }
 +        }
-+        tc_proj[i] = proj;
-+        tex_out[i] = select(vec3f(proj.xy, 1.0), proj, ty == 0u);
 +    }
-+    out.tex0 = tex_out[0];
-+    out.tex1 = tex_out[1];
-+    out.tex2 = tex_out[2];
-+    out.tex3 = tex_out[3];
-+    out.tex4 = tex_out[4];
-+    out.tex5 = tex_out[5];
-+    out.tex6 = tex_out[6];
-+    out.tex7 = tex_out[7];
 +    return out;
 +}
 +
@@ -935,28 +1057,6 @@ new file mode 100644
 +    return vec4f(v[swap_sel(table, 0u)], v[swap_sel(table, 1u)], v[swap_sel(table, 2u)], v[swap_sel(table, 3u)]);
 +}
 +
-+fn konst_color(sel: u32) -> vec3f {
-+    if (sel < 8u) {
-+        return vec3f(f32(8u - sel) / 8.0);
-+    }
-+    if (sel >= 0x0Cu && sel < 0x10u) {
-+        return ubuf.kcolor[sel - 0x0Cu].rgb;
-+    }
-+    if (sel >= 0x10u) {
-+        return vec3f(ubuf.kcolor[(sel - 0x10u) % 4u][(sel - 0x10u) / 4u]);
-+    }
-+    return vec3f(0.0);
-+}
-+fn konst_alpha(sel: u32) -> f32 {
-+    if (sel < 8u) {
-+        return f32(8u - sel) / 8.0;
-+    }
-+    if (sel >= 0x10u) {
-+        return ubuf.kcolor[(sel - 0x10u) % 4u][(sel - 0x10u) / 4u];
-+    }
-+    return 0.0;
-+}
-+
 +struct Stage {
 +    a: u32,
 +    b: u32,
@@ -964,14 +1064,49 @@ new file mode 100644
 +    d: u32,
 +};
 +
-+fn alpha_bump(st: Stage, ind_in: array<vec3f, 4>) -> f32 {
-+    var ind = ind_in;
-+    let ind_stage = bits(st.c, 16u, 2u);
++// No arrays indexed at run time in the fragment stage: GPUs keep those in (slow) local memory.
++// Registers, texcoords and indirect results are separate values chosen with select chains.
++fn pick4(i: u32, v0: vec4f, v1: vec4f, v2: vec4f, v3: vec4f) -> vec4f {
++    return select(select(select(v0, v1, i == 1u), v2, i == 2u), v3, i == 3u);
++}
++fn pick3(i: u32, v0: vec3f, v1: vec3f, v2: vec3f, v3: vec3f) -> vec3f {
++    return select(select(select(v0, v1, i == 1u), v2, i == 2u), v3, i == 3u);
++}
++
++// A texture coordinate (perspective-divided for GX_TG_MTX3x4).
++fn tex_coord(in: VertexOutput, i: u32) -> vec2f {
++    var v = in.tex7;
++    switch (i) {
++        case 0u: { v = in.tex0; }
++        case 1u: { v = in.tex1; }
++        case 2u: { v = in.tex2; }
++        case 3u: { v = in.tex3; }
++        case 4u: { v = in.tex4; }
++        case 5u: { v = in.tex5; }
++        case 6u: { v = in.tex6; }
++        default: {}
++    }
++    if (bits(tcg(min(i, 7u)), 0u, 4u) == 0u) {
++        return v.xy / v.z;
++    }
++    return v.xy;
++}
++
++fn sample_ind(in: VertexOutput, i: u32) -> vec3f {
++    let s = ind_stage(i);
++    let coord = bits(s, 0u, 4u);
++    let map = bits(s, 4u, 4u);
++    let uv = tex_coord(in, coord) * ubuf.texcoord_scale[coord].xy *
++             vec2f(ind_scale(bits(s, 8u, 4u)), ind_scale(bits(s, 12u, 4u))) / ubuf.tex_size_bias[map].xy;
++    return 255.0 * sample_tex(map, uv).abg;
++}
++
++fn alpha_bump(st: Stage, ind: vec3f) -> f32 {
 +    let sel = bits(st.c, 23u, 2u);
-+    if (ind_stage >= num_ind_stages() || sel == 0u) {
++    if (bits(st.c, 16u, 2u) >= num_ind_stages() || sel == 0u) {
 +        return 0.0;
 +    }
-+    let v = ind[ind_stage][sel - 1u];
++    let v = ind[sel - 1u];
 +    var mask = 0xF8u;
 +    let fmt = bits(st.c, 18u, 2u);
 +    if (fmt == 1u) {
@@ -983,65 +1118,41 @@ new file mode 100644
 +}
 +
 +// A color or alpha raster input: the channel's color, or an indirect stage's bump alpha.
-+fn ras_value(st: Stage, rast_in: array<vec4f, 2>, ind: array<vec3f, 4>) -> vec4f {
-+    var rast = rast_in;
-+    let chan = bits(st.c, 8u, 4u);
-+    if (chan == 6u || chan == 15u) {
++// The raster input's source (pack_uber_config): 0 none, 1/2 color channel 0/1, 3/4 bump alpha
++// (GX_ALPHA_BUMP / GX_ALPHA_BUMPN).
++fn ras_value(st: Stage, rast0: vec4f, rast1: vec4f, ind: vec3f) -> vec4f {
++    let kind = bits(st.d, 9u, 3u);
++    if (kind == 0u) {
 +        return vec4f(0.0);
 +    }
-+    if (chan == 7u || chan == 8u) {
++    if (ADVANCED && kind >= 3u) {
 +        var alpha = alpha_bump(st, ind);
-+        if (chan == 8u) {
++        if (kind == 4u) {
 +            alpha = alpha * (255.0 / 248.0);
 +        }
 +        return vec4f(alpha);
 +    }
-+    let idx = select(0u, 1u, chan == 1u || chan == 3u || chan == 5u);
-+    return swizzle(rast[idx], bits(st.c, 12u, 2u));
++    let c = select(rast0, rast1, kind == 2u);
++    if (bits(st.d, 12u, 1u) != 0u) {
++        return c;
++    }
++    return swizzle(c, bits(st.c, 12u, 2u));
 +}
 +
-+fn color_arg(arg: u32, st: Stage, regs: array<vec4f, 4>, tex: vec4f, ras: vec4f) -> vec3f {
-+    switch (arg) {
-+        case 0u: { return regs[0].rgb; }
-+        case 1u: { return vec3f(regs[0].a); }
-+        case 2u: { return regs[1].rgb; }
-+        case 3u: { return vec3f(regs[1].a); }
-+        case 4u: { return regs[2].rgb; }
-+        case 5u: { return vec3f(regs[2].a); }
-+        case 6u: { return regs[3].rgb; }
-+        case 7u: { return vec3f(regs[3].a); }
-+        case 8u: { return tex.rgb; }
-+        case 9u: { return vec3f(tex.a); }
-+        case 10u: { return ras.rgb; }
-+        case 11u: { return vec3f(ras.a); }
-+        case 12u: { return vec3f(1.0); }
-+        case 13u: { return vec3f(0.5); }
-+        case 14u: { return konst_color(bits(st.b, 22u, 5u)); }
-+        default: { return vec3f(0.0); }
-+    }
++// TEV arguments, branch-free: a color argument is one of 8 values (the registers, the texture, the
++// raster color, (1, 1, 1, 0.5), (konst, 0)), its color or its alpha splat: CPREV/APREV ... ONE/HALF,
++// KONST/ZERO. An alpha argument is the alpha of APREV, A0-A2, TEXA, RASA, KONST, ZERO.
++fn pick8(i: u32, v0: vec4f, v1: vec4f, v2: vec4f, v3: vec4f, v4: vec4f, v5: vec4f, v6: vec4f, v7: vec4f) -> vec4f {
++    let lo = pick4(i & 3u, v0, v1, v2, v3);
++    let hi = pick4(i & 3u, v4, v5, v6, v7);
++    return select(lo, hi, i >= 4u);
 +}
-+// Whether a color argument reads a register holding a clamped (normalized) value.
-+fn color_arg_normalized(arg: u32, color_norm: vec4<bool>, alpha_norm: vec4<bool>) -> bool {
-+    if (arg >= 8u) {
-+        return true;
-+    }
-+    if ((arg & 1u) == 0u) {
-+        return color_norm[arg / 2u];
-+    }
-+    return alpha_norm[arg / 2u];
++fn color_arg(arg: u32, k: vec4f, r0: vec4f, r1: vec4f, r2: vec4f, r3: vec4f, tex: vec4f, ras: vec4f) -> vec3f {
++    let v = pick8(arg / 2u, r0, r1, r2, r3, tex, ras, vec4f(1.0, 1.0, 1.0, 0.5), vec4f(k.rgb, 0.0));
++    return select(v.rgb, vec3f(v.a), (arg & 1u) != 0u);
 +}
-+
-+fn alpha_arg(arg: u32, st: Stage, regs: array<vec4f, 4>, tex: vec4f, ras: vec4f) -> f32 {
-+    switch (arg) {
-+        case 0u: { return regs[0].a; }
-+        case 1u: { return regs[1].a; }
-+        case 2u: { return regs[2].a; }
-+        case 3u: { return regs[3].a; }
-+        case 4u: { return tex.a; }
-+        case 5u: { return ras.a; }
-+        case 6u: { return konst_alpha(bits(st.b, 27u, 5u)); }
-+        default: { return 0.0; }
-+    }
++fn alpha_arg(arg: u32, k: vec4f, r0: vec4f, r1: vec4f, r2: vec4f, r3: vec4f, tex: vec4f, ras: vec4f) -> f32 {
++    return pick8(arg, r0, r1, r2, r3, tex, ras, vec4f(k.a), vec4f(0.0)).a;
 +}
 +
 +fn tev_bias(bias: u32) -> f32 {
@@ -1064,9 +1175,25 @@ new file mode 100644
 +    }
 +}
 +
++fn tev_scale_factor(scale: u32) -> f32 {
++    return select(select(select(1.0, 2.0, scale == 1u), 4.0, scale == 2u), 0.5, scale == 3u);
++}
++
 +fn tev_color_op(op: u32, bias: u32, scale: u32, clamped: bool, a: vec3f, b: vec3f, c: vec3f, d: vec3f) -> vec3f {
 +    var r: vec3f;
 +    let zero = vec3f(0.0);
++    if (op <= 1u) {
++        // GX_TEV_ADD / GX_TEV_SUB, by far the most common: no comparison ops evaluated
++        let m = select(mix(a, b, c), -mix(a, b, c), op == 1u);
++        r = ((m + d) + tev_bias(bias)) * tev_scale_factor(scale);
++        if (clamped) {
++            return clamp(r, vec3f(0.0), vec3f(1.0));
++        }
++        return clamp(r, vec3f(-4.0), vec3f(4.0));
++    }
++    if (!ADVANCED) {
++        return vec3f(0.0);
++    }
 +    switch (op) {
 +        case 0u: { r = tev_scaled3((mix(a, b, c) + d) + tev_bias(bias), scale); }
 +        case 1u: { r = tev_scaled3((-mix(a, b, c) + d) + tev_bias(bias), scale); }
@@ -1098,6 +1225,17 @@ new file mode 100644
 +// The alpha op. For the packed comparisons (8-13) a and b are the stage's color A and B.
 +fn tev_alpha_op(op: u32, bias: u32, scale: u32, clamped: bool, a: vec3f, b: vec3f, c: f32, d: f32) -> f32 {
 +    var r: f32;
++    if (op <= 1u) {
++        let m = select(mix(a.x, b.x, c), -mix(a.x, b.x, c), op == 1u);
++        r = ((m + d) + tev_bias(bias)) * tev_scale_factor(scale);
++        if (clamped) {
++            return clamp(r, 0.0, 1.0);
++        }
++        return clamp(r, -4.0, 4.0);
++    }
++    if (!ADVANCED) {
++        return 0.0;
++    }
 +    switch (op) {
 +        case 0u: { r = tev_scaled1((mix(a.x, b.x, c) + d) + tev_bias(bias), scale); }
 +        case 1u: { r = tev_scaled1((-mix(a.x, b.x, c) + d) + tev_bias(bias), scale); }
@@ -1157,44 +1295,42 @@ new file mode 100644
 +@@FRAGMENT_OUTPUT@@
 +@fragment
 +fn fs_main(in: VertexOutput) -> @@FRAGMENT_OUTPUT_TYPE@@ {
-+    var tex_in = array<vec3f, 8>(in.tex0, in.tex1, in.tex2, in.tex3, in.tex4, in.tex5, in.tex6, in.tex7);
-+    var tex_uv: array<vec2f, 8>;
-+    for (var i = 0u; i < 8u; i++) {
-+        tex_uv[i] = select(tex_in[i].xy, tex_in[i].xy / tex_in[i].z, bits(tcg(i), 0u, 4u) == 0u);
-+    }
-+    var rast = array<vec4f, 2>(in.cc0, in.cc1);
++    let rast0 = in.cc0;
++    let rast1 = in.cc1;
++    let n_ind = num_ind_stages();
 +
 +    // Indirect stages, each sampled once
-+    var ind: array<vec3f, 4>;
-+    for (var i = 0u; i < 4u; i++) {
-+        if ((used_ind_stages() & (1u << i)) == 0u) { continue; }
-+        let s = ind_stage(i);
-+        let coord = bits(s, 0u, 4u);
-+        let map = bits(s, 4u, 4u);
-+        let uv = tex_uv[coord] * ubuf.texcoord_scale[coord].xy * vec2f(ind_scale(bits(s, 8u, 4u)), ind_scale(bits(s, 12u, 4u))) /
-+                 ubuf.tex_size_bias[map].xy;
-+        ind[i] = 255.0 * sample_tex(map, uv).abg;
-+    }
-+    let any_ind = used_ind_stages() != 0u;
++    let used_ind = select(0u, used_ind_stages(), ADVANCED);
++    var ind0 = vec3f(0.0);
++    var ind1 = vec3f(0.0);
++    var ind2 = vec3f(0.0);
++    var ind3 = vec3f(0.0);
++    if ((used_ind & 1u) != 0u) { ind0 = sample_ind(in, 0u); }
++    if ((used_ind & 2u) != 0u) { ind1 = sample_ind(in, 1u); }
++    if ((used_ind & 4u) != 0u) { ind2 = sample_ind(in, 2u); }
++    if ((used_ind & 8u) != 0u) { ind3 = sample_ind(in, 3u); }
++    let any_ind = used_ind != 0u;
 +    var t_tex_coord = vec2f(0.0);
 +
 +    let loads = loads_tev_reg();
-+    var regs: array<vec4f, 4>;
-+    for (var r = 0u; r < 4u; r++) {
-+        if ((loads & (1u << r)) != 0u) {
-+            regs[r] = ubuf.tevregs[r];
-+        }
-+    }
-+    var color_norm = vec4<bool>(false);
-+    var alpha_norm = vec4<bool>(false);
++    var r0 = vec4f(0.0);
++    var r1 = vec4f(0.0);
++    var r2 = vec4f(0.0);
++    var r3 = vec4f(0.0);
++    if ((loads & 1u) != 0u) { r0 = ubuf.tevregs[0]; }
++    if ((loads & 2u) != 0u) { r1 = ubuf.tevregs[1]; }
++    if ((loads & 4u) != 0u) { r2 = ubuf.tevregs[2]; }
++    if ((loads & 8u) != 0u) { r3 = ubuf.tevregs[3]; }
 +    let count = tev_stage_count();
 +    var last = Stage(0u, 0u, 0u, 0u);
 +    for (var s = 0u; s < count; s++) {
-+        let base = 36u + s * 4u;
-+        let st = Stage(cfg(base), cfg(base + 1u), cfg(base + 2u), cfg(base + 3u));
++        let words = ubuf.cfg[9u + s];
++        let st = Stage(words.x, words.y, words.z, words.w);
 +        last = st;
-+        let tex_coord = bits(st.c, 0u, 4u);
++        let tex_coord_id = bits(st.c, 0u, 4u);
 +        let tex_map = bits(st.c, 4u, 4u);
++        let ind_stage_id = bits(st.c, 16u, 2u);
++        let ind = pick3(ind_stage_id, ind0, ind1, ind2, ind3);
 +        let ind_mtx = bits(st.c, 25u, 4u);
 +        let wrap_s = bits(st.d, 0u, 3u);
 +        let wrap_t = bits(st.d, 3u, 3u);
@@ -1202,19 +1338,23 @@ new file mode 100644
 +        let uses_sample = bits(st.d, 8u, 1u) != 0u;
 +
 +        // Texture coordinate (with indirect texturing) and sample
-+        var tex = vec4f(0.0);
-+        let needs_tev_coord = ind_mtx != 0u || wrap_s != 0u || wrap_t != 0u || add_prev;
++        var tex = vec4f(1.0);
++        let needs_tev_coord = ADVANCED && (ind_mtx != 0u || wrap_s != 0u || wrap_t != 0u || add_prev);
 +        if (needs_tev_coord || uses_sample) {
 +            let has_base_tex = tex_map != 15u;
-+            let has_base_coord = tex_coord != 15u && has_base_tex;
-+            var uv_in = tex_uv[min(tex_coord, 7u)];
++            let has_base_coord = tex_coord_id != 15u && has_base_tex;
++            // The stage's texcoord, perspective-divided for GX_TG_MTX3x4 (flag from pack_uber_config)
++            let uvw = pick8(tex_coord_id & 7u, vec4f(in.tex0, 0.0), vec4f(in.tex1, 0.0), vec4f(in.tex2, 0.0),
++                            vec4f(in.tex3, 0.0), vec4f(in.tex4, 0.0), vec4f(in.tex5, 0.0), vec4f(in.tex6, 0.0),
++                            vec4f(in.tex7, 0.0)).xyz;
++            let base_uv = select(uvw.xy, uvw.xy / uvw.z, bits(st.d, 20u, 1u) != 0u);
++            var uv_in = base_uv;
 +            if (needs_tev_coord) {
-+                let ind_stage = bits(st.c, 16u, 2u);
 +                var offset = vec2f(0.0);
 +                var has_offset = false;
-+                if (ind_mtx != 0u && ind_stage < num_ind_stages()) {
++                if (ind_mtx != 0u && ind_stage_id < n_ind) {
 +                    let fmt = bits(st.c, 18u, 2u);
-+                    var coord = ind[ind_stage];
++                    var coord = ind;
 +                    if (fmt != 0u) {
 +                        coord = floor(coord / f32(4u << fmt));
 +                    }
@@ -1229,11 +1369,11 @@ new file mode 100644
 +                        offset = vec2f(dot(vec3f(c0.xz, c1.x), coord), dot(vec3f(c0.yw, c1.y), coord)) * c1.z;
 +                        has_offset = true;
 +                    } else if (ind_mtx >= 5u && ind_mtx <= 7u && has_base_coord) {
-+                        offset = tex_uv[tex_coord] * ubuf.texcoord_scale[tex_coord].xy * coord.x *
++                        offset = base_uv * ubuf.texcoord_scale[tex_coord_id].xy * coord.x *
 +                                 ubuf.ind_mtx[ind_mtx - 5u][1][2] / 256.0;
 +                        has_offset = true;
 +                    } else if (ind_mtx >= 9u && ind_mtx <= 11u && has_base_coord) {
-+                        offset = tex_uv[tex_coord] * ubuf.texcoord_scale[tex_coord].xy * coord.y *
++                        offset = base_uv * ubuf.texcoord_scale[tex_coord_id].xy * coord.y *
 +                                 ubuf.ind_mtx[ind_mtx - 9u][1][2] / 256.0;
 +                        has_offset = true;
 +                    }
@@ -1242,9 +1382,9 @@ new file mode 100644
 +                var final_coord = vec2f(0.0);
 +                var has_final = false;
 +                if (has_base_coord) {
-+                    var base_coord = tex_uv[tex_coord];
++                    var base_coord = base_uv;
 +                    if (!simple) {
-+                        base_coord = base_coord * ubuf.texcoord_scale[tex_coord].xy;
++                        base_coord = base_coord * ubuf.texcoord_scale[tex_coord_id].xy;
 +                    }
 +                    if (wrap_s != 0u || wrap_t != 0u) {
 +                        base_coord = vec2f(ind_wrap(wrap_s, base_coord.x), ind_wrap(wrap_t, base_coord.y));
@@ -1270,64 +1410,71 @@ new file mode 100644
 +                }
 +            }
 +            if (uses_sample) {
-+                tex = swizzle(sample_tex(tex_map, uv_in), bits(st.c, 14u, 2u));
++                tex = sample_tex(tex_map, uv_in);
++                if (bits(st.d, 13u, 1u) == 0u) {
++                    tex = swizzle(tex, bits(st.c, 14u, 2u));
++                }
 +            }
 +        }
-+        if (tex_map == 15u) {
-+            tex = vec4f(1.0);
-+        }
-+        let ras = ras_value(st, rast, ind);
++        let ras = ras_value(st, rast0, rast1, ind);
 +
 +        // Color
 +        let ca = bits(st.a, 0u, 4u);
 +        let cb = bits(st.a, 4u, 4u);
 +        let cc = bits(st.a, 8u, 4u);
 +        let cd = bits(st.a, 12u, 4u);
-+        var a3 = color_arg(ca, st, regs, tex, ras);
-+        var b3 = color_arg(cb, st, regs, tex, ras);
-+        var c3 = color_arg(cc, st, regs, tex, ras);
-+        let d3 = color_arg(cd, st, regs, tex, ras);
-+        if (!color_arg_normalized(ca, color_norm, alpha_norm)) { a3 = tev_overflow_vec3f(a3); }
-+        if (!color_arg_normalized(cb, color_norm, alpha_norm)) { b3 = tev_overflow_vec3f(b3); }
-+        if (!color_arg_normalized(cc, color_norm, alpha_norm)) { c3 = tev_overflow_vec3f(c3); }
-+        let cop = bits(st.b, 0u, 4u);
++        let k = ubuf.konst[s];
++        var a3 = color_arg(ca, k, r0, r1, r2, r3, tex, ras);
++        var b3 = color_arg(cb, k, r0, r1, r2, r3, tex, ras);
++        var c3 = color_arg(cc, k, r0, r1, r2, r3, tex, ras);
++        let d3 = color_arg(cd, k, r0, r1, r2, r3, tex, ras);
++        // Arguments read from registers last written unclamped wrap (flags from pack_uber_config)
++        let wrap = bits(st.d, 14u, 6u);
++        if ((wrap & 1u) != 0u) { a3 = tev_overflow_vec3f(a3); }
++        if ((wrap & 2u) != 0u) { b3 = tev_overflow_vec3f(b3); }
++        if ((wrap & 4u) != 0u) { c3 = tev_overflow_vec3f(c3); }
 +        let cout = bits(st.b, 8u, 2u);
-+        let cclamp = bits(st.b, 10u, 1u) != 0u;
-+        regs[cout] = vec4f(tev_color_op(cop, bits(st.b, 4u, 2u), bits(st.b, 6u, 2u), cclamp, a3, b3, c3, d3),
-+                           regs[cout].a);
-+        color_norm[cout] = cclamp;
++        let cclamp = bits(st.b, 10u, 1u);
++        let color = tev_color_op(bits(st.b, 0u, 4u), bits(st.b, 4u, 2u), bits(st.b, 6u, 2u), cclamp != 0u, a3, b3, c3, d3);
++        r0 = select(r0, vec4f(color, r0.a), cout == 0u);
++        r1 = select(r1, vec4f(color, r1.a), cout == 1u);
++        r2 = select(r2, vec4f(color, r2.a), cout == 2u);
++        r3 = select(r3, vec4f(color, r3.a), cout == 3u);
 +
 +        // Alpha
 +        let aop = bits(st.b, 11u, 4u);
 +        let aout = bits(st.b, 19u, 2u);
-+        let aclamp = bits(st.b, 21u, 1u) != 0u;
++        let aclamp = bits(st.b, 21u, 1u);
 +        let aa = bits(st.a, 16u, 3u);
 +        let ab = bits(st.a, 19u, 3u);
 +        let ac = bits(st.a, 22u, 3u);
-+        var a1 = alpha_arg(aa, st, regs, tex, ras);
-+        var b1 = alpha_arg(ab, st, regs, tex, ras);
-+        var c1 = alpha_arg(ac, st, regs, tex, ras);
-+        let d1 = alpha_arg(bits(st.a, 25u, 3u), st, regs, tex, ras);
-+        if (aa < 4u && !alpha_norm[aa]) { a1 = tev_overflow_f32(a1); }
-+        if (ab < 4u && !alpha_norm[ab]) { b1 = tev_overflow_f32(b1); }
-+        if (ac < 4u && !alpha_norm[ac]) { c1 = tev_overflow_f32(c1); }
++        var a1 = alpha_arg(aa, k, r0, r1, r2, r3, tex, ras);
++        var b1 = alpha_arg(ab, k, r0, r1, r2, r3, tex, ras);
++        var c1 = alpha_arg(ac, k, r0, r1, r2, r3, tex, ras);
++        let d1 = alpha_arg(bits(st.a, 25u, 3u), k, r0, r1, r2, r3, tex, ras);
++        if ((wrap & 8u) != 0u) { a1 = tev_overflow_f32(a1); }
++        if ((wrap & 16u) != 0u) { b1 = tev_overflow_f32(b1); }
++        if ((wrap & 32u) != 0u) { c1 = tev_overflow_f32(c1); }
 +        var alpha_a = vec3f(a1);
 +        var alpha_b = vec3f(b1);
 +        if (aop >= 8u && aop <= 13u) {
 +            alpha_a = a3;
 +            alpha_b = b3;
 +        }
-+        regs[aout].a = tev_alpha_op(aop, bits(st.b, 15u, 2u), bits(st.b, 17u, 2u), aclamp, alpha_a, alpha_b, c1, d1);
-+        alpha_norm[aout] = aclamp;
++        let alpha = tev_alpha_op(aop, bits(st.b, 15u, 2u), bits(st.b, 17u, 2u), aclamp != 0u, alpha_a, alpha_b, c1, d1);
++        r0.a = select(r0.a, alpha, aout == 0u);
++        r1.a = select(r1.a, alpha, aout == 1u);
++        r2.a = select(r2.a, alpha, aout == 2u);
++        r3.a = select(r3.a, alpha, aout == 3u);
 +    }
 +    let last_cout = bits(last.b, 8u, 2u);
 +    let last_aout = bits(last.b, 19u, 2u);
-+    var prev = regs[0];
++    var prev = r0;
 +    if (last_cout != 0u) {
-+        prev = vec4f(regs[last_cout].rgb, prev.a);
++        prev = vec4f(pick4(last_cout, r0, r1, r2, r3).rgb, prev.a);
 +    }
 +    if (last_aout != 0u) {
-+        prev.a = regs[last_aout].a;
++        prev.a = pick4(last_aout, r0, r1, r2, r3).a;
 +    }
 +
 +    // Fog
@@ -1358,10 +1505,11 @@ new file mode 100644
 +        prev = vec4f(mix(prev.rgb, ubuf.fog.color.rgb, clamp(fog_z, 0.0, 1.0)), prev.a);
 +    }
 +
-+    if (!color_norm[last_cout]) {
++    let masks = cfg(2u);
++    if (bits(masks, 18u, 1u) != 0u) {
 +        prev = vec4f(tev_overflow_vec3f(prev.rgb), prev.a);
 +    }
-+    if (!alpha_norm[last_aout]) {
++    if (bits(masks, 19u, 1u) != 0u) {
 +        prev.a = tev_overflow_f32(prev.a);
 +    }
 +
@@ -1392,8 +1540,14 @@ new file mode 100644
 +  }
 +}
 +
-+std::string uber_shader_source(u8 lineMode, uint32_t normalAttachment, DstAlphaMode dstAlphaMode) {
++std::string uber_shader_source(u8 lineMode, u8 features, uint32_t normalAttachment, DstAlphaMode dstAlphaMode) {
 +  std::string src{UberSource};
++  replace_all(src, "@@ADVANCED@@", (features & UberFeatureAdvanced) != 0 ? "true" : "false");
++  if ((features & UberFeatureAlphaTest) == 0) {
++    // A shader that may discard can't be depth-tested early: without it, hidden fragments
++    // aren't shaded at all.
++    replace_all(src, "            discard;\n", "");
++  }
 +  replace_all(src, "@@ENABLE@@", dstAlphaMode == DstAlphaMode::DualSource ? "enable dual_source_blending;" : "");
 +  replace_all(src, "@@LINE_MODE@@", std::to_string(lineMode));
 +  replace_all(src, "@@IIDX@@", ",\n    @builtin(instance_index) iidx: u32");
@@ -1446,11 +1600,46 @@ new file mode 100644
 +  PipelineConfig uber = config;
 +  uber.shaderConfig = {};
 +  uber.shaderConfig.lineMode = config.shaderConfig.lineMode;
++  // Without an alpha test the module has no discard, so the GPU can depth-test before shading.
++  // Features (UberFeature*) the module needs: without an alpha test it has no discard, so the GPU
++  // can depth-test before shading; without the advanced ones their code is left out.
++  const auto& sc = config.shaderConfig;
++  bool advanced = false;
++  for (u32 s = 0; s < sc.tevStageCount && s < MaxTevStages; ++s) {
++    const auto& st = sc.tevStages[s];
++    advanced = advanced || st.colorOp.op >= GX_TEV_COMP_R8_GT || st.alphaOp.op >= GX_TEV_COMP_R8_GT ||
++               st.indTexMtxId != GX_ITM_OFF || st.indTexWrapS != GX_ITW_OFF || st.indTexWrapT != GX_ITW_OFF ||
++               st.indTexAddPrev || st.channelId == GX_ALPHA_BUMP || st.channelId == GX_ALPHA_BUMPN;
++  }
++  uber.shaderConfig.pad1 = (static_cast<bool>(sc.alphaCompare) ? UberFeatureAlphaTest : 0) |
++                           (advanced ? UberFeatureAdvanced : 0);
 +  uber.shaderConfig.pad2 = UberShaderMarker;
 +  return uber;
 +}
 +
-+wgpu::ShaderModule build_uber_shader(u8 lineMode, const gfx::RenderTargetLayout& layout,
++std::vector<PipelineConfig> uber_prewarm_configs() noexcept {
++  std::vector<PipelineConfig> configs;
++  for (u8 features = 0; features <= (UberFeatureAlphaTest | UberFeatureAdvanced); ++features) {
++    PipelineConfig config{};
++    config.depthFunc = GX_LEQUAL;
++    config.cullMode = GX_CULL_BACK;
++    config.blendMode = GX_BM_NONE;
++    config.blendFacSrc = GX_BL_ONE;
++    config.blendFacDst = GX_BL_ZERO;
++    config.blendOp = GX_LO_CLEAR;
++    config.dstAlpha = UINT32_MAX;
++    config.depthCompare = true;
++    config.depthUpdate = true;
++    config.colorUpdate = true;
++    config.alphaUpdate = true;
++    config.shaderConfig.pad1 = features;
++    config.shaderConfig.pad2 = UberShaderMarker;
++    configs.push_back(config);
++  }
++  return configs;
++}
++
++wgpu::ShaderModule build_uber_shader(u8 lineMode, u8 features, const gfx::RenderTargetLayout& layout,
 +                                     DstAlphaMode dstAlphaMode) noexcept {
 +  ZoneScoped;
 +  uint32_t normalAttachment = UINT32_MAX;
@@ -1461,12 +1650,13 @@ new file mode 100644
 +  }
 +  static std::mutex mutex;
 +  static absl::flat_hash_map<u64, wgpu::ShaderModule> modules;
-+  const u64 key = u64{lineMode} | u64{normalAttachment & 0xFFu} << 8 | u64{underlying(dstAlphaMode)} << 16;
++  const u64 key = u64{lineMode} | u64{normalAttachment & 0xFFu} << 8 | u64{underlying(dstAlphaMode)} << 16 |
++                  u64{features} << 24;
 +  std::lock_guard lock{mutex};
 +  if (const auto it = modules.find(key); it != modules.end()) {
 +    return it->second;
 +  }
-+  const auto source = uber_shader_source(lineMode, normalAttachment, dstAlphaMode);
++  const auto source = uber_shader_source(lineMode, features, normalAttachment, dstAlphaMode);
 +  wgpu::ShaderSourceWGSL wgsl{};
 +  wgsl.code = source.c_str();
 +  const auto label = fmt::format("GX Ubershader {:x}", key);
@@ -1480,9 +1670,9 @@ new file mode 100644
 +  return module;
 +}
 +
-+gfx::Range push_uber_config(const ShaderConfig& config, const ShaderInfo& info) noexcept {
++void pack_uber_config(const ShaderConfig& config, const ShaderInfo& info, UberConfig& w) noexcept {
 +  ZoneScoped;
-+  std::array<u32, CfgWords> w{};
++  w = {};
 +  const auto& nrm = config.attrs[GX_VA_NRM];
 +  w[CfgHeader] = (config.tevStageCount & 31u) | (config.numIndStages & 7u) << 5 | (config.fogType & 31u) << 8 |
 +                 u32{config.fogRangeEnabled} << 13 | u32{config.lineMode} << 14 | u32{config.vtxStride} << 16 |
@@ -1520,8 +1710,40 @@ new file mode 100644
 +    w[CfgAttrs + a] = (m.attrType & 3u) | (m.cnt & 15u) << 2 | (m.compType & 15u) << 6 | u32{m.offset} << 10 |
 +                      u32{m.stride} << 18 | (m.frac & 31u) << 26 | u32{m.le} << 31;
 +  }
++  // Which arguments wrap on overflow: as build_shader_source tracks it, registers whose color or
++  // alpha was last written unclamped (or not yet written) aren't normalized.
++  std::array<bool, MaxTevRegs> colorNormalized{};
++  std::array<bool, MaxTevRegs> alphaNormalized{};
++  const auto colorNorm = [&](GXTevColorArg arg) {
++    switch (arg) {
++    case GX_CC_CPREV: return colorNormalized[GX_TEVPREV];
++    case GX_CC_APREV: return alphaNormalized[GX_TEVPREV];
++    case GX_CC_C0: return colorNormalized[GX_TEVREG0];
++    case GX_CC_A0: return alphaNormalized[GX_TEVREG0];
++    case GX_CC_C1: return colorNormalized[GX_TEVREG1];
++    case GX_CC_A1: return alphaNormalized[GX_TEVREG1];
++    case GX_CC_C2: return colorNormalized[GX_TEVREG2];
++    case GX_CC_A2: return alphaNormalized[GX_TEVREG2];
++    default: return true;
++    }
++  };
++  const auto alphaNorm = [&](GXTevAlphaArg arg) {
++    switch (arg) {
++    case GX_CA_APREV: return alphaNormalized[GX_TEVPREV];
++    case GX_CA_A0: return alphaNormalized[GX_TEVREG0];
++    case GX_CA_A1: return alphaNormalized[GX_TEVREG1];
++    case GX_CA_A2: return alphaNormalized[GX_TEVREG2];
++    default: return true;
++    }
++  };
 +  for (u32 s = 0; s < config.tevStageCount && s < MaxTevStages; ++s) {
 +    const auto& st = config.tevStages[s];
++    const u32 wrap = u32{!colorNorm(st.colorPass.a)} | u32{!colorNorm(st.colorPass.b)} << 1 |
++                     u32{!colorNorm(st.colorPass.c)} << 2;
++    colorNormalized[st.colorOp.outReg] = st.colorOp.clamp;
++    const u32 wrapAlpha = u32{!alphaNorm(st.alphaPass.a)} | u32{!alphaNorm(st.alphaPass.b)} << 1 |
++                          u32{!alphaNorm(st.alphaPass.c)} << 2;
++    alphaNormalized[st.alphaOp.outReg] = st.alphaOp.clamp;
 +    const auto usesSample = [&] {
 +      if (st.texMapId == GX_TEXMAP_NULL) {
 +        return false;
@@ -1543,10 +1765,25 @@ new file mode 100644
 +    base[2] = null4(st.texCoordId) | null4(st.texMapId) << 4 | null4(st.channelId) << 8 | (st.tevSwapRas & 3u) << 12 |
 +              (st.tevSwapTex & 3u) << 14 | (st.indTexStage & 3u) << 16 | (st.indTexFormat & 3u) << 18 |
 +              (st.indTexBiasSel & 7u) << 20 | (st.indTexAlphaSel & 3u) << 23 | (st.indTexMtxId & 15u) << 25;
++    u32 rasKind = 0;
++    if (st.channelId == GX_ALPHA_BUMP) {
++      rasKind = 3;
++    } else if (st.channelId == GX_ALPHA_BUMPN) {
++      rasKind = 4;
++    } else if (st.channelId != GX_COLOR_ZERO && st.channelId != GX_COLOR_NULL) {
++      rasKind = 1 + color_channel(st.channelId);
++    }
++    const TevSwap identity{};
 +    base[3] = (st.indTexWrapS & 7u) | (st.indTexWrapT & 7u) << 3 | u32{st.indTexUseOrigLOD} << 6 |
-+              u32{st.indTexAddPrev} << 7 | u32{usesSample} << 8;
++              u32{st.indTexAddPrev} << 7 | u32{usesSample} << 8 | rasKind << 9 |
++              u32{config.tevSwapTable[st.tevSwapRas] == identity} << 12 |
++              u32{config.tevSwapTable[st.tevSwapTex] == identity} << 13 | wrap << 14 | wrapAlpha << 17 |
++              u32{st.texCoordId < MaxTexCoord && config.tcgs[st.texCoordId].type == GX_TG_MTX3x4} << 20;
 +  }
-+  return gfx::push_storage(reinterpret_cast<const uint8_t*>(w.data()), sizeof(w));
++  if (config.tevStageCount > 0) {
++    const auto& last = config.tevStages[std::min<u32>(config.tevStageCount, MaxTevStages) - 1];
++    w[CfgMasks] |= u32{!colorNormalized[last.colorOp.outReg]} << 18 | u32{!alphaNormalized[last.alphaOp.outReg]} << 19;
++  }
 +}
 +
 +} // namespace aurora::gx
@@ -1560,11 +1797,13 @@ diff --git a/lib/gx/ubershader.hpp b/lib/gx/ubershader.hpp
 new file mode 100644
 --- /dev/null
 +++ b/lib/gx/ubershader.hpp
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,48 @@
 +#pragma once
 +
 +#include "gx.hpp"
 +#include "pipeline.hpp"
++
++#include <vector>
 +
 +// Ubershaders: one generic shader that reads the GX state (vertex format, texgens, lighting, TEV
 +// stages, indirect texturing, fog, alpha test) from the draw's data instead of baking it in. A draw
@@ -1582,18 +1821,28 @@ new file mode 100644
 +void set_uber_shader_mode(UberShaderMode mode) noexcept;
 +
 +// An ubershader pipeline config: the config's fixed-function state, with the shader part blanked
-+// except the primitive's line mode and a marker (ShaderConfig::pad2).
++// except the primitive's line mode, the module features it needs (ShaderConfig::pad1) and a marker
++// (ShaderConfig::pad2).
 +constexpr u8 UberShaderMarker = 0xA5;
 +inline bool is_uber_config(const ShaderConfig& config) noexcept { return config.pad2 == UberShaderMarker; }
 +PipelineConfig make_uber_pipeline_config(const PipelineConfig& config) noexcept;
++// Ubershader pipelines for each main module variant (triangles, every feature combination), built
++// in the background at startup so the modules are compiled before the game needs them.
++std::vector<PipelineConfig> uber_prewarm_configs() noexcept;
 +
-+wgpu::ShaderModule build_uber_shader(u8 lineMode, const gfx::RenderTargetLayout& layout,
++// Module features (ShaderConfig::pad1 of an ubershader pipeline config)
++constexpr u8 UberFeatureAlphaTest = 1;
++constexpr u8 UberFeatureAdvanced = 2; // indirect texturing, comparison TEV ops, bump alpha
++wgpu::ShaderModule build_uber_shader(u8 lineMode, u8 features, const gfx::RenderTargetLayout& layout,
 +                                     DstAlphaMode dstAlphaMode) noexcept;
 +
-+// The draw's packed shader config, in the storage buffer (its word offset goes in the draw's
-+// immediates as cfgBase).
-+gfx::Range push_uber_config(const ShaderConfig& config, const ShaderInfo& info) noexcept;
++// The draw's packed shader config, which ends the ubershader's uniform.
++constexpr u32 UberCfgWords = 100;
++using UberConfig = std::array<u32, UberCfgWords>;
++void pack_uber_config(const ShaderConfig& config, const ShaderInfo& info, UberConfig& out) noexcept;
 +// The ubershader's uniform (build_uber_uniform, shader_info.hpp): every field any specialized
-+// shader can use, in a fixed layout of exactly MaxUniformSize bytes.
++// shader can use, in a fixed layout, then the config.
++constexpr u32 UberUniformSize = 3840 + UberCfgWords * 4 + MaxTevStages * 16; // + each stage's konst
++static_assert(UberUniformSize <= MaxUniformSize);
 +
 +} // namespace aurora::gx

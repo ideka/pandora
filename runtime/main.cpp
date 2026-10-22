@@ -33,6 +33,7 @@ static void usage() {
     std::fprintf(stderr,
                  "usage: pandora --disc <extracted partition> [--headless | --background] [--nand <dir>] [--map <file>]\n"
                  "               [--max-blocks N] [--audio-dump <wav>] [--mute] [--unthrottled] [--window <w>x<h>]\n"
+                 "               [--temp-cache] (shader caches in a temporary folder, deleted on exit: a first run)\n"
                  "               [--profile] [-v|-vv|-vvv]\n"
                  "               [--screenshot <frame>:<file.png>]... [--exit-after <frames>]\n"
                  "               [--press <button>@<frame>[+<frames>]]... (A B 1 2 PLUS MINUS UP DOWN LEFT RIGHT Z C,\n"
@@ -176,7 +177,20 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
     std::filesystem::create_directories("build/aurora");
     config.userPath = "build/aurora";
     // PANDORA_CACHE_DIR=<dir>: pipeline and Dawn caches elsewhere (test runs start from an empty one).
-    static const std::string cache_dir = std::getenv("PANDORA_CACHE_DIR") ? std::getenv("PANDORA_CACHE_DIR") : "build/aurora";
+    // --temp-cache (PANDORA_TEMP_CACHE=1): in a new temporary folder, deleted on exit, as on a
+    // first run; ones left by a crash are deleted on the next start.
+    static std::string cache_dir = std::getenv("PANDORA_CACHE_DIR") ? std::getenv("PANDORA_CACHE_DIR") : "build/aurora";
+    std::filesystem::path temp_cache;
+    if (const char* t = std::getenv("PANDORA_TEMP_CACHE"); t && *t == '1') {
+        std::error_code ec;
+        const auto tmp = std::filesystem::temp_directory_path(ec);
+        for (const auto& e : std::filesystem::directory_iterator(tmp, ec))
+            if (e.path().filename().string().rfind("pandora-temp-cache-", 0) == 0)
+                std::filesystem::remove_all(e.path(), ec);  // fails (and stays) while another run uses it
+        temp_cache = tmp / ("pandora-temp-cache-" + std::to_string(GetCurrentProcessId()));
+        cache_dir = temp_cache.string();
+        LOG_INFO("main", "temporary shader cache in %s", cache_dir.c_str());
+    }
     std::filesystem::create_directories(cache_dir);
     config.cachePath = cache_dir.c_str();
     config.mem1Size = 0;  // guest memory lives in the runtime
@@ -454,6 +468,10 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
     int status = rt.finish();
     rt.disable_audio_output();  // before aurora shuts SDL down
     aurora_shutdown();
+    if (!temp_cache.empty()) {
+        std::error_code ec;
+        std::filesystem::remove_all(temp_cache, ec);
+    }
     return status;
 }
 
@@ -515,6 +533,8 @@ int main(int argc, char** argv) {
             return pandora_fp_selftest();
         else if (!std::strcmp(a, "--unthrottled"))
             unthrottled = true;
+        else if (!std::strcmp(a, "--temp-cache"))
+            _putenv_s("PANDORA_TEMP_CACHE", "1");
         else if (!std::strcmp(a, "--menu-test") && i + 1 < argc) {
             char* end;
             menu_test_frame = std::strtoull(next(), &end, 10);
