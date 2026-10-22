@@ -40,7 +40,7 @@
         .key.raw { background-color: rgba(200, 200, 210, 150); }
         .key.merged { border: 2dp #8fc7ff; }
         .key.end { border: 2dp #d6a95c; }
-        .key.radius { border: 1dp rgba(143, 199, 255, 110); }
+        .key.radius { border: 1dp rgba(143, 199, 255, 120); }
         .ir-status { margin: 6dp 0 8dp 0; text-align: center; color: #d6b37a; }
         .setting .name { width: 230dp; }
         input.range { width: 240dp; }
@@ -64,9 +64,8 @@
         <span class="value">{{ ir_merge == 0 ? 'Off' : ir_merge + ' px' }}</span>
     </div>
     <div class="setting">
-        <span class="name">Sensor bar position</span>
-        <input type="range" min="-50" max="50" step="1" data-value="sensor_bar_offset"/>
-        <span class="value wide">{{ sensor_bar_label }}</span>
+        <span class="name">Sensor bar above screen</span>
+        <input type="checkbox" data-checked="sensor_bar_above"/>
     </div>
     <div class="setting">
         <span class="name">IR sensitivity</span>

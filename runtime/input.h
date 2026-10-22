@@ -158,7 +158,7 @@ public:
     // A real Wii Remote, if one is paired: poll every host frame.
     void poll_wiimote();
     const Wiimote& wiimote() const { return wiimote_; }
-    void set_sensor_bar_offset(float offset) { wiimote_.set_sensor_bar_offset(offset); }
+    void set_sensor_bar_above(bool above) { wiimote_.set_sensor_bar_above(above); }
     void set_ir_sensitivity(int level) { wiimote_.set_ir_sensitivity(level); }
     void set_ir_merge(int pixels) { wiimote_.set_ir_merge(pixels); }
     // Continuous Bluetooth scanning for Wii Remotes (press 1+2 to connect).

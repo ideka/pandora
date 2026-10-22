@@ -167,7 +167,6 @@ scrollbarvertical sliderarrowdec, scrollbarvertical sliderarrowinc { width: 0; h
 .setting.focused .name { color: #ffffff; }
 .setting .name { width: 200dp; }
 .setting .value { margin-left: 14dp; width: 60dp; }
-.setting .value.wide { width: 120dp; white-space: nowrap; }
 .setting .note { margin-left: 14dp; color: #8d897f; font-size: 14dp; }
 .setting .status { margin-left: 14dp; color: #d6b37a; }
 

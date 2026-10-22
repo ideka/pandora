@@ -163,19 +163,13 @@ bool SettingsMenu::init(const std::string& asset_dir) {
             }
         });
     c.BindFunc(
-        "sensor_bar_offset", [this](Rml::Variant& v) { v = settings_.sensor_bar_offset; },
+        "sensor_bar_above", [this](Rml::Variant& v) { v = settings_.sensor_bar_above; },
         [this](const Rml::Variant& v) {
-            const int offset = std::clamp((int)std::lround(v.Get<float>()), -50, 50);
-            if (offset != settings_.sensor_bar_offset) {
-                settings_.sensor_bar_offset = offset;
-                model_.DirtyVariable("sensor_bar_label");
+            if (v.Get<bool>() != settings_.sensor_bar_above) {
+                settings_.sensor_bar_above = v.Get<bool>();
                 changed();
             }
         });
-    c.BindFunc("sensor_bar_label", [this](Rml::Variant& v) {
-        const int o = settings_.sensor_bar_offset;
-        v = Rml::String(o == -20 ? "Above (Wii)" : o == 20 ? "Below (Wii)" : std::to_string(o));
-    });
     c.BindFunc(
         "ir_sensitivity", [this](Rml::Variant& v) { v = settings_.ir_sensitivity; },
         [this](const Rml::Variant& v) {
@@ -428,8 +422,8 @@ void SettingsMenu::close_calibration() {
 }
 
 // The camera's view as dots on a 4:3 box (CAMERA_DP wide, as calibration.rml sizes it): the raw
-// dots (sized by the camera's dot size when it reports one) with the merge distance around each,
-// the dots after merging (when merging changed anything) and the two bar ends tracking chose.
+// dots with the merge distance around each, the dots after merging (when merging changed
+// anything) and the two bar ends tracking chose.
 void SettingsMenu::set_ir_view(bool connected, const Wiimote::IrView& view) {
     if (!calibration_doc_ || !calibration_doc_->IsVisible())
         return;
@@ -446,7 +440,7 @@ void SettingsMenu::set_ir_view(bool connected, const Wiimote::IrView& view) {
             for (int i = 0; i < view.raw; i++)
                 add(view.raw_x[i], view.raw_y[i], "radius", 2.0f * view.merge * CAMERA_DP);
         for (int i = 0; i < view.raw; i++)
-            add(view.raw_x[i], view.raw_y[i], "raw", view.raw_size[i] > 0 ? 4.0f + 1.25f * (float)view.raw_size[i] : 12.0f);
+            add(view.raw_x[i], view.raw_y[i], "raw", 12.0f);
         if (view.merged != view.raw)
             for (int i = 0; i < view.merged; i++)
                 add(view.merged_x[i], view.merged_y[i], "merged", 18.0f);
