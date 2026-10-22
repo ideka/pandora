@@ -282,6 +282,17 @@ aids. Open work is in [TODO.md](TODO.md).
   (commit "Wii Remote speaker: the game's remote sounds play on the remote or the PC").
   `PANDORA_SPEAKER_LOG=1` counts packets; `PANDORA_SPEAKER_DUMP=<file>` writes the decoded mono
   s16 stream.
+- Speaker pops: the stream comes in bursts (only while remote sounds play; 27 in a minute of
+  attacks and menus) and the game's encoder continues across them, so the decoded level between
+  sounds is a small wandering offset (15, -38, -47..., up to hundreds), and each burst started with
+  1-3 sample gaps (the second packet just late; no prebuffer). Mixed as "0 when no sample is
+  waiting", every start and end stepped by that offset and every gap dropped to 0: clicks on
+  certain sounds that came and went with the offset. The mixer now holds the last value while no
+  packet waits and high-passes the stream at ~40 Hz (as the remote's speaker would), which
+  removes the offset and fades it out; measured on that session, the largest sample step fell
+  from 2262 to 1468 (the sounds' own maximum is 1461). `WENCGetEncodeData` is hooked too: when
+  the game restarts its encoder (WENC_FLAG_FIRST, rare: when its remote stream starts) the host's
+  decoder restarts with it.
 - Continuous scanning (`runtime/wiimote_scanner.cpp`, Windows), as in Dolphin: while enabled and
   no remote is connected, a thread runs Bluetooth inquiries (2 x 1.28 s). A "Nintendo
   RVL-CNT-01(-TR)" in discoverable mode (1+2, sync) gets its HID service enabled with

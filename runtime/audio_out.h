@@ -35,5 +35,6 @@ private:
     std::vector<s16> speaker_;
     size_t speaker_read_ = 0;
     double speaker_pos_ = 0, speaker_step_ = 6000.0 / 32000.0;
+    float speaker_hold_ = 0, speaker_last_in_ = 0, speaker_hp_ = 0;  // held input, high-pass state
     s32 adpcm_predictor_ = 0, adpcm_step_ = 127;
 };

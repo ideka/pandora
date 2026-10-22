@@ -18,6 +18,7 @@ hostCursorUpdate  # a padding word: the cursor update calls it with a Classic Co
 WPADControlSpeaker  # speaker on/play/off: the callback runs at once; the host decides where the sound plays
 WPADCanSendStreamData  # true while the speaker plays
 WPADSendStreamData  # the speaker packets are decoded into the host mixer
+WENCGetEncodeData  # a restarted encoder (a new remote sound) restarts the host's decoder
 dynMgrExtraStep  # decides the cloth extra step per tick (60 FPS mode), then runs the original
 sceneRefreshSkinned  # decides the skinned-node refresh per tick (60 FPS mode), then runs the original
 dynClothRefreshBones  # 60 FPS: refresh the cloth anchors every other tick, as at 30 FPS (the cape)

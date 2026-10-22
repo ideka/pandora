@@ -78,6 +78,7 @@ public:
     void set_remote_speaker_state(bool on, bool playing);
     bool remote_speaker_wants_data() const { return speaker_on_ && speaker_playing_; }
     void remote_speaker_data(const u8* packet, size_t len);
+    void reset_remote_speaker_decoder() { audio_out_.reset_speaker(); }
     int audio_queued_ms() const { return audio_out_.queued_ms(); }
     AuroraBridge* bridge() { return bridge_.get(); }
     Input& input() { return input_; }

@@ -262,6 +262,16 @@ void Runtime::install_hle() {
     // BOOL WPADCanSendStreamData(s32 chan)
     hook("WPADCanSendStreamData", [](Runtime& rt) { rt.ret(rt.cpu.gpr[3] == 0 && rt.remote_speaker_wants_data() ? 1 : 0); });
 
+    // void WENCGetEncodeData(WENCInfo* info, u32 flag, const s16* pcm, s32 samples, u8* adpcm): the
+    // speaker's ADPCM encoder. sndRemoteStreamTask restarts it (flag WENC_FLAG_FIRST, 0) for each
+    // new remote sound, then sends the packet; the host's decoder restarts with it, or it would
+    // decode the sound from the previous one's predictor and step (an offset: pops at the sound's
+    // start and end, depending on how the previous sound ended).
+    static bool encoder_restarted = false;
+    hook("WENCGetEncodeData", [](Runtime& rt) {
+        encoder_restarted = rt.cpu.gpr[4] == 0;
+        run_original(rt, 0x8059DBE4);
+    });
     // s32 WPADSendStreamData(s32 chan, void* data, u16 len)
     hook("WPADSendStreamData", [](Runtime& rt) {
         CPUState* c = &rt.cpu;
@@ -270,8 +280,11 @@ void Runtime::install_hle() {
             u8 packet[20] = {};
             for (u32 i = 0; i < len; i++)
                 packet[i] = mem::read8(c, data + i);
+            if (encoder_restarted)
+                rt.reset_remote_speaker_decoder();
             rt.remote_speaker_data(packet, len);
         }
+        encoder_restarted = false;
         rt.ret(0);
     });
 

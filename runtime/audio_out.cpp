@@ -21,6 +21,9 @@ constexpr int PREBUFFER_BYTES = 80 * BYTES_PER_MS;
 // Queued audio beyond this is dropped (the guest is running ahead of real time); letting the
 // queue grow would add latency without bound.
 constexpr int MAX_QUEUED_BYTES = 250 * BYTES_PER_MS;
+// The remote speaker's stream is high-passed at ~40 Hz (as the remote's small speaker would): its
+// ADPCM leaves a slowly wandering offset that would otherwise click at every sound's start and end.
+const float SPEAKER_HIGH_PASS = std::exp(-2.0f * 3.14159265f * 40.0f / RATE);
 
 }  // namespace
 
@@ -56,18 +59,22 @@ void AudioOut::push(const u8* b) {
         return;
     auto scale = [this](int v) { return (s16)std::clamp((int)std::lround(v * gain_), -32768, 32767); };
     for (int i = 0; i < 8; i++, b += 4) {
-        // The remote speaker's stream, linearly resampled (it is mono and ~3-6 kHz).
-        int spk = 0;
+        // The remote speaker's stream, linearly resampled (it is mono and ~3-6 kHz). It comes in
+        // bursts (only while remote sounds play, a packet at a time): while none is waiting, the
+        // last value holds, so a late packet or the end of a sound is no step to 0.
         if (speaker_read_ + 1 < speaker_.size()) {
             const size_t k = speaker_read_;
             const double f = speaker_pos_;
-            spk = (int)std::lround(speaker_[k] * (1.0 - f) + speaker_[k + 1] * f);
+            speaker_hold_ = (float)(speaker_[k] * (1.0 - f) + speaker_[k + 1] * f);
             speaker_pos_ += speaker_step_;
             while (speaker_pos_ >= 1.0) {
                 speaker_pos_ -= 1.0;
                 speaker_read_++;
             }
         }
+        speaker_hp_ = SPEAKER_HIGH_PASS * (speaker_hp_ + speaker_hold_ - speaker_last_in_);
+        speaker_last_in_ = speaker_hold_;
+        const int spk = (int)std::lround(speaker_hp_);
         pending_.push_back(scale((s16)(b[2] << 8 | b[3]) + spk));  // left
         pending_.push_back(scale((s16)(b[0] << 8 | b[1]) + spk));  // right
     }
