@@ -129,7 +129,21 @@ aids. Open work is in [TODO.md](TODO.md).
   input layer sees events even while the menu is closed (for the toggle) and captures every source
   while open. Game input is not polled while the menu is open; the game keeps running.
 - RmlUi's spatial navigation does not cross scroll containers, so the bindings tables are navigated
-  by hand (rows of mapping, clear, mapping, clear).
+  by hand (rows of mapping, clear, mapping, clear). While moving, the focused row keeps 20% of the
+  view's height from its edges (the view scrolls ahead of it; near the ends it reaches them), and
+  the right stick scrolls the table (`SettingsMenu::scroll`, faster the further it is pushed).
+- Navigation fixes over RmlUi's spatial navigation: entering the tab row or the device switch from
+  below focuses the active tab/device (not the nearest); left/right along them stop at the ends
+  (the last tab went to Back to game); Up from Back to game goes to the page's last control
+  (`last_page_control`). Reopening the menu restores the last focused element if it still exists.
+- Focus visibility: subtabs, sliders and checkboxes get a light ring when focused (`box-shadow`,
+  which aurora's RmlUi backend supports through layers), and the focused control's `.setting` row
+  gets a `focused` class (set each frame by `mark_focused_row`: RmlUi has no `:focus-within`).
+  Checked boxes show `assets/ui/check.png`, tinted dark.
+- The menu's directions (Up/Down/Left/Right) are fixed: D-pad and left stick, arrows and WASD.
+  They are not listed or saved (`is_menu_direction`); the other menu actions are bindings.
+- The pointer calibration (General) is a second document, `assets/ui/calibration.rml`, shown modal
+  over the menu with the same data model; Cancel closes it (see Real Wii Remote).
 - Bindings are per device class (gamepad; keyboard and mouse), two mappings each. "Open/Close Menu"
   and "Accept" cannot lose their first mapping: its button resets it to the default instead.
 - Held inputs are tracked as a set of physical inputs that are down. The router sends a layer

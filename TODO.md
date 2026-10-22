@@ -11,13 +11,19 @@ Open work only. How things currently work, and why, is in [NOTES.md](NOTES.md).
 - Honour the DAC rate selected in AICR (AIDFR); output is fixed at 32 kHz.
 - Emulate the DSP init microcode handshake instead of skipping `__OSInitAudioSystem` /
   `__OSStopAudioSystem` with hooks.
+- Occasional pops at the start and/or end of some sound effects, reported by the user: once they
+  start they keep happening on certain sounds. Not reproduced since; the one reported sound is in
+  the main (AX) mix, not the remote speaker's (it still played with the speaker muted), so the
+  speaker fix (NOTES.md, Real Wii Remote) does not cover it. Next time: note the sound and the
+  scene, and look at the AX voice start/stop (volume ramps, the resampler's history).
 
 ## Graphics
 
 - Seams between adjacent quads when upscaled (sub-pixel coverage differs from the hardware's
   1/12-pixel grid); only the viewport-edge case is handled.
-- Texgens sourcing binormal/tangent on vertices without NBT read zero; find which models hit this
-  and use the last loaded value, as hardware does.
+- Texgens sourcing binormal/tangent on vertices without NBT, or a texcoord the vertex format lacks
+  (`patches/aurora/0010`), read zero; find which models hit this and use the last loaded value, as
+  hardware does.
 - Check the GX bridge beyond the screens seen so far (title, menus, the first areas).
 - Logic ops other than CLEAR/COPY/NOOP: add Dolphin's shader-side fixups for
   CLEAR/INVERT/COPY_INVERTED/SET on top of the blending approximation.
@@ -32,8 +38,10 @@ Open work only. How things currently work, and why, is in [NOTES.md](NOTES.md).
 
 ## Input
 
-- `WPADGetInfoAsync` never calls its callback (needs a way to call back into guest code).
-- Motion controls: the accelerometer always reads "at rest"; map shakes/swings.
+- `WPADGetInfoAsync` never calls its callback (`Runtime::call_guest` can now do it).
+- Motion controls without a real remote: Shake is a binding (an oscillating acceleration); swings,
+  tilt and the Nunchuk's motion are not mapped. Which game actions read the remote's motion is not
+  traced.
 - Hook `KPADReadEx` and the connect/extension callbacks.
 - Rumble is untested on hardware (no in-game rumble event was scripted); check intensity feel and
   that the Wii's on/off pattern is followed.
@@ -44,15 +52,19 @@ Open work only. How things currently work, and why, is in [NOTES.md](NOTES.md).
 
 ## Real Wii Remote
 
-- Untested with a sensor bar: check the pointer's direction (the camera's y orientation is assumed),
-  scale and the above/below offset; the accelerometer axis mapping is also unverified in game.
-- Motion Plus, Classic Controller and other extensions are not handled; only one remote (player 1).
-- Pointer with one dot visible, distance (KPAD's dist) and smoothing like KPAD's are not emulated.
+- The pointer works with the user's sensor bar; the cursor still jumps a little at times (a bar
+  end seen as several dots): "Merge nearby dots" in the calibration screen is the attempt, to be
+  confirmed. With the Nunchuk the camera reports positions only (basic IR), so merging can't
+  weight by dot size. The game leaves KPAD's smoothing off (play radius 0, sensitivity 1), as we
+  do; a light filter could be an option.
+- Motion Plus, a Classic Controller plugged into the remote and other extensions are not handled;
+  only one remote (player 1).
 - Connecting blocks the main thread briefly (register writes wait for acknowledgements).
 
 ## Settings menu
 
-- Graphics tab (internal resolution/scale, aspect ratio, vsync, MSAA) once aurora exposes them.
+- Graphics tab: internal resolution/scale, aspect ratio and vsync, once aurora exposes them; MSAA
+  only applies after a restart (aurora fixes it when creating the device).
 - Per-device controller profiles (by GUID) and more than one gamepad; currently the first one.
 - Show controller glyphs for the connected pad type instead of position names.
 - Keep the settings file in the user's profile rather than `build/aurora` for distributed builds.
@@ -96,7 +108,11 @@ Open work only. How things currently work, and why, is in [NOTES.md](NOTES.md).
     (prepare_draw's index scan is a third of it). The real GP reads the FIFO asynchronously; PE
     interrupts and the frame-end handshake would have to cross threads.
   - Shader/pipeline compiles on first use: drawn with the ubershader meanwhile (NOTES.md,
-    Graphics). Its lines/points and dst-alpha (replace, dual-source) variants are untested.
+    Graphics), still ~45% slower on the GPU than the specialized shaders (at 4K, forced). Its
+    points and dst-alpha (replace, dual-source) variants have not run yet. Its pipelines are built
+    at startup from `data/initial_pipeline_cache.db`: regenerate it (`tools/make_uber_seed.py`)
+    from a cache covering more of the game; a state outside it still waits for its pipeline once.
+    One compile thread only: Dawn's device isn't thread-safe (no ImplicitDeviceSynchronization).
 - Avoid storing `ctx->pc` at every instruction in the generated code.
 - Re-measure boot speed (was ~0.3x real time, dominated by OS alarm/scheduler churn from
   `OSSleepTicks(1)` polling, before the pacing and clang changes).
