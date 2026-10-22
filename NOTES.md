@@ -29,6 +29,10 @@ aids. Open work is in [TODO.md](TODO.md).
   earlier one's context and break its "already applied" (reverse) check:
   - 0001: texgens sourcing binormal/tangent on vertices without NBT read zero instead of aborting.
   - 0002: the XF viewport origin bias is 342 (as the hardware and this game's SDK use), not 340.
+  - 0010: a texgen sourcing a texcoord attribute the vertex format lacks reads (0, 0) instead of
+    aborting the pipeline build ("unmapped vtx attr 14": the game drew one, sampling it, in a
+    scene the user reached; reproduced by a pipeline cache holding such a config, as aurora builds
+    every cached config at startup). The ubershader does the same.
   - 0003: vertices within half a logical pixel of the viewport edge are snapped onto it. The game's
     full-screen quads stop 0.19 px short of each side (ortho -92.244..732.244, quads -92..732),
     which left the outermost physical columns unpainted when upscaled.

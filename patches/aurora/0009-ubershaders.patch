@@ -473,7 +473,7 @@ diff --git a/lib/gx/ubershader.cpp b/lib/gx/ubershader.cpp
 new file mode 100644
 --- /dev/null
 +++ b/lib/gx/ubershader.cpp
-@@ -0,0 +1,1397 @@
+@@ -0,0 +1,1400 @@
 +#include "ubershader.hpp"
 +
 +#include "aurora/aurora.h"
@@ -828,6 +828,9 @@ new file mode 100644
 +    return fetch_color(11u + i, vidx);
 +}
 +fn load_tex(i: u32, vidx: u32) -> vec2f {
++    if (attr_type(13u + i) == 0u) {
++        return vec2f(0.0); // not in the vertex format (as vtx_attr in shader.cpp)
++    }
 +    return fetch_attr(13u + i, vidx, 0u, 0u, 0u).xy;
 +}
 +
