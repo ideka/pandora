@@ -45,22 +45,93 @@ diff --git a/lib/gfx/pipeline_cache.cpp b/lib/gfx/pipeline_cache.cpp
  #include "../io.hpp"
  #ifdef AURORA_ENABLE_RMLUI
  #include "../rmlui/pipeline.hpp"
-@@ -1124,6 +1125,15 @@ void rebuild_pipeline_cache() {
+@@ -14,6 +15,7 @@
+ 
+ #include <algorithm>
+ #include <atomic>
++#include <chrono>
+ #include <condition_variable>
+ #include <deque>
+ #include <filesystem>
+@@ -1106,8 +1108,10 @@ PipelineRef find_pipeline(const rmlui::PipelineConfig& config) {
+ }
+ #endif
+ 
+-void rebuild_pipeline_cache() {
++// Queues every known pipeline for (re)building; returns the ubershader ones.
++static std::vector<PipelineRef> queue_known_pipelines() {
+   ZoneScoped;
++  std::vector<PipelineRef> uberRefs;
+   const auto scene = scene_render_target_layout();
+   auto offscreen = scene;
+   offscreen.colorAttachmentCount = 1;
+@@ -1124,7 +1128,30 @@ void rebuild_pipeline_cache() {
      }
    }
    std::ranges::sort(known, {}, &KnownPipeline::firstFrameUsed);
-+  // The ubershader modules first (compiling one takes most of a second, and on a first run the
-+  // game would otherwise wait for it on first use); pipelines for other fixed-function states
-+  // reuse the compiled shader.
-+  for (const auto& config : gx::uber_prewarm_configs()) {
-+    resolve_pipeline(ShaderType::GX, config, scene, PipelinePriority::Background);
++  // Ubershader pipelines first, ahead of the game's own requests (this runs before them, so normal
++  // priority queues them first; a draw waiting for one still goes ahead): the game waits for one
++  // when it first needs it. The module variants (compiling one takes most of a second; pipelines
++  // for other fixed-function states reuse it), then the known and bundled (seeded) ones.
++  const auto resolve_both = [&](const gx::PipelineConfig& config, PipelinePriority priority) {
++    uberRefs.push_back(resolve_pipeline(ShaderType::GX, config, scene, priority));
 +    if (offscreen.key != scene.key) {
-+      resolve_pipeline(ShaderType::GX, config, offscreen, PipelinePriority::Background);
++      uberRefs.push_back(resolve_pipeline(ShaderType::GX, config, offscreen, priority));
 +    }
++  };
++  for (const auto& config : gx::uber_prewarm_configs()) {
++    resolve_both(config, PipelinePriority::Normal);
 +  }
    for (const auto& pipeline : known) {
++    if (const auto* config = std::get_if<gx::PipelineConfig>(&pipeline.config);
++        config != nullptr && gx::is_uber_config(config->shaderConfig)) {
++      resolve_both(*config, PipelinePriority::Normal);
++    }
++  }
++  for (const auto& pipeline : known) {
++    if (const auto* config = std::get_if<gx::PipelineConfig>(&pipeline.config);
++        config != nullptr && gx::is_uber_config(config->shaderConfig)) {
++      continue;
++    }
      std::visit(
          [&](const auto& config) {
+           resolve_pipeline(pipeline.type, config, scene, PipelinePriority::Background);
+@@ -1134,8 +1161,11 @@ void rebuild_pipeline_cache() {
+         },
+         pipeline.config);
+   }
++  return uberRefs;
+ }
+ 
++void rebuild_pipeline_cache() { queue_known_pipelines(); }
++
+ void initialize_pipeline_cache() {
+   g_pipelineCacheBroken = false;
+   g_pipelineCacheWriterStop = false;
+@@ -1150,7 +1180,22 @@ void initialize_pipeline_cache() {
+   }
+ 
+   const size_t loadedCount = load_pipeline_cache();
+-  rebuild_pipeline_cache();
++  const auto uberRefs = queue_known_pipelines();
++  // The ubershader pipelines are built before the game starts: on a first run their modules take
++  // a few seconds to compile, which the game would otherwise wait for when it first needs one;
++  // later runs build them from the GPU cache.
++  if (g_hasPipelineThread && !uberRefs.empty()) {
++    const auto start = std::chrono::steady_clock::now();
++    {
++      std::unique_lock lock{g_pipelineMutex};
++      g_pipelineReadyCv.wait(lock, [&] {
++        return g_pipelineThreadEnd ||
++               std::ranges::all_of(uberRefs, [](PipelineRef ref) { return g_pipelines.contains(ref); });
++      });
++    }
++    const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
++    Log.info("Built {} ubershader pipelines at startup in {:.0f} ms", uberRefs.size(), ms);
++  }
+   if (!g_pipelineCacheBroken && loadedCount > 0) {
+     g_gpuCachePrunePending = true;
+   }
 diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
 --- a/lib/gx/command_processor.cpp
 +++ b/lib/gx/command_processor.cpp
@@ -101,7 +172,7 @@ diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
      state.dirty = (state.dirty & ~DirtyPipeline) | DirtyUniform;
      if (!hadPipeline || prevSampledTextures != cache.shaderInfo.sampledTextures ||
          prevSampledIndTextures != cache.shaderInfo.sampledIndTextures) {
-@@ -435,8 +447,35 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
+@@ -435,8 +447,42 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
    const bool uniformValid = (state.dirty & DirtyUniform) == 0 && cache.uniformRange.size != 0;
    if (!uniformValid) {
      cache.uniformRange = build_uniform(cache.shaderInfo);
@@ -119,11 +190,18 @@ diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
 +  if (useUber) {
 +    if (cache.uberPipeline == 0) {
 +      const auto start = std::chrono::steady_clock::now();
-+      cache.uberPipeline =
-+          gfx::find_pipeline(make_uber_pipeline_config(cache.config), gfx::get_render_target_layout(), true);
++      const auto uberConfig = make_uber_pipeline_config(cache.config);
++      const auto& layout = gfx::get_render_target_layout();
++      cache.uberPipeline = gfx::find_pipeline(uberConfig, layout, true);
 +      const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
 +      if (ms > 20.0) {
-+        Log.info("Waited {:.1f} ms for an ubershader pipeline", ms);
++        Log.info("Waited {:.1f} ms for an ubershader pipeline (line mode {}, features {}, dst alpha {}/{}, "
++                 "blend {} {} {}, layout {:x}: {} attachments, format {}, depth {}, {} samples)",
++                 ms, uberConfig.shaderConfig.lineMode, uberConfig.shaderConfig.pad1, uberConfig.dstAlpha,
++                 uberConfig.alphaUpdate, underlying(uberConfig.blendMode), underlying(uberConfig.blendFacSrc),
++                 underlying(uberConfig.blendFacDst), layout.key, layout.colorAttachmentCount,
++                 static_cast<int>(layout.colorAttachments[0].format), static_cast<int>(layout.depthStencilFormat),
++                 layout.sampleCount);
 +      }
 +    }
 +    if (!cache.hasUberConfig) {
@@ -137,7 +215,7 @@ diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
    if (cache.config.shaderConfig.fogRangeEnabled) {
      const auto key = fog_range_lut_key();
      if (!cache.hasFogRange || cache.fogRangeKey != key) {
-@@ -469,6 +508,8 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
+@@ -469,6 +515,8 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
        .indexCount = numIndices,
        .instanceCount = instanceCount,
        .dstAlpha = state.dstAlpha,
@@ -146,7 +224,7 @@ diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
    });
  }
  
-@@ -781,6 +822,7 @@ void handle_aurora(ByteReader& reader) noexcept {
+@@ -781,6 +829,7 @@ void handle_aurora(ByteReader& reader) noexcept {
  void clear_draw_cache() noexcept {
    sDrawCache.bindGeneration = 0;
    sDrawCache.uniformRange = {};

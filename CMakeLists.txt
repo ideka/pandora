@@ -147,8 +147,11 @@ if(WIN32 AND EXISTS "${DAWN_PREBUILT_BIN}/dxil.dll")
                 "${DAWN_PREBUILT_BIN}/dxil.dll" $<TARGET_FILE_DIR:pandora>)
 endif()
 # UI assets (documents, styles, fonts) next to the executable, refreshed on every build.
+# data/initial_pipeline_cache.db: ubershader pipelines aurora builds at startup (tools/make_uber_seed.py).
 add_custom_target(pandora_assets
-    COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/assets" "$<TARGET_FILE_DIR:pandora>/assets")
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/assets" "$<TARGET_FILE_DIR:pandora>/assets"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/data/initial_pipeline_cache.db"
+            "$<TARGET_FILE_DIR:pandora>")
 add_dependencies(pandora pandora_assets)
 if(MSVC)
     target_compile_options(pandora PRIVATE /W4 /permissive- /MP /Z7)

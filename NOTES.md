@@ -91,12 +91,22 @@ aids. Open work is in [TODO.md](TODO.md).
   edits that skipped parts of the fragment stage.
 - Ubershader compile time: the modules cost ~0.6-0.8 s each to compile (Dawn: WGSL -> HLSL -> DXIL
   with DXC) and other pipelines of the same module ~2 ms. Inlined duplicate call sites made it
-  2-2.5 s (each `texgen_proj`/fetch call site is a full copy). The four main variants (alpha test
-  x simple/advanced, both render-target layouts) are queued first in the startup background build
-  (`uber_prewarm_configs`). On a first run (`--temp-cache`) the game still waits ~1 s twice during
-  boot and 20-60 ms the first time each new blend state appears: one compile thread, and Dawn's
-  device isn't created thread-safe (no ImplicitDeviceSynchronization), so pipelines can't be built
-  in parallel. Waits over 20 ms are logged ("Waited ... for an ubershader pipeline").
+  2-2.5 s (each `texgen_proj`/fetch call site is a full copy).
+- No waits for ubershader pipelines: they are built before the game starts
+  (`initialize_pipeline_cache` waits for them; "Built N ubershader pipelines at startup in X ms").
+  The set: the four main module variants (`uber_prewarm_configs`: alpha test x simple/advanced),
+  the ubershader configs in the cache, and a bundled seed (`data/initial_pipeline_cache.db`,
+  copied next to the executable; aurora merges it into its cache on every start). The seed is made
+  by `tools/make_uber_seed.py` from pipeline caches: each GX config mapped to its ubershader config
+  (fixed-function state only), checked against the ubershader configs the caches already hold;
+  regenerate it after playing new areas (97 configs from the backed-up cache of the user's play).
+  They are queued at normal priority ahead of the game's own requests; at background priority (as
+  aurora's own warmup) the game's thousands of specialized requests went first and it waited for
+  each new blend state. Cold run (`--temp-cache`) into the tower and the pause menu: before, 36
+  waits (two of ~1 s during boot, two of ~700 ms opening the menu - its line-mode variants -, the
+  rest 30-130 ms); now none, and 4.0 s at startup (4.2 s, 202 pipelines, with 4x MSAA: its second
+  render-target layout); a second run 93 ms. Waits over 20 ms are logged ("Waited ... for an
+  ubershader pipeline", with the variant and state).
 - `PANDORA_UBERSHADER=0` restores skipping; `PANDORA_CACHE_DIR` keeps test runs off the user's
   caches; `--temp-cache` (`PANDORA_TEMP_CACHE=1`) uses a temporary folder deleted on exit, as on a
   first run. Only the triangle and line module variants without a normal target or dst alpha have

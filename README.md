@@ -93,7 +93,8 @@ the executable). Please include both when reporting a crash.
 
 `orig/` and `build/` are git-ignored. Saves and aurora's caches live in `build/nand` and
 `build/aurora`. `--temp-cache` runs with empty shader caches in a temporary folder (deleted on
-exit), to see a first run; shaders still compiling are drawn with a slower generic shader meanwhile.
+exit), to see a first run; shaders still compiling are drawn with a slower generic shader meanwhile,
+whose pipelines are built at startup (a few seconds on the first run).
 
 ## Layout
 
