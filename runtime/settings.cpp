@@ -68,6 +68,8 @@ void Settings::load(const std::string& path) {
             sensor_bar_above = parse_bool(value);
         } else if (key == "ir_sensitivity") {
             ir_sensitivity = std::clamp(std::atoi(value.c_str()), 1, 5);
+        } else if (key == "ir_merge") {
+            ir_merge = std::clamp(std::atoi(value.c_str()), 0, 200);
         } else if (key == "wiimote_scan") {
             wiimote_scan = parse_bool(value);
         } else if (key == "fps60") {
@@ -110,6 +112,7 @@ bool Settings::save(const std::string& path) const {
     out << "mouse_pointer=" << (mouse_pointer ? 1 : 0) << "\n";
     out << "sensor_bar_above=" << (sensor_bar_above ? 1 : 0) << "\n";
     out << "ir_sensitivity=" << ir_sensitivity << "\n";
+    out << "ir_merge=" << ir_merge << "\n";
     out << "wiimote_scan=" << (wiimote_scan ? 1 : 0) << "\n";
     out << "fps60=" << (fps60 ? 1 : 0) << "\n";
     out << "free_stick=" << (free_stick ? 1 : 0) << "\n";

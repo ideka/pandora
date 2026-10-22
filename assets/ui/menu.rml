@@ -126,6 +126,11 @@
             <span class="value">{{ ir_sensitivity }}</span>
             <span class="note">The Wii's "Sensitivity" setting: the Wii Remote camera's gain (3 is the Wii's default)</span>
         </div>
+        <div class="setting">
+            <span class="name">Pointer calibration</span>
+            <button id="calibrate" data-event-click="open_calibration()">Calibrate...</button>
+            <span class="note">What the Wii Remote's camera sees, and merging a sensor bar end's split dots</span>
+        </div>
         <div class="fill"></div>
         <div class="footer">
             <span class="note">Wii Remote: <span class="status">{{ remote_status }}</span></span>

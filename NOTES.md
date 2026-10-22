@@ -297,6 +297,14 @@ aids. Open work is in [TODO.md](TODO.md).
   from 2262 to 1468 (the sounds' own maximum is 1461). `WENCGetEncodeData` is hooked too: when
   the game restarts its encoder (WENC_FLAG_FIRST, rare: when its remote stream starts) the host's
   decoder restarts with it.
+- Pointer calibration (General > Calibrate...: `assets/ui/calibration.rml`, a modal document over
+  the menu sharing its data model): the IR camera's view (`Wiimote::IrView`: dots seen, dots after
+  merging, the two ends tracking chose), Sensor bar above screen, IR sensitivity and "Merge nearby
+  dots" (`ir_merge`, camera pixels of 1024 x 768, 0 = off). A sensor bar end is a group of LEDs that
+  the camera sometimes reports as several dots, and KPAD's tracking then hops between them;
+  `parse_ir` merges, before tracking, the closest pair of dots while they are closer than the
+  setting (into their dot-count weighted midpoint). With the Nunchuk the remote reports basic IR
+  (positions only, report 0x37), so merging goes by distance alone.
 - Continuous scanning (`runtime/wiimote_scanner.cpp`, Windows), as in Dolphin: while enabled and
   no remote is connected, a thread runs Bluetooth inquiries (2 x 1.28 s). A "Nintendo
   RVL-CNT-01(-TR)" in discoverable mode (1+2, sync) gets its HID service enabled with

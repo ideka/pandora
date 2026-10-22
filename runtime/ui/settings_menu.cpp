@@ -56,6 +56,23 @@ bool SettingsMenu::init(const std::string& asset_dir) {
         row.RegisterMember("index", &Row::index);
     }
     c.RegisterArray<std::vector<Row>>();
+    if (auto dot = c.RegisterStruct<Dot>()) {
+        dot.RegisterMember("left", &Dot::left);
+        dot.RegisterMember("top", &Dot::top);
+        dot.RegisterMember("kind", &Dot::kind);
+    }
+    c.RegisterArray<std::vector<Dot>>();
+    c.Bind("ir_dots", &ir_dots_);
+    c.Bind("ir_status", &ir_status_);
+    c.BindFunc(
+        "ir_merge", [this](Rml::Variant& v) { v = settings_.ir_merge; },
+        [this](const Rml::Variant& v) {
+            const int px = std::clamp((int)std::lround(v.Get<float>()), 0, 200);
+            if (px != settings_.ir_merge) {
+                settings_.ir_merge = px;
+                changed();
+            }
+        });
     c.Bind("wii_rows", &wii_rows_);
     c.Bind("menu_rows", &menu_rows_);
     c.Bind("tab", &tab_);
@@ -221,6 +238,10 @@ bool SettingsMenu::init(const std::string& asset_dir) {
         changed();
     });
     c.BindEventCallback("close", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { close(); });
+    c.BindEventCallback("open_calibration",
+                        [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { open_calibration(); });
+    c.BindEventCallback("close_calibration",
+                        [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { close_calibration(); });
     model_ = c.GetModelHandle();
     refresh_rows();
 
@@ -230,6 +251,9 @@ bool SettingsMenu::init(const std::string& asset_dir) {
         return false;
     }
     pause_doc_ = ctx->LoadDocument(asset_dir + "/ui/pause.rml");
+    calibration_doc_ = ctx->LoadDocument(asset_dir + "/ui/calibration.rml");
+    if (!calibration_doc_)
+        LOG_ERROR("ui", "cannot load %s/ui/calibration.rml", asset_dir.c_str());
     // The layer sees every event (to open the menu with its toggle binding); it only captures
     // sources while the menu is open.
     layer_ = in::register_layer({
@@ -281,6 +305,8 @@ void SettingsMenu::close() {
     if (!open_)
         return;
     cancel_capture();
+    if (calibration_doc_ && calibration_doc_->IsVisible())
+        close_calibration();
     open_ = false;
     Rml::Element* focus = aurora::rmlui::get_context()->GetFocusElement();
     last_focus_ = focus && focus != doc_ && focus->GetOwnerDocument() == doc_ ? focus : nullptr;
@@ -353,6 +379,8 @@ void SettingsMenu::mark_focused_row() {
         row = row->GetParentNode();
     Rml::ElementList marked;
     doc_->GetElementsByClassName(marked, "focused");
+    if (calibration_doc_)
+        calibration_doc_->GetElementsByClassName(marked, "focused");
     for (Rml::Element* e : marked)
         if (e != row)
             e->SetClass("focused", false);
@@ -370,6 +398,67 @@ void SettingsMenu::scroll(float seconds) {
         const float t = (a - DEAD_ZONE) / (1.0f - DEAD_ZONE);
         const float dp = aurora::rmlui::get_context()->GetDensityIndependentPixelRatio();
         bindings->SetScrollTop(bindings->GetScrollTop() + std::copysign(t * t * SPEED * dp * seconds, scroll_axis_));
+    }
+}
+
+// --- Pointer calibration ----------------------------------------------------------------------
+
+void SettingsMenu::open_calibration() {
+    if (!calibration_doc_)
+        return;
+    calibration_doc_->Show(Rml::ModalFlag::Modal, Rml::FocusFlag::None);
+    if (Rml::Element* first = calibration_doc_->GetElementById("calibration-merge"))
+        first->Focus(true);
+}
+
+void SettingsMenu::close_calibration() {
+    if (!calibration_doc_ || !calibration_doc_->IsVisible())
+        return;
+    calibration_doc_->Hide();
+    if (Rml::Element* button = doc_->GetElementById("calibrate"))
+        button->Focus(true);
+}
+
+// The camera's view as dots on a 4:3 box: the raw dots, the dots after merging (when merging
+// changed anything) and the two bar ends tracking chose.
+void SettingsMenu::set_ir_view(bool connected, const Wiimote::IrView& view) {
+    if (!calibration_doc_ || !calibration_doc_->IsVisible())
+        return;
+    std::vector<Dot> dots;
+    auto add = [&](float x, float y, const char* kind) {
+        if (x < 0 || x > 1 || y < 0 || y > 1)
+            return;  // an inferred end off the image
+        dots.push_back({Rml::ToString(x * 100.0f) + "%", Rml::ToString(y * 100.0f) + "%", kind});
+    };
+    if (connected) {
+        for (int i = 0; i < view.raw; i++)
+            add(view.raw_x[i], view.raw_y[i], "raw");
+        if (view.merged != view.raw)
+            for (int i = 0; i < view.merged; i++)
+                add(view.merged_x[i], view.merged_y[i], "merged");
+        for (int i = 0; i < view.ends; i++)
+            add(view.end_x[i], view.end_y[i], "end");
+    }
+    std::string status;
+    if (!connected)
+        status = "No Wii Remote connected";
+    else if (view.raw == 0)
+        status = "No dots in view: point the Wii Remote at the sensor bar";
+    else
+        status = std::to_string(view.raw) + (view.raw == 1 ? " dot" : " dots") + " seen" +
+                 (view.merged != view.raw ? ", " + std::to_string(view.merged) + " after merging" : "") +
+                 (view.ends == 2 ? "; tracking both ends" : view.ends == 1 ? "; tracking one end" : "; not tracking");
+    if (status != ir_status_) {
+        ir_status_ = status;
+        model_.DirtyVariable("ir_status");
+    }
+    const bool same = dots.size() == ir_dots_.size() &&
+                      std::equal(dots.begin(), dots.end(), ir_dots_.begin(), [](const Dot& a, const Dot& b) {
+                          return a.left == b.left && a.top == b.top && a.kind == b.kind;
+                      });
+    if (!same) {
+        ir_dots_ = std::move(dots);
+        model_.DirtyVariable("ir_dots");
     }
 }
 
@@ -609,6 +698,10 @@ void SettingsMenu::action(MenuAction a) {
     switch (a) {
     case MenuAction::Toggle: close(); break;
     case MenuAction::Cancel:  // back out to the current tab's button (the menu stays open)
+        if (calibration_doc_ && calibration_doc_->IsVisible()) {
+            close_calibration();
+            break;
+        }
         if (Rml::Element* tab = doc_->GetElementById("tab-" + tab_))
             tab->Focus(true);
         break;

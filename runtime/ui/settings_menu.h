@@ -13,6 +13,7 @@
 #include <aurora/input.hpp>
 
 #include "../settings.h"
+#include "../wiimote.h"
 
 namespace Rml {
 class Element;
@@ -44,6 +45,8 @@ public:
     void set_remote_buttons(u32 buttons);
     // Shown on the General tab (e.g. "Connected, Nunchuk, battery 80%").
     void set_remote_status(std::string status);
+    // What a real Wii Remote's IR camera sees, every host frame (shown by the pointer calibration).
+    void set_ir_view(bool connected, const Wiimote::IrView& view);
 
     // One row of a bindings table, as the document sees it.
     struct Row {
@@ -51,6 +54,10 @@ public:
         bool clear_first = false, clear_second = false;  // whether the clear/reset button does anything
         bool reset_first = false;  // the first mapping's button resets it to the default instead
         int index = 0;
+    };
+    // A dot on the pointer calibration's camera view: position (CSS) and kind ("raw", "merged", "end").
+    struct Dot {
+        Rml::String left, top, kind;
     };
 
 private:
@@ -79,6 +86,8 @@ private:
     void scroll(float seconds);
     Rml::Element* last_page_control();
     void switch_tab(int delta);
+    void open_calibration();
+    void close_calibration();
 
     Mappings& mappings(int table, int index);
     bool can_clear(int table, int index, int slot);
@@ -94,6 +103,9 @@ private:
     std::function<void()> on_change_;
     Rml::ElementDocument* doc_ = nullptr;
     Rml::ElementDocument* pause_doc_ = nullptr;
+    Rml::ElementDocument* calibration_doc_ = nullptr;  // modal over the menu
+    std::vector<Dot> ir_dots_;
+    Rml::String ir_status_;
     Rml::DataModelHandle model_;
     std::vector<Row> wii_rows_, menu_rows_;
     Rml::String tab_ = "controls";

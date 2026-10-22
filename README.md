@@ -80,7 +80,9 @@ No game code or data is included. You need your own copy of the game.
    buttons, Nunchuk, motion, pointer and rumble go to the game directly. The pointer needs a
    sensor bar and behaves as on a Wii (the pointer maths is the game's own KPAD library's); the
    Wii's two settings are under General: "Sensor bar above screen" (Sensor Bar Position) and "IR
-   sensitivity" (the camera's gain, 1-5). The game's Wii Remote speaker sounds play through the
+   sensitivity" (the camera's gain, 1-5). "Calibrate..." (General) shows what the remote's camera
+   sees, with those settings and "Merge nearby dots": if a sensor bar end shows as several dots
+   (and the cursor jumps), raise it until each end shows as one. The game's Wii Remote speaker sounds play through the
    PC's speakers (the remote's own speaker would need Bluetooth passthrough, as on Dolphin). HOME opens the settings menu (D-pad, A, B, -/+ work there).
 
    F11 or Alt+Enter toggles fullscreen. Audio plays on the default output device; `--mute`

@@ -369,13 +369,44 @@ void Wiimote::parse_ir(const u8* ir) {
         rx[raw] = p[0] | ((p[2] >> 4) & 3) << 8, ry[raw++] = p[1] | ((p[2] >> 6) & 3) << 8;
         rx[raw] = p[3] | (p[2] & 3) << 8, ry[raw++] = p[4] | ((p[2] >> 2) & 3) << 8;
     }
-    // KPAD's objects: (x - 511.5) / 512, (y - 383.5) / 512 with y down; outer 5% and duplicates out.
-    float ox[4], oy[4];
-    int n = 0;
+    // The dots seen, then merged: while two are closer than ir_merge_ pixels, the closest pair
+    // becomes one at its (dot-count weighted) midpoint. A bar end's LEDs, seen as separate dots,
+    // would otherwise make tracking hop between them.
+    float cx[4], cy[4], cw[4];
+    int seen = 0;
+    ir_view_ = {};
     for (int i = 0; i < 4; i++) {
         if (rx[i] == 0x3FF || ry[i] == 0x3FF)
             continue;
-        const float x = ((float)rx[i] - 511.5f) / 512.0f, y = ((float)(767 - ry[i]) - 383.5f) / 512.0f;
+        cx[seen] = (float)rx[i], cy[seen] = (float)ry[i], cw[seen] = 1;
+        ir_view_.raw_x[seen] = cx[seen] / 1024.0f, ir_view_.raw_y[seen] = (767.0f - cy[seen]) / 768.0f;
+        seen++;
+    }
+    ir_view_.raw = seen;
+    while (ir_merge_ > 0 && seen > 1) {
+        int bi = -1, bj = -1;
+        float best = (float)ir_merge_ * (float)ir_merge_;
+        for (int i = 0; i < seen; i++)
+            for (int j = i + 1; j < seen; j++) {
+                const float d = (cx[i] - cx[j]) * (cx[i] - cx[j]) + (cy[i] - cy[j]) * (cy[i] - cy[j]);
+                if (d < best)
+                    best = d, bi = i, bj = j;
+            }
+        if (bi < 0)
+            break;
+        const float w = cw[bi] + cw[bj];
+        cx[bi] = (cx[bi] * cw[bi] + cx[bj] * cw[bj]) / w, cy[bi] = (cy[bi] * cw[bi] + cy[bj] * cw[bj]) / w, cw[bi] = w;
+        seen--;
+        cx[bj] = cx[seen], cy[bj] = cy[seen], cw[bj] = cw[seen];
+    }
+    for (int i = 0; i < seen; i++)
+        ir_view_.merged_x[i] = cx[i] / 1024.0f, ir_view_.merged_y[i] = (767.0f - cy[i]) / 768.0f;
+    ir_view_.merged = seen;
+    // KPAD's objects: (x - 511.5) / 512, (y - 383.5) / 512 with y down; outer 5% and duplicates out.
+    float ox[4], oy[4];
+    int n = 0;
+    for (int i = 0; i < seen; i++) {
+        const float x = (cx[i] - 511.5f) / 512.0f, y = ((767.0f - cy[i]) - 383.5f) / 512.0f;
         if (!(x > -KPAD_AREA_X && x < KPAD_AREA_X && y > -KPAD_AREA_Y && y < KPAD_AREA_Y))
             continue;
         bool dup = false;
@@ -518,6 +549,12 @@ void Wiimote::parse_ir(const u8* ir) {
         state_.pointer_valid = false;  // the game hides its cursor, as with a real Wii
     }
     dpd_count_ = found;
+    ir_view_.ends = found;
+    if (found) {
+        // KPAD coordinates back to the image's
+        ir_view_.end_x[0] = (ax * 512.0f + 511.5f) / 1024.0f, ir_view_.end_y[0] = (ay * 512.0f + 383.5f) / 768.0f;
+        ir_view_.end_x[1] = (bx * 512.0f + 511.5f) / 1024.0f, ir_view_.end_y[1] = (by * 512.0f + 383.5f) / 768.0f;
+    }
     if (log)
         LOG_INFO("ir", "dots %4d,%4d %4d,%4d %4d,%4d %4d,%4d  valid %d  ends %d  pos %6.3f %6.3f  dist %.2f  acc %5.2f %5.2f %5.2f",
                  rx[0], ry[0], rx[1], ry[1], rx[2], ry[2], rx[3], ry[3], n, found, state_.pointer_x, state_.pointer_y,

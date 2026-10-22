@@ -226,6 +226,7 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
         aurora_set_forced_anisotropy((uint16_t)settings.anisotropy);
         rt.input().set_sensor_bar_above(settings.sensor_bar_above);
         rt.input().set_ir_sensitivity(settings.ir_sensitivity);
+        rt.input().set_ir_merge(settings.ir_merge);
         rt.input().set_wiimote_scanning(settings.wiimote_scan && (!background || std::getenv("PANDORA_POLL_WIIMOTE")));
     };
     apply_settings();
@@ -370,6 +371,7 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
                               wm.battery * 100 / 200 > 100 ? 100 : wm.battery * 100 / 200,
                               wm.pointer_valid ? ", pointing at the screen" : "");
             menu.set_remote_status(status);
+            menu.set_ir_view(wm.connected, rt.input().wiimote().ir_view());
         }
         menu.update();
         // While paused (F5) the guest does not run; aurora keeps presenting the last frame.

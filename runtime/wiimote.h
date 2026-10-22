@@ -38,6 +38,19 @@ public:
     // The Wii's sensor bar position and IR sensitivity (1-5) settings.
     void set_sensor_bar_above(bool above) { bar_above_ = above; }
     void set_ir_sensitivity(int level);
+    // Dots closer than this (camera pixels, of 1024 x 768; 0 = off) are merged into one: a sensor
+    // bar end is a group of LEDs, which the camera sometimes sees as several dots.
+    void set_ir_merge(int pixels) { ir_merge_ = pixels; }
+
+    // What the IR camera saw in the last report, for the calibration screen: dots in image
+    // coordinates (0..1 across, 0..1 down, as KPAD orients them), before and after merging, and
+    // the two bar ends tracking settled on (ends: 2 seen, 1 one seen and the other inferred, 0 none).
+    struct IrView {
+        int raw = 0, merged = 0, ends = 0;
+        float raw_x[4]{}, raw_y[4]{}, merged_x[4]{}, merged_y[4]{};
+        float end_x[2]{}, end_y[2]{};
+    };
+    const IrView& ir_view() const { return ir_view_; }
 
 private:
     using Clock = std::chrono::steady_clock;
@@ -69,6 +82,8 @@ private:
     bool rumble_ = false;
     bool bar_above_ = false;
     int ir_sensitivity_ = 3, ir_level_set_ = 0;
+    int ir_merge_ = 0;
+    IrView ir_view_;
     // KPAD's tracking state (normalised image coordinates): how many ends were found last, where
     // they were, the bar's length, direction and distance, and the length remembered for
     // acquiring from one dot.
