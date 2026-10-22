@@ -24,7 +24,9 @@ aids. Open work is in [TODO.md](TODO.md).
   which forwards the guest's GX stream and adds aurora's 0x50 extension commands (host pointers for
   arrays, textures, TLUTs and copies). Vertex array sizes are inferred from the indices each draw
   uses; texture contents are versioned by texture-cache invalidates (BP 0x66).
-- Local fixes to aurora live in `patches/aurora`, applied at configure time:
+- Local fixes to aurora live in `patches/aurora`, applied at configure time; the applied ones are
+  recorded (name, SHA-256) in `extern/aurora/.pandora-patches`, since a later patch can change an
+  earlier one's context and break its "already applied" (reverse) check:
   - 0001: texgens sourcing binormal/tangent on vertices without NBT read zero instead of aborting.
   - 0002: the XF viewport origin bias is 342 (as the hardware and this game's SDK use), not 340.
   - 0003: vertices within half a logical pixel of the viewport edge are snapped onto it. The game's
@@ -60,6 +62,28 @@ aids. Open work is in [TODO.md](TODO.md).
   created, so it applies after a restart; 4 is the only count WebGPU guarantees). With MSAA aurora
   disables its asynchronous readback, so `--screenshot` captures nothing then (the game itself does
   not use readback). `PANDORA_ANISO` and `PANDORA_MSAA` override the settings in test runs.
+
+- Ubershaders (`patches/aurora/0009`, `lib/gx/ubershader.cpp`): aurora compiles a shader per GX
+  state (pipeline config) on a worker thread and used to skip a draw until its pipeline was ready,
+  so new areas and cutscenes appeared over a few seconds the first time. Such draws now use a
+  generic shader that reads the state at run time: the vertex format, texgens and lighting in the
+  vertex stage, the TEV stages, indirect texturing, fog and alpha compare in the fragment stage,
+  from a packed config (100 words, in the storage buffer; its word offset in the draw immediates'
+  spare `_pad`) and one fixed uniform holding every field a specialized shader can use (exactly
+  aurora's 3840-byte uniform binding). It mirrors `build_shader_source` operation for operation,
+  including its overflow wrap of registers last written unclamped (or never written), and is
+  pixel-identical to the specialized shaders in every frame compared (boot, title, menus, the
+  tower with and without targeting; forced with `PANDORA_UBERSHADER=2`). Fixed-function state is
+  still pipeline state, so the ubershader has a pipeline per blend/depth/cull/mask combination: a
+  `gx::PipelineConfig` with the shader part blanked but the line mode and a marker
+  (`ShaderConfig::pad2 = 0xA5`), so aurora's cache persists and prewarms them like any other.
+  Cold cache: 41 such pipelines into the tower, the first 578 ms (the module compile; once per
+  install, Dawn caches it), the rest ~2 ms, built blocking on first use; afterwards they come
+  from the cache at startup. On a cold cache the first 150 frames in the tower were 67% different
+  from a warm run without it, 0% with it. Only the triangle, no-normal-target, no-dst-alpha
+  module variant has been exercised so far (lines/points and the dst-alpha outputs are written but
+  untested). `PANDORA_UBERSHADER=0` restores skipping; `PANDORA_CACHE_DIR` keeps test runs off the
+  user's caches. `gx::DrawData` grew past aurora's inline command payload, now 144 bytes.
 
 ## Settings menu
 

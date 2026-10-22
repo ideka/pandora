@@ -95,7 +95,8 @@ Open work only. How things currently work, and why, is in [NOTES.md](NOTES.md).
   - Bridge + command processor on their own thread: ~1.1 ms/frame on the emulation thread
     (prepare_draw's index scan is a third of it). The real GP reads the FIFO asynchronously; PE
     interrupts and the frame-end handshake would have to cross threads.
-  - Shader/pipeline stalls on first use (see Graphics); unrelated to steady-state fps.
+  - Shader/pipeline compiles on first use: drawn with the ubershader meanwhile (NOTES.md,
+    Graphics). Its lines/points and dst-alpha (replace, dual-source) variants are untested.
 - Avoid storing `ctx->pc` at every instruction in the generated code.
 - Re-measure boot speed (was ~0.3x real time, dominated by OS alarm/scheduler churn from
   `OSSleepTicks(1)` polling, before the pacing and clang changes).

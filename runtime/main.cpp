@@ -195,6 +195,10 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
     rt.start();
 
     rt.input().set_bindings(&settings.bindings);
+    // Ubershaders draw what is still compiling; PANDORA_UBERSHADER=0 skips it instead (aurora's
+    // original behavior), 2 draws everything with them (tests).
+    if (const char* uber = std::getenv("PANDORA_UBERSHADER"))
+        aurora_set_ubershader_mode(std::atoi(uber));
     auto apply_settings = [&] {
         SDL_Window* window = aurora_get_window();
         const bool fullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;

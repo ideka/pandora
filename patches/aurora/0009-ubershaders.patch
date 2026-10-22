@@ -1,0 +1,1599 @@
+diff --git a/cmake/aurora_gx.cmake b/cmake/aurora_gx.cmake
+--- a/cmake/aurora_gx.cmake
++++ b/cmake/aurora_gx.cmake
+@@ -28,6 +28,7 @@ add_library(aurora_gx STATIC
+         lib/gx/readback.cpp
+         lib/gx/shader.cpp
+         lib/gx/shader_info.cpp
++        lib/gx/ubershader.cpp
+         lib/dolphin/gx/GXBump.cpp
+         lib/dolphin/gx/GXCull.cpp
+         lib/dolphin/gx/GXCpu2Efb.cpp
+diff --git a/include/aurora/aurora.h b/include/aurora/aurora.h
+--- a/include/aurora/aurora.h
++++ b/include/aurora/aurora.h
+@@ -147,6 +147,9 @@ void aurora_set_present_gamma(float exponent);
+ /** Anisotropic filtering for every mipmapped, linearly filtered texture, in place of what the
+  * game requests (GX max_aniso); 0 = the game's request. Takes effect on the next draws. */
+ void aurora_set_forced_anisotropy(uint16_t level);
++/** Ubershaders: 0 = off (draws whose pipeline is still compiling are skipped), 1 = such draws use
++ * the ubershader (default), 2 = every draw uses it (testing). */
++void aurora_set_ubershader_mode(int mode);
+ 
+ SDL_Window* aurora_get_window();
+ AuroraWindowSize aurora_get_window_size();
+diff --git a/include/aurora/gfx.hpp b/include/aurora/gfx.hpp
+--- a/include/aurora/gfx.hpp
++++ b/include/aurora/gfx.hpp
+@@ -8,7 +8,7 @@
+ 
+ namespace aurora::gfx {
+ 
+-inline constexpr size_t InlineDrawPayloadSize = 128;
++inline constexpr size_t InlineDrawPayloadSize = 144; // GX draws: 132 bytes with the ubershader fallback
+ inline constexpr size_t MaxColorAttachments = 8;
+ inline constexpr uint32_t SceneColorAttachmentIndex = 0;
+ 
+diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
+--- a/lib/gx/command_processor.cpp
++++ b/lib/gx/command_processor.cpp
+@@ -10,6 +10,7 @@
+ #include "regs.hpp"
+ #include "shader_info.hpp"
+ #include "texture.hpp"
++#include "ubershader.hpp"
+ 
+ #include <tracy/Tracy.hpp>
+ 
+@@ -141,6 +142,11 @@ struct DrawCache {
+   FogRangeLutKey fogRangeKey{};
+   bool hasFogRange = false;
+   GXVtxFmt lastDrawFmt = GX_MAX_VTXFMT;
++  // Ubershader fallback (ubershader.hpp) while the pipeline compiles
++  bool pipelineReady = false;
++  gfx::PipelineRef uberPipeline{};
++  gfx::Range uberCfgRange{};
++  gfx::Range uberUniformRange{};
+ };
+ DrawCache sDrawCache;
+ 
+@@ -411,6 +417,9 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
+     cache.fmt = fmt;
+     cache.lineMode = lineMode;
+     cache.hasPipeline = true;
++    cache.pipelineReady = false;
++    cache.uberPipeline = {};
++    cache.uberCfgRange = {};
+     state.dirty = (state.dirty & ~DirtyPipeline) | DirtyUniform;
+     if (!hadPipeline || prevSampledTextures != cache.shaderInfo.sampledTextures ||
+         prevSampledIndTextures != cache.shaderInfo.sampledIndTextures) {
+@@ -435,8 +444,29 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
+   const bool uniformValid = (state.dirty & DirtyUniform) == 0 && cache.uniformRange.size != 0;
+   if (!uniformValid) {
+     cache.uniformRange = build_uniform(cache.shaderInfo);
++    cache.uberUniformRange = {};
+     state.dirty &= ~DirtyUniform;
+   }
++  // A pipeline still compiling draws with the ubershader (whose pipeline, per blend/depth state, is
++  // compiled on first use if the cache warmup hasn't yet).
++  const auto uberMode = uber_shader_mode();
++  if (uberMode == UberShaderMode::Fallback && !cache.pipelineReady) {
++    gfx::CompiledPipeline compiled;
++    cache.pipelineReady = gfx::get_pipeline(cache.pipelineRef, compiled);
++  }
++  const bool useUber = uberMode == UberShaderMode::Force || (uberMode == UberShaderMode::Fallback && !cache.pipelineReady);
++  if (useUber) {
++    if (cache.uberPipeline == 0) {
++      cache.uberPipeline =
++          gfx::find_pipeline(make_uber_pipeline_config(cache.config), gfx::get_render_target_layout(), true);
++    }
++    if (cache.uberCfgRange.size == 0) {
++      cache.uberCfgRange = push_uber_config(cache.config.shaderConfig, cache.shaderInfo);
++    }
++    if (cache.uberUniformRange.size == 0) {
++      cache.uberUniformRange = build_uber_uniform(lineMode);
++    }
++  }
+   if (cache.config.shaderConfig.fogRangeEnabled) {
+     const auto key = fog_range_lut_key();
+     if (!cache.hasFogRange || cache.fogRangeKey != key) {
+@@ -446,6 +476,9 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
+     }
+   }
+   immediates.fogRangeBase = cache.fogRange.offset / sizeof(u32);
++  if (useUber) {
++    immediates._pad = cache.uberCfgRange.offset / sizeof(u32); // the ubershader's cfg_base
++  }
+ 
+   state.dirty &= ~DirtyImmediates;
+ 
+@@ -469,6 +502,8 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
+       .indexCount = numIndices,
+       .instanceCount = instanceCount,
+       .dstAlpha = state.dstAlpha,
++      .uberPipeline = useUber ? cache.uberPipeline : 0,
++      .uberUniformOffset = cache.uberUniformRange.offset,
+   });
+ }
+ 
+@@ -781,6 +816,8 @@ void handle_aurora(ByteReader& reader) noexcept {
+ void clear_draw_cache() noexcept {
+   sDrawCache.bindGeneration = 0;
+   sDrawCache.uniformRange = {};
++  sDrawCache.uberCfgRange = {};
++  sDrawCache.uberUniformRange = {};
+   sDrawCache.fogRange = {};
+   sDrawCache.hasFogRange = false;
+ }
+diff --git a/lib/gx/pipeline.cpp b/lib/gx/pipeline.cpp
+--- a/lib/gx/pipeline.cpp
++++ b/lib/gx/pipeline.cpp
+@@ -7,16 +7,24 @@
+ 
+ #include "gx_fmt.hpp"
+ #include "shader_info.hpp"
++#include "ubershader.hpp"
+ 
+ #include <tracy/Tracy.hpp>
+ 
++#include <chrono>
++
+ namespace aurora::gx {
++namespace {
++constexpr Module Log{"aurora::gx::pipeline"};
++} // namespace
+ 
+ gfx::CompiledPipeline create_pipeline(const PipelineConfig& config, const gfx::RenderTargetLayout& layout) {
+   ZoneScoped;
+   const auto hash = xxh3_hash(layout.key, xxh3_hash(config, static_cast<HashType>(gfx::ShaderType::GX)));
+   const auto create = [&](const PipelineOptions& options, const char* passName) {
+-    const auto shader = build_shader(config.shaderConfig, layout, options.dstAlphaMode);
++    const auto shader = is_uber_config(config.shaderConfig)
++                            ? build_uber_shader(config.shaderConfig.lineMode, layout, options.dstAlphaMode)
++                            : build_shader(config.shaderConfig, layout, options.dstAlphaMode);
+     const auto label = fmt::format("GX Pipeline {:x} {}", hash, passName);
+     return build_pipeline(config, layout, options, {}, shader, label.c_str());
+   };
+@@ -50,21 +58,32 @@ gfx::CompiledPipeline create_pipeline(const PipelineConfig& config, const gfx::R
+       options.alphaUpdate = false;
+     }
+   }
++  const auto start = std::chrono::steady_clock::now();
+   pipeline.main = create(options, "main");
+   if (!pipeline.main) {
+     return {};
+   }
++  if (is_uber_config(config.shaderConfig)) {
++    const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
++    Log.info("Built ubershader pipeline {:x} in {:.1f} ms", hash, ms);
++  }
+   return pipeline;
+ }
+ 
+ void render(const DrawData& data, const wgpu::RenderPassEncoder& pass) {
+   gfx::CompiledPipeline pipeline;
+-  if (!gfx::get_pipeline(data.pipeline, pipeline)) {
+-    return;
++  DrawImmediateData immediates = data.immediateData;
++  gfx::Range uniformRange = data.uniformRange;
++  if (uber_shader_mode() == UberShaderMode::Force || !gfx::get_pipeline(data.pipeline, pipeline)) {
++    // Still compiling: the ubershader draws it instead, if the draw recorded one.
++    if (data.uberPipeline == 0 || !gfx::get_pipeline(data.uberPipeline, pipeline)) {
++      return;
++    }
++    uniformRange = {data.uberUniformOffset, MaxUniformSize};
+   }
+   const auto& resources = gfx::detail::resources();
+-  pass.SetImmediates(0, &data.immediateData, sizeof(data.immediateData));
+-  const std::array offsets{data.uniformRange.offset};
++  pass.SetImmediates(0, &immediates, sizeof(immediates));
++  const std::array offsets{uniformRange.offset};
+   pass.SetBindGroup(1, resources.uniformBindGroup, offsets.size(), offsets.data());
+   if (data.bindGroups.textureBindGroup) {
+     pass.SetBindGroup(2, gfx::find_bind_group(data.bindGroups.textureBindGroup));
+diff --git a/lib/gx/pipeline.hpp b/lib/gx/pipeline.hpp
+--- a/lib/gx/pipeline.hpp
++++ b/lib/gx/pipeline.hpp
+@@ -15,6 +15,11 @@ struct DrawData {
+   uint32_t indexCount;
+   uint32_t instanceCount;
+   uint32_t dstAlpha;
++  // The ubershader fallback (ubershader.hpp), recorded when the pipeline wasn't ready: its
++  // pipeline and uniform (MaxUniformSize bytes at this offset); its packed config's word offset is
++  // in immediateData._pad, which the specialized shaders don't read.
++  gfx::PipelineRef uberPipeline = 0;
++  uint32_t uberUniformOffset = 0;
+ };
+ 
+ constexpr uint32_t GXPipelineConfigVersion = 13;
+diff --git a/lib/gx/shader_info.cpp b/lib/gx/shader_info.cpp
+--- a/lib/gx/shader_info.cpp
++++ b/lib/gx/shader_info.cpp
+@@ -499,4 +499,96 @@ gfx::Range build_uniform(const ShaderInfo& info) noexcept {
+   fill_uniform(buf, info);
+   return gfx::push_uniform(buf.data(), buf.size());
+ }
++
++// The ubershader's uniform (ubershader.cpp, struct Uniform): the same values as fill_uniform, all
++// of them, in a fixed order.
++gfx::Range build_uber_uniform(u8 lineMode) noexcept {
++  ZoneScoped;
++  static ByteBuffer buf;
++  buf.clear();
++  buf.reserve_extra(MaxUniformSize);
++  buf.append<f32>(g_gxState.renderViewport.width);
++  buf.append<f32>(g_gxState.renderViewport.height);
++  buf.append<f32>(g_gxState.logicalViewport.width);
++  buf.append<f32>(g_gxState.logicalViewport.height);
++  if (lineMode == 3) { // GX_POINTS
++    buf.append<f32>(static_cast<f32>(g_gxState.pointSize) / 6.f);
++    buf.append<f32>(1.0f);
++    buf.append<f32>(tex_offset(g_gxState.pointTexOffset));
++    buf.append<u32>(point_texcoord_mask());
++  } else {
++    buf.append<f32>(static_cast<f32>(g_gxState.lineWidth) / 6.f);
++    buf.append<f32>(g_gxState.lineHalfAspect ? 0.5f : 1.f);
++    buf.append<f32>(tex_offset(g_gxState.lineTexOffset));
++    buf.append<u32>(line_texcoord_mask());
++  }
++  auto proj = g_gxState.proj;
++  if constexpr (UseReversedZ) {
++    proj.m2 = proj.m2 * Vec4{-1.f, -1.f, -1.f, -1.f};
++  } else {
++    proj.m2 = proj.m2 + proj.m3;
++  }
++  buf.append(proj);
++  for (int i = 0; i < MaxPnMtx; i++) {
++    buf.append(g_gxState.pnMtx[i].pos);
++  }
++  for (int i = 0; i < MaxTexMtx; i++) {
++    buf.append(g_gxState.texMtxs[i]);
++  }
++  for (int i = 0; i < MaxPnMtx; i++) {
++    buf.append(g_gxState.pnMtx[i].nrm);
++  }
++  for (const auto& reg : g_gxState.colorRegs) {
++    buf.append(reg);
++  }
++  buf.append(g_gxState.lights);
++  for (int i = 0; i < 4; ++i) {
++    buf.append<u32>(g_gxState.colorChannelState[i].lightMask.to_ulong());
++  }
++  for (int i = 0; i < 4; ++i) {
++    buf.append(g_gxState.colorChannelState[i].ambColor);
++  }
++  for (int i = 0; i < 4; ++i) {
++    buf.append(g_gxState.colorChannelState[i].matColor);
++  }
++  for (const auto& kcolor : g_gxState.kcolors) {
++    buf.append(kcolor);
++  }
++  for (const auto& mtx : g_gxState.ptTexMtxs) {
++    buf.append(mtx);
++  }
++  {
++    const auto& state = g_gxState.fog;
++    const float logicalWidth = std::max(g_gxState.logicalViewport.width, 1.f);
++    const float renderWidth = std::max(g_gxState.renderViewport.width, 1.f);
++    Fog fog{
++        .color = state.color,
++        .a = state.a,
++        .b = state.b,
++        .c = state.c,
++        .rangeCenter = ((static_cast<float>(state.rangeCenter) - g_gxState.logicalViewport.left) / logicalWidth) * 2.f -
++                       1.f + (g_gxState.renderViewport.left / renderWidth) * 2.f,
++    };
++    for (u32 i = 0; i < state.rangeK.size(); ++i) {
++      const u32 source = (i & ~1u) | (1u - (i & 1u));
++      fog.rangeK[i / 4][i % 4] = static_cast<float>(state.rangeK[source]) / 64.f;
++    }
++    fog.rangeK[2][2] = fog.rangeK[2][1];
++    fog.rangeK[2][3] = fog.rangeK[2][1];
++    buf.append(fog);
++  }
++  for (const auto& scale : g_gxState.texCoordScales) {
++    buf.append(Vec4{static_cast<f32>(scale.scaleS) + 1.0f, static_cast<f32>(scale.scaleT) + 1.0f, 0.0f, 0.0f});
++  }
++  for (u32 i = 0; i < MaxIndTexMtxs; ++i) {
++    const auto& mtx = g_gxState.indTexMtxs[i];
++    buf.append(Vec4{mtx.mtx.m0.x, mtx.mtx.m0.y, mtx.mtx.m1.x, mtx.mtx.m1.y});
++    buf.append(Vec4{mtx.mtx.m2.x, mtx.mtx.m2.y, std::exp2f(mtx.scaleExp), 0.0f});
++  }
++  for (int i = 0; i < MaxTextures; ++i) {
++    buf.append(texture_size_bias(get_texture(static_cast<GXTexMapID>(i))));
++  }
++  CHECK(buf.size() == MaxUniformSize, "ubershader uniform is {} bytes, expected {}", buf.size(), MaxUniformSize);
++  return gfx::push_uniform(buf.data(), buf.size());
++}
+ } // namespace aurora::gx
+diff --git a/lib/gx/shader_info.hpp b/lib/gx/shader_info.hpp
+--- a/lib/gx/shader_info.hpp
++++ b/lib/gx/shader_info.hpp
+@@ -5,5 +5,6 @@
+ namespace aurora::gx {
+ ShaderInfo build_shader_info(const ShaderConfig& config) noexcept;
+ gfx::Range build_uniform(const ShaderInfo& info) noexcept;
++gfx::Range build_uber_uniform(u8 lineMode) noexcept; // ubershader.hpp
+ u8 color_channel(GXChannelID id) noexcept;
+ }; // namespace aurora::gx
+diff --git a/lib/gx/ubershader.cpp b/lib/gx/ubershader.cpp
+new file mode 100644
+--- /dev/null
++++ b/lib/gx/ubershader.cpp
+@@ -0,0 +1,1235 @@
++#include "ubershader.hpp"
++
++#include "aurora/aurora.h"
++
++#include "../gfx/recording.hpp"
++#include "../webgpu/gpu.hpp"
++#include "shader_info.hpp"
++
++#include <absl/container/flat_hash_map.h>
++#include <atomic>
++#include <mutex>
++#include <string>
++#include <string_view>
++
++#include <tracy/Tracy.hpp>
++
++namespace aurora::gx {
++namespace {
++constexpr Module Log{"aurora::gx::uber"};
++
++std::atomic<UberShaderMode> sMode = UberShaderMode::Fallback;
++
++// Packed shader config (words in the storage buffer, read by the shader through cfg()):
++constexpr u32 CfgHeader = 0;      // tevStageCount 5 | numIndStages 3 | fogType 5 | fogRange 1 | lineMode 2 |
++                                  // vtxStride 8 | hasNormal 1 | nbt3 1
++constexpr u32 CfgAlphaCmp = 1;    // comp0 3 | op 2 | comp1 3 | enabled 1 | ... | ref0 8 @16 | ref1 8 @24
++constexpr u32 CfgMasks = 2;       // sampledTexCoords 8 | sampledColorChannels 2 | usedIndStages 4 | loadsTevReg 4
++constexpr u32 CfgSwap = 3;        // 4 swap tables x (r, g, b, a) x 2 bits
++constexpr u32 CfgChannels = 4;    // 4 channels x 8 bits: matSrc 1 | ambSrc 1 | diffFn 2 | attnFn 2 | lighting 1
++constexpr u32 CfgTcg = 5;         // 8: type 4 | src 5 | mtx 7 | postMtx 7 | normalize 1 | embossSrc 3
++constexpr u32 CfgIndStages = 13;  // 2 words, 16 bits per stage: texCoord 4 | texMap 4 | scaleS 4 | scaleT 4
++constexpr u32 CfgAttrs = 15;      // 21: attrType 2 | cnt 4 | compType 4 | offset 8 | stride 8 | frac 5 | le 1
++constexpr u32 CfgTev = 36;        // 16 x 4 words (see push_uber_config)
++constexpr u32 CfgWords = CfgTev + 4 * MaxTevStages;
++
++constexpr std::string_view UberSource = R"""(
++diagnostic(off, derivative_uniformity);
++@@ENABLE@@
++const LINE_MODE: u32 = @@LINE_MODE@@u;
++
++struct Light {
++    pos: vec3f,
++    dir: vec3f,
++    color: vec4f,
++    cos_att: vec3f,
++    dist_att: vec3f,
++};
++struct Fog {
++    color: vec4f,
++    a: f32,
++    b: f32,
++    c: f32,
++    range_center: f32,
++    range_k: array<vec4f, 3>,
++};
++struct Uniform {
++    render_viewport_size: vec2f,
++    logical_viewport_size: vec2f,
++    line_width: f32,
++    line_aspect_y: f32,
++    line_tex_offset: f32,
++    line_texcoord_mask: u32,
++    proj: mat4x4f,
++    postex_mtx: array<mat3x4f, 20>,
++    nrm_mtx: array<mat3x4f, 10>,
++    tevregs: array<vec4f, 4>,
++    lights: array<Light, 8>,
++    light_state: vec4u,
++    cc_amb: array<vec4f, 4>,
++    cc_mat: array<vec4f, 4>,
++    kcolor: array<vec4f, 4>,
++    postmtx: array<mat3x4f, 20>,
++    fog: Fog,
++    texcoord_scale: array<vec4f, 8>,
++    ind_mtx: array<mat2x4f, 3>,
++    tex_size_bias: array<vec4f, 8>,
++};
++struct Immediate {
++    vtx_start: u32,
++    current_pnmtx: u32,
++    fog_range_base: u32,
++    cfg_base: u32,
++    array_start0: vec4u,
++    array_start1: vec4u,
++    array_start2: vec4u,
++};
++var<immediate> imm: Immediate;
++
++@group(0) @binding(0)
++var<storage, read> vbuf: array<u32>;
++@group(0) @binding(1)
++var<storage, read> abuf: array<u32>;
++@group(1) @binding(0)
++var<uniform> ubuf: Uniform;
++@group(2) @binding(0) var tex0: texture_2d<f32>;
++@group(2) @binding(1) var tex0_samp: sampler;
++@group(2) @binding(2) var tex1: texture_2d<f32>;
++@group(2) @binding(3) var tex1_samp: sampler;
++@group(2) @binding(4) var tex2: texture_2d<f32>;
++@group(2) @binding(5) var tex2_samp: sampler;
++@group(2) @binding(6) var tex3: texture_2d<f32>;
++@group(2) @binding(7) var tex3_samp: sampler;
++@group(2) @binding(8) var tex4: texture_2d<f32>;
++@group(2) @binding(9) var tex4_samp: sampler;
++@group(2) @binding(10) var tex5: texture_2d<f32>;
++@group(2) @binding(11) var tex5_samp: sampler;
++@group(2) @binding(12) var tex6: texture_2d<f32>;
++@group(2) @binding(13) var tex6_samp: sampler;
++@group(2) @binding(14) var tex7: texture_2d<f32>;
++@group(2) @binding(15) var tex7_samp: sampler;
++
++// --- Config --------------------------------------------------------------------------------
++
++fn cfg(i: u32) -> u32 {
++    return abuf[imm.cfg_base + i];
++}
++fn bits(v: u32, shift: u32, count: u32) -> u32 {
++    return extractBits(v, shift, count);
++}
++fn tev_stage_count() -> u32 { return bits(cfg(0u), 0u, 5u); }
++fn num_ind_stages() -> u32 { return bits(cfg(0u), 5u, 3u); }
++fn fog_type() -> u32 { return bits(cfg(0u), 8u, 5u); }
++fn fog_range_enabled() -> bool { return bits(cfg(0u), 13u, 1u) != 0u; }
++fn vtx_stride() -> u32 { return bits(cfg(0u), 16u, 8u); }
++fn has_normal() -> bool { return bits(cfg(0u), 24u, 1u) != 0u; }
++fn nrm_nbt3() -> bool { return bits(cfg(0u), 25u, 1u) != 0u; }
++fn sampled_texcoords() -> u32 { return bits(cfg(2u), 0u, 8u); }
++fn sampled_channels() -> u32 { return bits(cfg(2u), 8u, 2u); }
++fn used_ind_stages() -> u32 { return bits(cfg(2u), 10u, 4u); }
++fn loads_tev_reg() -> u32 { return bits(cfg(2u), 14u, 4u); }
++fn swap_sel(table: u32, chan: u32) -> u32 { return bits(cfg(3u), table * 8u + chan * 2u, 2u); }
++fn channel(i: u32) -> u32 { return bits(cfg(4u), i * 8u, 8u); }
++fn tcg(i: u32) -> u32 { return cfg(5u + i); }
++fn ind_stage(i: u32) -> u32 { return bits(cfg(13u + i / 2u), (i % 2u) * 16u, 16u); }
++fn attr_word(attr: u32) -> u32 { return cfg(15u + attr); }
++fn attr_type(attr: u32) -> u32 { return attr_word(attr) & 3u; }
++
++// --- Buffer loads (vbuf: vertices, abuf: arrays) ---------------------------------------------
++
++fn load_word(from_abuf: bool, word_idx: u32) -> u32 {
++    if (from_abuf) {
++        if (word_idx < arrayLength(&abuf)) {
++            return abuf[word_idx];
++        }
++        return 0u;
++    }
++    if (word_idx < arrayLength(&vbuf)) {
++        return vbuf[word_idx];
++    }
++    return 0u;
++}
++fn bswap32(v: u32, le: bool) -> u32 {
++    if (le) {
++        return v;
++    }
++    return ((v & 0x000000FFu) << 24u) | ((v & 0x0000FF00u) << 8u) | ((v & 0x00FF0000u) >> 8u) |
++           ((v & 0xFF000000u) >> 24u);
++}
++fn bswap16(v: u32, le: bool) -> u32 {
++    return select(((v & 0xFFu) << 8u) | (v >> 8u), v, le);
++}
++fn load_u8(a: bool, byte_off: u32) -> u32 {
++    let word = load_word(a, byte_off / 4u);
++    return (word >> ((byte_off & 3u) * 8u)) & 0xFFu;
++}
++fn load_u32_raw(a: bool, byte_off: u32) -> u32 {
++    let word_idx = byte_off >> 2u;
++    let sub = byte_off & 3u;
++    let lo = load_word(a, word_idx);
++    if (sub == 0u) {
++        return lo;
++    }
++    let hi = load_word(a, word_idx + 1u);
++    let shift = sub * 8u;
++    return (lo >> shift) | (hi << (32u - shift));
++}
++fn load_u16(a: bool, byte_off: u32, le: bool) -> u32 {
++    let word_idx = byte_off >> 2u;
++    let sub = byte_off & 3u;
++    let word = load_word(a, word_idx);
++    if (sub <= 2u) {
++        return bswap16(extractBits(word, sub * 8u, 16u), le);
++    }
++    let next = load_word(a, word_idx + 1u);
++    let raw = extractBits(word, 24u, 8u) | (extractBits(next, 0u, 8u) << 8u);
++    return bswap16(raw, le);
++}
++fn load_u24(a: bool, byte_off: u32, le: bool) -> u32 {
++    let raw = load_u32_raw(a, byte_off) & 0x00FFFFFFu;
++    if (le) {
++        return raw;
++    }
++    return ((raw & 0x0000FFu) << 16u) | (raw & 0x00FF00u) | ((raw & 0xFF0000u) >> 16u);
++}
++
++// --- Vertex attributes ---------------------------------------------------------------------
++
++struct AttrAddress {
++    offs: u32,
++    from_abuf: bool,
++    le: bool,
++};
++
++fn array_start(attr: u32) -> u32 {
++    let i = attr - 9u;
++    var v = imm.array_start2;
++    if (i < 4u) {
++        v = imm.array_start0;
++    } else if (i < 8u) {
++        v = imm.array_start1;
++    }
++    return v[i % 4u];
++}
++
++fn attr_address(attr: u32, vidx: u32, dl_extra: u32, within: u32) -> AttrAddress {
++    let w = attr_word(attr);
++    let ty = w & 3u;
++    let dl = bits(w, 10u, 8u) + dl_extra;
++    let stride = bits(w, 18u, 8u);
++    let le = bits(w, 31u, 1u) != 0u;
++    let vtx = imm.vtx_start + vidx * vtx_stride() + dl;
++    if (ty == 2u) {
++        return AttrAddress(array_start(attr) + load_u8(false, vtx) * stride + within, true, le);
++    }
++    if (ty == 3u) {
++        return AttrAddress(array_start(attr) + load_u16(false, vtx, false) * stride + within, true, le);
++    }
++    return AttrAddress(vtx + within, false, false);
++}
++
++fn comp_size(comp: u32) -> u32 {
++    switch (comp) {
++        case 0u, 1u: { return 1u; }
++        case 2u, 3u: { return 2u; }
++        default: { return 4u; }
++    }
++}
++
++fn fetch_comp(a: bool, off: u32, comp: u32, frac: u32, le: bool) -> f32 {
++    let div = f32(1u << frac);
++    switch (comp) {
++        case 0u: { return f32(load_u8(a, off)) / div; }
++        case 1u: { return f32((bitcast<i32>(load_u8(a, off)) << 24u) >> 24u) / div; }
++        case 2u: { return f32(load_u16(a, off, le)) / div; }
++        case 3u: { return f32(bitcast<i32>(load_u16(a, off, le) << 16u) >> 16u) / div; }
++        default: { return bitcast<f32>(bswap32(load_u32_raw(a, off), le)); }
++    }
++}
++
++// An attribute's components (count from the config, or `count` if nonzero), zero beyond them.
++fn fetch_attr(attr: u32, vidx: u32, count: u32, dl_extra: u32, within: u32) -> vec4f {
++    let w = attr_word(attr);
++    let comp = bits(w, 6u, 4u);
++    let frac = bits(w, 26u, 5u);
++    var cnt = bits(w, 2u, 4u);
++    if (count != 0u) {
++        cnt = count;
++    }
++    let ad = attr_address(attr, vidx, dl_extra, within);
++    if (comp == 5u) {
++        return unpack4x8unorm(load_u32_raw(ad.from_abuf, ad.offs));
++    }
++    let size = comp_size(comp);
++    var r = vec4f(0.0);
++    for (var k = 0u; k < min(cnt, 4u); k++) {
++        r[k] = fetch_comp(ad.from_abuf, ad.offs + k * size, comp, frac, ad.le);
++    }
++    return r;
++}
++
++fn fetch_color(attr: u32, vidx: u32) -> vec4f {
++    let comp = bits(attr_word(attr), 6u, 4u);
++    let ad = attr_address(attr, vidx, 0u, 0u);
++    let a = ad.from_abuf;
++    switch (comp) {
++        case 0u: {
++            let v = load_u16(a, ad.offs, ad.le);
++            return vec4f(f32((v >> 11u) & 0x1Fu) / f32(0x1Fu), f32((v >> 5u) & 0x3Fu) / f32(0x3Fu),
++                         f32((v >> 0u) & 0x1Fu) / f32(0x1Fu), 1.0);
++        }
++        case 1u, 2u: {
++            let raw = load_u32_raw(a, ad.offs);
++            return vec4f(f32(extractBits(raw, 0u, 8u)), f32(extractBits(raw, 8u, 8u)), f32(extractBits(raw, 16u, 8u)),
++                         255.0) / 255.0;
++        }
++        case 3u: {
++            let v = load_u16(a, ad.offs, ad.le);
++            return vec4f(f32((v >> 12u) & 0x0Fu) / f32(0x0Fu), f32((v >> 8u) & 0x0Fu) / f32(0x0Fu),
++                         f32((v >> 4u) & 0x0Fu) / f32(0x0Fu), f32((v >> 0u) & 0x0Fu) / f32(0x0Fu));
++        }
++        case 4u: {
++            let v = load_u24(a, ad.offs, ad.le);
++            return vec4f(f32((v >> 18u) & 0x3Fu) / f32(0x3Fu), f32((v >> 12u) & 0x3Fu) / f32(0x3Fu),
++                         f32((v >> 6u) & 0x3Fu) / f32(0x3Fu), f32((v >> 0u) & 0x3Fu) / f32(0x3Fu));
++        }
++        default: {
++            let raw = load_u32_raw(a, ad.offs);
++            return vec4f(f32(extractBits(raw, 0u, 8u)), f32(extractBits(raw, 8u, 8u)), f32(extractBits(raw, 16u, 8u)),
++                         f32(extractBits(raw, 24u, 8u))) / 255.0;
++        }
++    }
++}
++
++fn load_pnmtxidx(vidx: u32) -> u32 {
++    if (attr_type(0u) == 0u) {
++        return imm.current_pnmtx;
++    }
++    let ad = attr_address(0u, vidx, 0u, 0u);
++    return load_u8(ad.from_abuf, ad.offs) / 3u;
++}
++fn load_texmtxidx(i: u32, vidx: u32) -> u32 {
++    let ad = attr_address(1u + i, vidx, 0u, 0u);
++    return load_u8(ad.from_abuf, ad.offs);
++}
++fn load_pos(vidx: u32) -> vec3f {
++    return fetch_attr(9u, vidx, 0u, 0u, 0u).xyz;
++}
++fn load_nrm(vidx: u32) -> vec3f {
++    if (attr_type(10u) == 0u) {
++        return vec3f(1.0, 0.0, 0.0);
++    }
++    return fetch_attr(10u, vidx, min(bits(attr_word(10u), 2u, 4u), 3u), 0u, 0u).xyz;
++}
++// Binormal (slice 1) or tangent (slice 2) of an NBT normal.
++fn load_nbt(slice: u32, vidx: u32) -> vec3f {
++    let w = attr_word(10u);
++    let ty = w & 3u;
++    if (ty == 0u || bits(w, 2u, 4u) != 9u) {
++        return vec3f(0.0);
++    }
++    var dl_extra = 0u;
++    if (nrm_nbt3()) {
++        if (ty == 2u) {
++            dl_extra = slice;
++        } else if (ty == 3u) {
++            dl_extra = slice * 2u;
++        }
++    }
++    let size = comp_size(bits(w, 6u, 4u));
++    return fetch_attr(10u, vidx, 3u, dl_extra, slice * 3u * size).xyz;
++}
++fn load_clr(i: u32, vidx: u32) -> vec4f {
++    if (attr_type(11u + i) == 0u) {
++        return vec4f(0.0);
++    }
++    return fetch_color(11u + i, vidx);
++}
++fn load_tex(i: u32, vidx: u32) -> vec2f {
++    return fetch_attr(13u + i, vidx, 0u, 0u, 0u).xy;
++}
++
++// --- Vertex stage --------------------------------------------------------------------------
++
++struct VertexOutput {
++    @builtin(position) pos: vec4f,
++    @location(0) cc0: vec4f,
++    @location(1) cc1: vec4f,
++    @location(2) mv_nrm: vec3f,
++    @location(3) tex0: vec3f,
++    @location(4) tex1: vec3f,
++    @location(5) tex2: vec3f,
++    @location(6) tex3: vec3f,
++    @location(7) tex4: vec3f,
++    @location(8) tex5: vec3f,
++    @location(9) tex6: vec3f,
++    @location(10) tex7: vec3f,
++};
++
++// One color channel (i: 0 or 1; alpha: its alpha half), as lighting_func in shader.cpp.
++fn light_channel(i: u32, alpha: bool, mv_pos: vec3f, mv_nrm: vec3f, clr: vec4f) -> vec4f {
++    let ch = i + select(0u, 2u, alpha);
++    let c = channel(ch);
++    let mat = select(ubuf.cc_mat[ch], clr, bits(c, 0u, 1u) != 0u);
++    if (bits(c, 6u, 1u) == 0u) {
++        return mat;
++    }
++    let amb = select(ubuf.cc_amb[ch], clr, bits(c, 1u, 1u) != 0u);
++    let diff_fn = bits(c, 2u, 2u);
++    let attn_fn = bits(c, 4u, 2u);
++    var lighting = amb;
++    for (var l = 0u; l < 8u; l++) {
++        if ((ubuf.light_state[ch] & (1u << l)) == 0u) { continue; }
++        let light = ubuf.lights[l];
++        var ldir = light.pos - mv_pos;
++        let dist2 = dot(ldir, ldir);
++        let dist = sqrt(dist2);
++        ldir = ldir / dist;
++        var attn: f32;
++        if (attn_fn == 2u) {
++            attn = 1.0;
++        } else if (attn_fn == 1u) {
++            let cosine = max(0.0, dot(ldir, light.dir));
++            let cos_attn = dot(light.cos_att, vec3f(1.0, cosine, cosine * cosine));
++            let dist_attn = dot(light.dist_att, vec3f(1.0, dist, dist2));
++            attn = max(0.0, cos_attn / dist_attn);
++        } else {
++            attn = select(0.0, max(0.0, dot(mv_nrm, light.dir)), dot(mv_nrm, ldir) >= 0.0);
++            let cos_attn = dot(light.cos_att, vec3f(1.0, attn, attn * attn));
++            var dist_attn: f32;
++            if (diff_fn != 0u) {
++                dist_attn = max(0.0, dot(normalize(light.dist_att), vec3f(1.0, attn, attn * attn)));
++            } else {
++                dist_attn = max(0.0, dot(light.dist_att, vec3f(1.0, attn, attn * attn)));
++            }
++            attn = max(0.0, cos_attn / dist_attn);
++        }
++        var diff = 1.0;
++        if (diff_fn == 1u) {
++            diff = dot(ldir, mv_nrm);
++        } else if (diff_fn == 2u) {
++            diff = max(0.0, dot(ldir, mv_nrm));
++        }
++        lighting = lighting + (attn * diff * light.color);
++    }
++    return mat * clamp(lighting, vec4f(0.0), vec4f(1.0));
++}
++
++@vertex
++fn vs_main(
++    @builtin(vertex_index) vidx: u32@@IIDX@@
++) -> VertexOutput {
++    var out: VertexOutput;
++    var in_vidx = vidx;
++    var in_pos: vec3f;
++    var in_pnmtxidx: u32;
++    var mv_pos: vec3f;
++    var mv_pos_a: vec3f;
++    var mv_pos_b: vec3f;
++    var use_b = false;
++    if (LINE_MODE == 3u) {
++        in_vidx = iidx;
++        in_pos = load_pos(in_vidx);
++        in_pnmtxidx = load_pnmtxidx(in_vidx);
++        mv_pos = vec4f(in_pos, 1.0) * ubuf.postex_mtx[in_pnmtxidx];
++    } else if (LINE_MODE != 0u) {
++        use_b = vidx >= 2u;
++        let vidx_a = iidx * select(1u, 2u, LINE_MODE == 1u);
++        let vidx_b = vidx_a + 1u;
++        in_vidx = select(vidx_a, vidx_b, use_b);
++        let pos_a = load_pos(vidx_a);
++        let pos_b = load_pos(vidx_b);
++        in_pos = select(pos_a, pos_b, use_b);
++        let pnmtxidx_a = load_pnmtxidx(vidx_a);
++        let pnmtxidx_b = load_pnmtxidx(vidx_b);
++        in_pnmtxidx = select(pnmtxidx_a, pnmtxidx_b, use_b);
++        mv_pos_a = vec4f(pos_a, 1.0) * ubuf.postex_mtx[pnmtxidx_a];
++        mv_pos_b = vec4f(pos_b, 1.0) * ubuf.postex_mtx[pnmtxidx_b];
++        mv_pos = select(mv_pos_a, mv_pos_b, use_b);
++    } else {
++        in_pnmtxidx = load_pnmtxidx(vidx);
++        in_pos = load_pos(vidx);
++        mv_pos = vec4f(in_pos, 1.0) * ubuf.postex_mtx[in_pnmtxidx];
++    }
++    let in_nrm = load_nrm(in_vidx);
++
++    if (LINE_MODE == 0u) {
++        let clip_pos = vec4f(mv_pos, 1.0) * ubuf.proj;
++        let edge_ndc = clip_pos.xy / clip_pos.w;
++        let half_px_ndc = 1.0 / max(ubuf.logical_viewport_size, vec2f(1.0));
++        let near_edge = (abs(abs(edge_ndc) - 1.0) < half_px_ndc) & vec2<bool>(clip_pos.w > 0.0);
++        out.pos = vec4f(select(edge_ndc, sign(edge_ndc), near_edge) * clip_pos.w, clip_pos.zw);
++    } else if (LINE_MODE == 3u) {
++        let clip = vec4f(mv_pos, 1.0) * ubuf.proj;
++        let viewport_scale = ubuf.render_viewport_size / max(ubuf.logical_viewport_size, vec2f(1.0));
++        let point_size = ubuf.line_width * min(viewport_scale.x, viewport_scale.y);
++        let x_sign = select(-1.0, 1.0, (vidx & 1u) != 0u);
++        let y_sign = select(-1.0, 1.0, vidx >= 2u);
++        let offset_px = vec2f(x_sign, y_sign) * (point_size / 2.0);
++        let offset_ndc = (offset_px * 2.0) / ubuf.render_viewport_size;
++        out.pos = vec4f(clip.xy + offset_ndc * clip.w, clip.zw);
++    } else {
++        let clip_a = vec4f(mv_pos_a, 1.0) * ubuf.proj;
++        let clip_b = vec4f(mv_pos_b, 1.0) * ubuf.proj;
++        let ndc_a = clip_a.xy / clip_a.w;
++        let ndc_b = clip_b.xy / clip_b.w;
++        let viewport_scale = ubuf.render_viewport_size / max(ubuf.logical_viewport_size, vec2f(1.0));
++        let delta_px = (ndc_b - ndc_a) / 2.0 * ubuf.render_viewport_size;
++        let dir_px = select(vec2f(1.0, 0.0), normalize(delta_px), dot(delta_px, delta_px) > 1e-10);
++        let perp_px = vec2f(-dir_px.y, dir_px.x);
++        let line_width = ubuf.line_width * min(viewport_scale.x, viewport_scale.y);
++        let offset_px = perp_px * (line_width / 2.0) * select(-1.0, 1.0, (vidx & 1u) != 0u);
++        let offset_ndc = (offset_px * 2.0) / ubuf.render_viewport_size;
++        let clip_base = select(clip_a, clip_b, use_b);
++        out.pos = vec4f(clip_base.xy + offset_ndc * clip_base.w, clip_base.zw);
++    }
++    let nrm_tmp = vec4f(in_nrm, 0.0) * ubuf.nrm_mtx[in_pnmtxidx];
++    let mv_nrm = select(nrm_tmp, normalize(nrm_tmp), dot(nrm_tmp, nrm_tmp) > 1e-10);
++    out.mv_nrm = mv_nrm;
++
++    // Color channels
++    var cc: array<vec4f, 2>;
++    for (var i = 0u; i < 2u; i++) {
++        if ((sampled_channels() & (1u << i)) == 0u) { continue; }
++        let clr = load_clr(i, in_vidx);
++        cc[i] = light_channel(i, false, mv_pos, mv_nrm, clr);
++        cc[i].a = light_channel(i, true, mv_pos, mv_nrm, clr).a;
++    }
++    out.cc0 = cc[0];
++    out.cc1 = cc[1];
++
++    // Texture coordinates
++    let in_binrm = load_nbt(1u, in_vidx);
++    let in_tangent = load_nbt(2u, in_vidx);
++    var tc: array<vec4f, 8>;
++    var tc_proj: array<vec3f, 8>;
++    var tex_out: array<vec3f, 8>;
++    for (var i = 0u; i < 8u; i++) {
++        if ((sampled_texcoords() & (1u << i)) == 0u) { continue; }
++        let g = tcg(i);
++        let ty = bits(g, 0u, 4u);
++        let src = bits(g, 4u, 5u);
++        let mtx = bits(g, 9u, 7u);
++        let post = bits(g, 16u, 7u);
++        if (ty >= 2u && ty <= 9u) {
++            // Emboss bump: the source texcoord offset by the light projected onto tangent/binormal
++            let bump_ldir = normalize(ubuf.lights[ty - 2u].pos - mv_pos);
++            let bump_tan = vec4f(in_tangent, 0.0) * ubuf.nrm_mtx[in_pnmtxidx];
++            let bump_bin = vec4f(in_binrm, 0.0) * ubuf.nrm_mtx[in_pnmtxidx];
++            tex_out[i] = vec3f(tc_proj[bits(g, 24u, 3u)].xy + vec2f(dot(bump_ldir, bump_tan), dot(bump_ldir, bump_bin)),
++                               1.0);
++            continue;
++        }
++        if (src >= 4u && src <= 11u) {
++            tc[i] = vec4f(load_tex(src - 4u, in_vidx), 1.0, 1.0);
++        } else if (src >= 12u && src <= 18u) {
++            tc[i] = tc[src - 12u];
++        } else if (src == 0u) {
++            tc[i] = vec4f(in_pos, 1.0);
++        } else if (src == 1u) {
++            tc[i] = vec4f(in_nrm, 1.0);
++        } else if (src == 19u) {
++            tc[i] = out.cc0;
++        } else if (src == 20u) {
++            tc[i] = out.cc1;
++        } else if (src == 2u) {
++            tc[i] = vec4f(in_binrm, 1.0);
++        } else if (src == 3u) {
++            tc[i] = vec4f(in_tangent, 1.0);
++        }
++        var tmp: vec3f;
++        if (ty <= 1u) {
++            if (attr_type(1u + i) != 0u) {
++                tmp = tc[i] * ubuf.postex_mtx[load_texmtxidx(i, in_vidx) / 3u];
++            } else if (mtx == 60u) {
++                tmp = tc[i].xyz;
++            } else {
++                tmp = tc[i] * ubuf.postex_mtx[mtx / 3u];
++            }
++            if (ty == 1u) {
++                tmp.z = 1.0;
++            }
++        } else {
++            tmp = vec3f(tc[i].xy, 1.0);
++        }
++        if (bits(g, 23u, 1u) != 0u) {
++            tmp = normalize(tmp);
++        }
++        var proj = tmp;
++        if (post != 125u) {
++            proj = vec4f(tmp.xyz, 1.0) * ubuf.postmtx[(post - 64u) / 3u];
++        }
++        if (LINE_MODE == 3u) {
++            if ((ubuf.line_texcoord_mask & (1u << i)) != 0u) {
++                if ((vidx & 1u) != 0u) { proj.x += ubuf.line_tex_offset; }
++                if (vidx >= 2u) { proj.y += ubuf.line_tex_offset; }
++            }
++        } else if (LINE_MODE != 0u) {
++            if ((ubuf.line_texcoord_mask & (1u << i)) != 0u && (vidx & 1u) != 0u) {
++                proj.y += ubuf.line_tex_offset;
++            }
++        }
++        tc_proj[i] = proj;
++        tex_out[i] = select(vec3f(proj.xy, 1.0), proj, ty == 0u);
++    }
++    out.tex0 = tex_out[0];
++    out.tex1 = tex_out[1];
++    out.tex2 = tex_out[2];
++    out.tex3 = tex_out[3];
++    out.tex4 = tex_out[4];
++    out.tex5 = tex_out[5];
++    out.tex6 = tex_out[6];
++    out.tex7 = tex_out[7];
++    return out;
++}
++
++// --- Fragment stage ------------------------------------------------------------------------
++
++fn sample_tex(map: u32, uv: vec2f) -> vec4f {
++    let bias = ubuf.tex_size_bias[map].z;
++    switch (map) {
++        case 0u: { return textureSampleBias(tex0, tex0_samp, uv, bias); }
++        case 1u: { return textureSampleBias(tex1, tex1_samp, uv, bias); }
++        case 2u: { return textureSampleBias(tex2, tex2_samp, uv, bias); }
++        case 3u: { return textureSampleBias(tex3, tex3_samp, uv, bias); }
++        case 4u: { return textureSampleBias(tex4, tex4_samp, uv, bias); }
++        case 5u: { return textureSampleBias(tex5, tex5_samp, uv, bias); }
++        case 6u: { return textureSampleBias(tex6, tex6_samp, uv, bias); }
++        default: { return textureSampleBias(tex7, tex7_samp, uv, bias); }
++    }
++}
++
++fn tev_overflow_f32(v: f32) -> f32 {
++    let byte_space = v * 255.0;
++    return (byte_space - floor(byte_space / 256.0) * 256.0) / 255.0;
++}
++fn tev_overflow_vec3f(v: vec3f) -> vec3f {
++    let byte_space = v * 255.0;
++    return (byte_space - floor(byte_space / 256.0) * 256.0) / 255.0;
++}
++
++fn swizzle(v: vec4f, table: u32) -> vec4f {
++    return vec4f(v[swap_sel(table, 0u)], v[swap_sel(table, 1u)], v[swap_sel(table, 2u)], v[swap_sel(table, 3u)]);
++}
++
++fn konst_color(sel: u32) -> vec3f {
++    if (sel < 8u) {
++        return vec3f(f32(8u - sel) / 8.0);
++    }
++    if (sel >= 0x0Cu && sel < 0x10u) {
++        return ubuf.kcolor[sel - 0x0Cu].rgb;
++    }
++    if (sel >= 0x10u) {
++        return vec3f(ubuf.kcolor[(sel - 0x10u) % 4u][(sel - 0x10u) / 4u]);
++    }
++    return vec3f(0.0);
++}
++fn konst_alpha(sel: u32) -> f32 {
++    if (sel < 8u) {
++        return f32(8u - sel) / 8.0;
++    }
++    if (sel >= 0x10u) {
++        return ubuf.kcolor[(sel - 0x10u) % 4u][(sel - 0x10u) / 4u];
++    }
++    return 0.0;
++}
++
++struct Stage {
++    a: u32,
++    b: u32,
++    c: u32,
++    d: u32,
++};
++
++fn alpha_bump(st: Stage, ind_in: array<vec3f, 4>) -> f32 {
++    var ind = ind_in;
++    let ind_stage = bits(st.c, 16u, 2u);
++    let sel = bits(st.c, 23u, 2u);
++    if (ind_stage >= num_ind_stages() || sel == 0u) {
++        return 0.0;
++    }
++    let v = ind[ind_stage][sel - 1u];
++    var mask = 0xF8u;
++    let fmt = bits(st.c, 18u, 2u);
++    if (fmt == 1u) {
++        mask = 0xE0u;
++    } else if (fmt == 2u) {
++        mask = 0xF0u;
++    }
++    return f32(u32(v) & mask) / 255.0;
++}
++
++// A color or alpha raster input: the channel's color, or an indirect stage's bump alpha.
++fn ras_value(st: Stage, rast_in: array<vec4f, 2>, ind: array<vec3f, 4>) -> vec4f {
++    var rast = rast_in;
++    let chan = bits(st.c, 8u, 4u);
++    if (chan == 6u || chan == 15u) {
++        return vec4f(0.0);
++    }
++    if (chan == 7u || chan == 8u) {
++        var alpha = alpha_bump(st, ind);
++        if (chan == 8u) {
++            alpha = alpha * (255.0 / 248.0);
++        }
++        return vec4f(alpha);
++    }
++    let idx = select(0u, 1u, chan == 1u || chan == 3u || chan == 5u);
++    return swizzle(rast[idx], bits(st.c, 12u, 2u));
++}
++
++fn color_arg(arg: u32, st: Stage, regs: array<vec4f, 4>, tex: vec4f, ras: vec4f) -> vec3f {
++    switch (arg) {
++        case 0u: { return regs[0].rgb; }
++        case 1u: { return vec3f(regs[0].a); }
++        case 2u: { return regs[1].rgb; }
++        case 3u: { return vec3f(regs[1].a); }
++        case 4u: { return regs[2].rgb; }
++        case 5u: { return vec3f(regs[2].a); }
++        case 6u: { return regs[3].rgb; }
++        case 7u: { return vec3f(regs[3].a); }
++        case 8u: { return tex.rgb; }
++        case 9u: { return vec3f(tex.a); }
++        case 10u: { return ras.rgb; }
++        case 11u: { return vec3f(ras.a); }
++        case 12u: { return vec3f(1.0); }
++        case 13u: { return vec3f(0.5); }
++        case 14u: { return konst_color(bits(st.b, 22u, 5u)); }
++        default: { return vec3f(0.0); }
++    }
++}
++// Whether a color argument reads a register holding a clamped (normalized) value.
++fn color_arg_normalized(arg: u32, color_norm: vec4<bool>, alpha_norm: vec4<bool>) -> bool {
++    if (arg >= 8u) {
++        return true;
++    }
++    if ((arg & 1u) == 0u) {
++        return color_norm[arg / 2u];
++    }
++    return alpha_norm[arg / 2u];
++}
++
++fn alpha_arg(arg: u32, st: Stage, regs: array<vec4f, 4>, tex: vec4f, ras: vec4f) -> f32 {
++    switch (arg) {
++        case 0u: { return regs[0].a; }
++        case 1u: { return regs[1].a; }
++        case 2u: { return regs[2].a; }
++        case 3u: { return regs[3].a; }
++        case 4u: { return tex.a; }
++        case 5u: { return ras.a; }
++        case 6u: { return konst_alpha(bits(st.b, 27u, 5u)); }
++        default: { return 0.0; }
++    }
++}
++
++fn tev_bias(bias: u32) -> f32 {
++    return select(select(0.0, -0.5, bias == 2u), 0.5, bias == 1u);
++}
++fn tev_scaled3(v: vec3f, scale: u32) -> vec3f {
++    switch (scale) {
++        case 1u: { return v * 2.0; }
++        case 2u: { return v * 4.0; }
++        case 3u: { return v / 2.0; }
++        default: { return v; }
++    }
++}
++fn tev_scaled1(v: f32, scale: u32) -> f32 {
++    switch (scale) {
++        case 1u: { return v * 2.0; }
++        case 2u: { return v * 4.0; }
++        case 3u: { return v / 2.0; }
++        default: { return v; }
++    }
++}
++
++fn tev_color_op(op: u32, bias: u32, scale: u32, clamped: bool, a: vec3f, b: vec3f, c: vec3f, d: vec3f) -> vec3f {
++    var r: vec3f;
++    let zero = vec3f(0.0);
++    switch (op) {
++        case 0u: { r = tev_scaled3((mix(a, b, c) + d) + tev_bias(bias), scale); }
++        case 1u: { r = tev_scaled3((-mix(a, b, c) + d) + tev_bias(bias), scale); }
++        case 8u: { r = select(zero, c, round(a.r * 255.0) > round(b.r * 255.0)) + d; }
++        case 9u: { r = select(zero, c, round(a.r * 255.0) == round(b.r * 255.0)) + d; }
++        case 10u: {
++            r = select(zero, c, round(dot(a.rg * 255.0, vec2(1.0, 256.0))) > round(dot(b.rg * 255.0, vec2(1.0, 256.0)))) + d;
++        }
++        case 11u: {
++            r = select(zero, c, round(dot(a.rg * 255.0, vec2(1.0, 256.0))) == round(dot(b.rg * 255.0, vec2(1.0, 256.0)))) + d;
++        }
++        case 12u: {
++            r = select(zero, c, round(dot(a.rgb * 255.0, vec3(1.0, 256.0, 65536.0))) >
++                                round(dot(b.rgb * 255.0, vec3(1.0, 256.0, 65536.0)))) + d;
++        }
++        case 13u: {
++            r = select(zero, c, round(dot(a.rgb * 255.0, vec3(1.0, 256.0, 65536.0))) ==
++                                round(dot(b.rgb * 255.0, vec3(1.0, 256.0, 65536.0)))) + d;
++        }
++        case 14u: { r = select(zero, c, round(a * 255.0) > round(b * 255.0)) + d; }
++        default: { r = select(zero, c, round(a * 255.0) == round(b * 255.0)) + d; }
++    }
++    if (clamped) {
++        return clamp(r, vec3f(0.0), vec3f(1.0));
++    }
++    return clamp(r, vec3f(-4.0), vec3f(4.0));
++}
++
++// The alpha op. For the packed comparisons (8-13) a and b are the stage's color A and B.
++fn tev_alpha_op(op: u32, bias: u32, scale: u32, clamped: bool, a: vec3f, b: vec3f, c: f32, d: f32) -> f32 {
++    var r: f32;
++    switch (op) {
++        case 0u: { r = tev_scaled1((mix(a.x, b.x, c) + d) + tev_bias(bias), scale); }
++        case 1u: { r = tev_scaled1((-mix(a.x, b.x, c) + d) + tev_bias(bias), scale); }
++        case 8u: { r = select(0.0, c, round(a.r * 255.0) > round(b.r * 255.0)) + d; }
++        case 9u: { r = select(0.0, c, round(a.r * 255.0) == round(b.r * 255.0)) + d; }
++        case 10u: {
++            r = select(0.0, c, round(dot(a.rg * 255.0, vec2(1.0, 256.0))) > round(dot(b.rg * 255.0, vec2(1.0, 256.0)))) + d;
++        }
++        case 11u: {
++            r = select(0.0, c, round(dot(a.rg * 255.0, vec2(1.0, 256.0))) == round(dot(b.rg * 255.0, vec2(1.0, 256.0)))) + d;
++        }
++        case 12u: {
++            r = select(0.0, c, round(dot(a.rgb * 255.0, vec3(1.0, 256.0, 65536.0))) >
++                               round(dot(b.rgb * 255.0, vec3(1.0, 256.0, 65536.0)))) + d;
++        }
++        case 13u: {
++            r = select(0.0, c, round(dot(a.rgb * 255.0, vec3(1.0, 256.0, 65536.0))) ==
++                               round(dot(b.rgb * 255.0, vec3(1.0, 256.0, 65536.0)))) + d;
++        }
++        case 14u: { r = select(0.0, c, round(a.x * 255.0) > round(b.x * 255.0)) + d; }
++        default: { r = select(0.0, c, round(a.x * 255.0) == round(b.x * 255.0)) + d; }
++    }
++    if (clamped) {
++        return clamp(r, 0.0, 1.0);
++    }
++    return clamp(r, -4.0, 4.0);
++}
++
++fn ind_scale(s: u32) -> f32 {
++    return 1.0 / f32(1u << s);
++}
++fn ind_wrap(wrap: u32, coord: f32) -> f32 {
++    switch (wrap) {
++        case 1u: { return coord % 256.0; }
++        case 2u: { return coord % 128.0; }
++        case 3u: { return coord % 64.0; }
++        case 4u: { return coord % 32.0; }
++        case 5u: { return coord % 16.0; }
++        case 6u: { return 0.0; }
++        default: { return coord; }
++    }
++}
++
++fn alpha_compare(comp: u32, value: u32, ref_value: u32) -> bool {
++    switch (comp) {
++        case 0u: { return false; }
++        case 1u: { return value < ref_value; }
++        case 2u: { return value == ref_value; }
++        case 3u: { return value <= ref_value; }
++        case 4u: { return value > ref_value; }
++        case 5u: { return value != ref_value; }
++        case 6u: { return value >= ref_value; }
++        default: { return true; }
++    }
++}
++
++@@FRAGMENT_OUTPUT@@
++@fragment
++fn fs_main(in: VertexOutput) -> @@FRAGMENT_OUTPUT_TYPE@@ {
++    var tex_in = array<vec3f, 8>(in.tex0, in.tex1, in.tex2, in.tex3, in.tex4, in.tex5, in.tex6, in.tex7);
++    var tex_uv: array<vec2f, 8>;
++    for (var i = 0u; i < 8u; i++) {
++        tex_uv[i] = select(tex_in[i].xy, tex_in[i].xy / tex_in[i].z, bits(tcg(i), 0u, 4u) == 0u);
++    }
++    var rast = array<vec4f, 2>(in.cc0, in.cc1);
++
++    // Indirect stages, each sampled once
++    var ind: array<vec3f, 4>;
++    for (var i = 0u; i < 4u; i++) {
++        if ((used_ind_stages() & (1u << i)) == 0u) { continue; }
++        let s = ind_stage(i);
++        let coord = bits(s, 0u, 4u);
++        let map = bits(s, 4u, 4u);
++        let uv = tex_uv[coord] * ubuf.texcoord_scale[coord].xy * vec2f(ind_scale(bits(s, 8u, 4u)), ind_scale(bits(s, 12u, 4u))) /
++                 ubuf.tex_size_bias[map].xy;
++        ind[i] = 255.0 * sample_tex(map, uv).abg;
++    }
++    let any_ind = used_ind_stages() != 0u;
++    var t_tex_coord = vec2f(0.0);
++
++    let loads = loads_tev_reg();
++    var regs: array<vec4f, 4>;
++    for (var r = 0u; r < 4u; r++) {
++        if ((loads & (1u << r)) != 0u) {
++            regs[r] = ubuf.tevregs[r];
++        }
++    }
++    var color_norm = vec4<bool>(false);
++    var alpha_norm = vec4<bool>(false);
++    let count = tev_stage_count();
++    var last = Stage(0u, 0u, 0u, 0u);
++    for (var s = 0u; s < count; s++) {
++        let base = 36u + s * 4u;
++        let st = Stage(cfg(base), cfg(base + 1u), cfg(base + 2u), cfg(base + 3u));
++        last = st;
++        let tex_coord = bits(st.c, 0u, 4u);
++        let tex_map = bits(st.c, 4u, 4u);
++        let ind_mtx = bits(st.c, 25u, 4u);
++        let wrap_s = bits(st.d, 0u, 3u);
++        let wrap_t = bits(st.d, 3u, 3u);
++        let add_prev = bits(st.d, 7u, 1u) != 0u;
++        let uses_sample = bits(st.d, 8u, 1u) != 0u;
++
++        // Texture coordinate (with indirect texturing) and sample
++        var tex = vec4f(0.0);
++        let needs_tev_coord = ind_mtx != 0u || wrap_s != 0u || wrap_t != 0u || add_prev;
++        if (needs_tev_coord || uses_sample) {
++            let has_base_tex = tex_map != 15u;
++            let has_base_coord = tex_coord != 15u && has_base_tex;
++            var uv_in = tex_uv[min(tex_coord, 7u)];
++            if (needs_tev_coord) {
++                let ind_stage = bits(st.c, 16u, 2u);
++                var offset = vec2f(0.0);
++                var has_offset = false;
++                if (ind_mtx != 0u && ind_stage < num_ind_stages()) {
++                    let fmt = bits(st.c, 18u, 2u);
++                    var coord = ind[ind_stage];
++                    if (fmt != 0u) {
++                        coord = floor(coord / f32(4u << fmt));
++                    }
++                    let bias_sel = bits(st.c, 20u, 3u);
++                    if (bias_sel != 0u) {
++                        let bias = select(1.0, -128.0, fmt == 0u);
++                        coord = coord + vec3f(f32(bias_sel & 1u), f32((bias_sel >> 1u) & 1u), f32((bias_sel >> 2u) & 1u)) * bias;
++                    }
++                    if (ind_mtx >= 1u && ind_mtx <= 3u) {
++                        let c0 = ubuf.ind_mtx[ind_mtx - 1u][0];
++                        let c1 = ubuf.ind_mtx[ind_mtx - 1u][1];
++                        offset = vec2f(dot(vec3f(c0.xz, c1.x), coord), dot(vec3f(c0.yw, c1.y), coord)) * c1.z;
++                        has_offset = true;
++                    } else if (ind_mtx >= 5u && ind_mtx <= 7u && has_base_coord) {
++                        offset = tex_uv[tex_coord] * ubuf.texcoord_scale[tex_coord].xy * coord.x *
++                                 ubuf.ind_mtx[ind_mtx - 5u][1][2] / 256.0;
++                        has_offset = true;
++                    } else if (ind_mtx >= 9u && ind_mtx <= 11u && has_base_coord) {
++                        offset = tex_uv[tex_coord] * ubuf.texcoord_scale[tex_coord].xy * coord.y *
++                                 ubuf.ind_mtx[ind_mtx - 9u][1][2] / 256.0;
++                        has_offset = true;
++                    }
++                }
++                let simple = ind_mtx == 0u && !add_prev;
++                var final_coord = vec2f(0.0);
++                var has_final = false;
++                if (has_base_coord) {
++                    var base_coord = tex_uv[tex_coord];
++                    if (!simple) {
++                        base_coord = base_coord * ubuf.texcoord_scale[tex_coord].xy;
++                    }
++                    if (wrap_s != 0u || wrap_t != 0u) {
++                        base_coord = vec2f(ind_wrap(wrap_s, base_coord.x), ind_wrap(wrap_t, base_coord.y));
++                    }
++                    final_coord = base_coord;
++                    if (has_offset) {
++                        final_coord = base_coord + offset;
++                    }
++                    has_final = true;
++                } else if (has_offset) {
++                    final_coord = offset;
++                    has_final = true;
++                }
++                if (any_ind && has_final) {
++                    if (add_prev) {
++                        t_tex_coord += final_coord;
++                    } else {
++                        t_tex_coord = final_coord;
++                    }
++                    if (uses_sample && has_base_tex) {
++                        uv_in = select(t_tex_coord / ubuf.tex_size_bias[tex_map].xy, t_tex_coord, simple);
++                    }
++                }
++            }
++            if (uses_sample) {
++                tex = swizzle(sample_tex(tex_map, uv_in), bits(st.c, 14u, 2u));
++            }
++        }
++        if (tex_map == 15u) {
++            tex = vec4f(1.0);
++        }
++        let ras = ras_value(st, rast, ind);
++
++        // Color
++        let ca = bits(st.a, 0u, 4u);
++        let cb = bits(st.a, 4u, 4u);
++        let cc = bits(st.a, 8u, 4u);
++        let cd = bits(st.a, 12u, 4u);
++        var a3 = color_arg(ca, st, regs, tex, ras);
++        var b3 = color_arg(cb, st, regs, tex, ras);
++        var c3 = color_arg(cc, st, regs, tex, ras);
++        let d3 = color_arg(cd, st, regs, tex, ras);
++        if (!color_arg_normalized(ca, color_norm, alpha_norm)) { a3 = tev_overflow_vec3f(a3); }
++        if (!color_arg_normalized(cb, color_norm, alpha_norm)) { b3 = tev_overflow_vec3f(b3); }
++        if (!color_arg_normalized(cc, color_norm, alpha_norm)) { c3 = tev_overflow_vec3f(c3); }
++        let cop = bits(st.b, 0u, 4u);
++        let cout = bits(st.b, 8u, 2u);
++        let cclamp = bits(st.b, 10u, 1u) != 0u;
++        regs[cout] = vec4f(tev_color_op(cop, bits(st.b, 4u, 2u), bits(st.b, 6u, 2u), cclamp, a3, b3, c3, d3),
++                           regs[cout].a);
++        color_norm[cout] = cclamp;
++
++        // Alpha
++        let aop = bits(st.b, 11u, 4u);
++        let aout = bits(st.b, 19u, 2u);
++        let aclamp = bits(st.b, 21u, 1u) != 0u;
++        let aa = bits(st.a, 16u, 3u);
++        let ab = bits(st.a, 19u, 3u);
++        let ac = bits(st.a, 22u, 3u);
++        var a1 = alpha_arg(aa, st, regs, tex, ras);
++        var b1 = alpha_arg(ab, st, regs, tex, ras);
++        var c1 = alpha_arg(ac, st, regs, tex, ras);
++        let d1 = alpha_arg(bits(st.a, 25u, 3u), st, regs, tex, ras);
++        if (aa < 4u && !alpha_norm[aa]) { a1 = tev_overflow_f32(a1); }
++        if (ab < 4u && !alpha_norm[ab]) { b1 = tev_overflow_f32(b1); }
++        if (ac < 4u && !alpha_norm[ac]) { c1 = tev_overflow_f32(c1); }
++        var alpha_a = vec3f(a1);
++        var alpha_b = vec3f(b1);
++        if (aop >= 8u && aop <= 13u) {
++            alpha_a = a3;
++            alpha_b = b3;
++        }
++        regs[aout].a = tev_alpha_op(aop, bits(st.b, 15u, 2u), bits(st.b, 17u, 2u), aclamp, alpha_a, alpha_b, c1, d1);
++        alpha_norm[aout] = aclamp;
++    }
++    let last_cout = bits(last.b, 8u, 2u);
++    let last_aout = bits(last.b, 19u, 2u);
++    var prev = regs[0];
++    if (last_cout != 0u) {
++        prev = vec4f(regs[last_cout].rgb, prev.a);
++    }
++    if (last_aout != 0u) {
++        prev.a = regs[last_aout].a;
++    }
++
++    // Fog
++    let fog = fog_type();
++    if (fog != 0u) {
++        let fog_depth = @@FOG_DEPTH@@;
++        var fog_base: f32;
++        if ((fog & 0x08u) != 0u) {
++            fog_base = ubuf.fog.a * fog_depth;
++        } else {
++            fog_base = ubuf.fog.a / (ubuf.fog.b - fog_depth);
++        }
++        if (fog_range_enabled()) {
++            fog_base *= bitcast<f32>(abuf[imm.fog_range_base + u32(in.pos.x)]);
++        }
++        var fog_f = clamp(fog_base - ubuf.fog.c, 0.0, 1.0);
++        var fog_z: f32;
++        switch (fog & 7u) {
++            case 2u: { fog_z = fog_f; }
++            case 4u: { fog_z = 1.0 - exp2(-8.0 * fog_f); }
++            case 5u: { fog_z = 1.0 - exp2(-8.0 * fog_f * fog_f); }
++            case 6u: { fog_z = exp2(-8.0 * (1.0 - fog_f)); }
++            default: {
++                fog_f = 1.0 - fog_f;
++                fog_z = exp2(-8.0 * fog_f * fog_f);
++            }
++        }
++        prev = vec4f(mix(prev.rgb, ubuf.fog.color.rgb, clamp(fog_z, 0.0, 1.0)), prev.a);
++    }
++
++    if (!color_norm[last_cout]) {
++        prev = vec4f(tev_overflow_vec3f(prev.rgb), prev.a);
++    }
++    if (!alpha_norm[last_aout]) {
++        prev.a = tev_overflow_f32(prev.a);
++    }
++
++    // Alpha compare
++    let ac_word = cfg(1u);
++    if (bits(ac_word, 8u, 1u) != 0u) {
++        let value = u32(round(clamp(prev.a, 0.0, 1.0) * 255.0));
++        let pass0 = alpha_compare(bits(ac_word, 0u, 3u), value, bits(ac_word, 16u, 8u));
++        let pass1 = alpha_compare(bits(ac_word, 5u, 3u), value, bits(ac_word, 24u, 8u));
++        var passed: bool;
++        switch (bits(ac_word, 3u, 2u)) {
++            case 0u: { passed = pass0 && pass1; }
++            case 1u: { passed = pass0 || pass1; }
++            case 2u: { passed = pass0 != pass1; }
++            default: { passed = pass0 == pass1; }
++        }
++        if (!passed) {
++            discard;
++        }
++    }
++@@DST_ALPHA@@@@FRAGMENT_RETURN@@
++}
++)""";
++
++void replace_all(std::string& s, std::string_view token, std::string_view value) {
++  for (size_t pos = s.find(token); pos != std::string::npos; pos = s.find(token, pos + value.size())) {
++    s.replace(pos, token.size(), value);
++  }
++}
++
++std::string uber_shader_source(u8 lineMode, uint32_t normalAttachment, DstAlphaMode dstAlphaMode) {
++  std::string src{UberSource};
++  replace_all(src, "@@ENABLE@@", dstAlphaMode == DstAlphaMode::DualSource ? "enable dual_source_blending;" : "");
++  replace_all(src, "@@LINE_MODE@@", std::to_string(lineMode));
++  replace_all(src, "@@IIDX@@", ",\n    @builtin(instance_index) iidx: u32");
++  replace_all(src, "@@FOG_DEPTH@@", UseReversedZ ? "(1.0 - in.pos.z)" : "in.pos.z");
++  replace_all(src, "@@DST_ALPHA@@", dstAlphaMode == DstAlphaMode::Replace ? "    prev.a = 1.0;\n" : "");
++
++  std::string output;
++  std::string_view outputType = "@location(0) vec4f";
++  std::string ret = "    return prev;";
++  if (normalAttachment != UINT32_MAX) {
++    output = fmt::format(
++        "struct FragmentOutput {{\n"
++        "    @location(0) color: vec4f,\n"
++        "    @location({}) normal: vec4f,\n"
++        "}};\n",
++        normalAttachment);
++    outputType = "FragmentOutput";
++    ret = "    var out: FragmentOutput;\n"
++          "    out.color = prev;\n"
++          "    if (has_normal()) {\n"
++          "        let nrm_len_sq = dot(in.mv_nrm, in.mv_nrm);\n"
++          "        let unit_nrm = select(vec3f(0.0), normalize(in.mv_nrm), nrm_len_sq > 1e-10);\n"
++          "        out.normal = vec4f(unit_nrm * 0.5 + 0.5, select(0.0, 1.0, nrm_len_sq > 1e-10));\n"
++          "    } else {\n"
++          "        out.normal = vec4f(0.5, 0.5, 0.5, 0.0);\n"
++          "    }\n"
++          "    return out;";
++  }
++  if (dstAlphaMode == DstAlphaMode::DualSource) {
++    output = "struct FragmentOutput {\n"
++             "    @location(0) @blend_src(0) color: vec4f,\n"
++             "    @location(0) @blend_src(1) blend: vec4f,\n"
++             "};\n";
++    outputType = "FragmentOutput";
++    ret = "    return FragmentOutput(vec4f(prev.rgb, 1.0), prev);";
++  }
++  replace_all(src, "@@FRAGMENT_OUTPUT_TYPE@@", outputType);
++  replace_all(src, "@@FRAGMENT_OUTPUT@@", output);
++  replace_all(src, "@@FRAGMENT_RETURN@@", ret);
++  return src;
++}
++
++u32 null4(u32 v) { return v == 0xFF ? 15u : v & 15u; }
++} // namespace
++
++UberShaderMode uber_shader_mode() noexcept { return sMode.load(std::memory_order_relaxed); }
++void set_uber_shader_mode(UberShaderMode mode) noexcept { sMode.store(mode, std::memory_order_relaxed); }
++
++PipelineConfig make_uber_pipeline_config(const PipelineConfig& config) noexcept {
++  PipelineConfig uber = config;
++  uber.shaderConfig = {};
++  uber.shaderConfig.lineMode = config.shaderConfig.lineMode;
++  uber.shaderConfig.pad2 = UberShaderMarker;
++  return uber;
++}
++
++wgpu::ShaderModule build_uber_shader(u8 lineMode, const gfx::RenderTargetLayout& layout,
++                                     DstAlphaMode dstAlphaMode) noexcept {
++  ZoneScoped;
++  uint32_t normalAttachment = UINT32_MAX;
++  for (uint32_t i = 0; i < layout.colorAttachmentCount; ++i) {
++    if (layout.colorAttachments[i].semantic == gfx::ColorAttachmentSemantic::Normal) {
++      normalAttachment = i;
++    }
++  }
++  static std::mutex mutex;
++  static absl::flat_hash_map<u64, wgpu::ShaderModule> modules;
++  const u64 key = u64{lineMode} | u64{normalAttachment & 0xFFu} << 8 | u64{underlying(dstAlphaMode)} << 16;
++  std::lock_guard lock{mutex};
++  if (const auto it = modules.find(key); it != modules.end()) {
++    return it->second;
++  }
++  const auto source = uber_shader_source(lineMode, normalAttachment, dstAlphaMode);
++  wgpu::ShaderSourceWGSL wgsl{};
++  wgsl.code = source.c_str();
++  const auto label = fmt::format("GX Ubershader {:x}", key);
++  const wgpu::ShaderModuleDescriptor descriptor{
++      .nextInChain = &wgsl,
++      .label = label.c_str(),
++  };
++  auto module = webgpu::g_device.CreateShaderModule(&descriptor);
++  modules.emplace(key, module);
++  Log.info("Built ubershader module {:x}", key);
++  return module;
++}
++
++gfx::Range push_uber_config(const ShaderConfig& config, const ShaderInfo& info) noexcept {
++  ZoneScoped;
++  std::array<u32, CfgWords> w{};
++  const auto& nrm = config.attrs[GX_VA_NRM];
++  w[CfgHeader] = (config.tevStageCount & 31u) | (config.numIndStages & 7u) << 5 | (config.fogType & 31u) << 8 |
++                 u32{config.fogRangeEnabled} << 13 | u32{config.lineMode} << 14 | u32{config.vtxStride} << 16 |
++                 u32{nrm.attrType != GX_NONE} << 24 | u32{nrm.nbt3} << 25;
++  const auto& ac = config.alphaCompare;
++  w[CfgAlphaCmp] = (ac.comp0 & 7u) | (ac.op & 3u) << 3 | (ac.comp1 & 7u) << 5 | u32{static_cast<bool>(ac)} << 8 |
++                   (ac.ref0 & 0xFFu) << 16 | (ac.ref1 & 0xFFu) << 24;
++  w[CfgMasks] = static_cast<u32>(info.sampledTexCoords.to_ulong()) |
++                static_cast<u32>(info.sampledColorChannels.to_ulong()) << 8 |
++                static_cast<u32>(info.usedIndStages.to_ulong()) << 10 |
++                static_cast<u32>(info.loadsTevReg.to_ulong()) << 14;
++  for (u32 t = 0; t < MaxTevSwap; ++t) {
++    const auto& swap = config.tevSwapTable[t];
++    w[CfgSwap] |= (swap.red & 3u) << (t * 8) | (swap.green & 3u) << (t * 8 + 2) | (swap.blue & 3u) << (t * 8 + 4) |
++                  (swap.alpha & 3u) << (t * 8 + 6);
++  }
++  for (u32 c = 0; c < MaxColorChannels; ++c) {
++    const auto& ch = config.colorChannels[c];
++    w[CfgChannels] |= ((ch.matSrc & 1u) | (ch.ambSrc & 1u) << 1 | (ch.diffFn & 3u) << 2 | (ch.attnFn & 3u) << 4 |
++                       u32{ch.lightingEnabled} << 6)
++                      << (c * 8);
++  }
++  for (u32 i = 0; i < MaxTexCoord; ++i) {
++    const auto& tcg = config.tcgs[i];
++    w[CfgTcg + i] = (tcg.type & 15u) | (tcg.src & 31u) << 4 | (tcg.mtx & 127u) << 9 | (tcg.postMtx & 127u) << 16 |
++                    u32{tcg.normalize} << 23 | (tcg.embossSrc & 7u) << 24;
++  }
++  for (u32 i = 0; i < MaxIndStages; ++i) {
++    const auto& s = config.indStages[i];
++    w[CfgIndStages + i / 2] |=
++        (null4(s.texCoordId) | null4(s.texMapId) << 4 | (s.scaleS & 15u) << 8 | (s.scaleT & 15u) << 12) << (i % 2 * 16);
++  }
++  for (u32 a = 0; a <= GX_VA_TEX7; ++a) {
++    const auto& m = config.attrs[a];
++    w[CfgAttrs + a] = (m.attrType & 3u) | (m.cnt & 15u) << 2 | (m.compType & 15u) << 6 | u32{m.offset} << 10 |
++                      u32{m.stride} << 18 | (m.frac & 31u) << 26 | u32{m.le} << 31;
++  }
++  for (u32 s = 0; s < config.tevStageCount && s < MaxTevStages; ++s) {
++    const auto& st = config.tevStages[s];
++    const auto usesSample = [&] {
++      if (st.texMapId == GX_TEXMAP_NULL) {
++        return false;
++      }
++      const auto& c = st.colorPass;
++      const auto& a = st.alphaPass;
++      return c.a == GX_CC_TEXC || c.a == GX_CC_TEXA || c.b == GX_CC_TEXC || c.b == GX_CC_TEXA ||
++             c.c == GX_CC_TEXC || c.c == GX_CC_TEXA || c.d == GX_CC_TEXC || c.d == GX_CC_TEXA ||
++             a.a == GX_CA_TEXA || a.b == GX_CA_TEXA || a.c == GX_CA_TEXA || a.d == GX_CA_TEXA;
++    }();
++    auto& base = *reinterpret_cast<std::array<u32, 4>*>(&w[CfgTev + s * 4]);
++    base[0] = (st.colorPass.a & 15u) | (st.colorPass.b & 15u) << 4 | (st.colorPass.c & 15u) << 8 |
++              (st.colorPass.d & 15u) << 12 | (st.alphaPass.a & 7u) << 16 | (st.alphaPass.b & 7u) << 19 |
++              (st.alphaPass.c & 7u) << 22 | (st.alphaPass.d & 7u) << 25;
++    base[1] = (st.colorOp.op & 15u) | (st.colorOp.bias & 3u) << 4 | (st.colorOp.scale & 3u) << 6 |
++              (st.colorOp.outReg & 3u) << 8 | u32{st.colorOp.clamp} << 10 | (st.alphaOp.op & 15u) << 11 |
++              (st.alphaOp.bias & 3u) << 15 | (st.alphaOp.scale & 3u) << 17 | (st.alphaOp.outReg & 3u) << 19 |
++              u32{st.alphaOp.clamp} << 21 | (st.kcSel & 31u) << 22 | (st.kaSel & 31u) << 27;
++    base[2] = null4(st.texCoordId) | null4(st.texMapId) << 4 | null4(st.channelId) << 8 | (st.tevSwapRas & 3u) << 12 |
++              (st.tevSwapTex & 3u) << 14 | (st.indTexStage & 3u) << 16 | (st.indTexFormat & 3u) << 18 |
++              (st.indTexBiasSel & 7u) << 20 | (st.indTexAlphaSel & 3u) << 23 | (st.indTexMtxId & 15u) << 25;
++    base[3] = (st.indTexWrapS & 7u) | (st.indTexWrapT & 7u) << 3 | u32{st.indTexUseOrigLOD} << 6 |
++              u32{st.indTexAddPrev} << 7 | u32{usesSample} << 8;
++  }
++  return gfx::push_storage(reinterpret_cast<const uint8_t*>(w.data()), sizeof(w));
++}
++
++} // namespace aurora::gx
++
++void aurora_set_ubershader_mode(int mode) {
++  aurora::gx::set_uber_shader_mode(mode <= 0   ? aurora::gx::UberShaderMode::Off
++                                   : mode == 1 ? aurora::gx::UberShaderMode::Fallback
++                                               : aurora::gx::UberShaderMode::Force);
++}
+diff --git a/lib/gx/ubershader.hpp b/lib/gx/ubershader.hpp
+new file mode 100644
+--- /dev/null
++++ b/lib/gx/ubershader.hpp
+@@ -0,0 +1,36 @@
++#pragma once
++
++#include "gx.hpp"
++#include "pipeline.hpp"
++
++// Ubershaders: one generic shader that reads the GX state (vertex format, texgens, lighting, TEV
++// stages, indirect texturing, fog, alpha test) from the draw's data instead of baking it in. A draw
++// whose specialized pipeline is still compiling is drawn with it, so nothing is skipped; only the
++// fixed-function pipeline state (blend, depth, cull, write masks, render targets) needs its own
++// pipeline, and there are few of those.
++namespace aurora::gx {
++
++enum class UberShaderMode : u8 {
++  Off,      // draws whose pipeline isn't ready are skipped (aurora's original behavior)
++  Fallback, // draws whose pipeline isn't ready use the ubershader
++  Force,    // every draw uses the ubershader (testing)
++};
++UberShaderMode uber_shader_mode() noexcept;
++void set_uber_shader_mode(UberShaderMode mode) noexcept;
++
++// An ubershader pipeline config: the config's fixed-function state, with the shader part blanked
++// except the primitive's line mode and a marker (ShaderConfig::pad2).
++constexpr u8 UberShaderMarker = 0xA5;
++inline bool is_uber_config(const ShaderConfig& config) noexcept { return config.pad2 == UberShaderMarker; }
++PipelineConfig make_uber_pipeline_config(const PipelineConfig& config) noexcept;
++
++wgpu::ShaderModule build_uber_shader(u8 lineMode, const gfx::RenderTargetLayout& layout,
++                                     DstAlphaMode dstAlphaMode) noexcept;
++
++// The draw's packed shader config, in the storage buffer (its word offset goes in the draw's
++// immediates as cfgBase).
++gfx::Range push_uber_config(const ShaderConfig& config, const ShaderInfo& info) noexcept;
++// The ubershader's uniform (build_uber_uniform, shader_info.hpp): every field any specialized
++// shader can use, in a fixed layout of exactly MaxUniformSize bytes.
++
++} // namespace aurora::gx
