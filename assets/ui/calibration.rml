@@ -28,15 +28,19 @@
             background-color: rgba(0, 0, 0, 160);
             border: 1dp rgba(255, 255, 255, 40);
         }
-        .dot { position: absolute; }
-        .dot.raw { width: 12dp; height: 12dp; margin-left: -6dp; margin-top: -6dp; border-radius: 6dp; background-color: rgba(200, 200, 210, 150); }
-        .dot.merged { width: 18dp; height: 18dp; margin-left: -9dp; margin-top: -9dp; border-radius: 9dp; border: 2dp #8fc7ff; }
-        .dot.end { width: 26dp; height: 26dp; margin-left: -13dp; margin-top: -13dp; border-radius: 13dp; border: 2dp #d6a95c; }
+        /* Sizes and positions come from the data (SettingsMenu::set_ir_view); a large radius rounds
+           any size into a circle. */
+        .dot { position: absolute; border-radius: 200dp; }
+        .dot.raw { background-color: rgba(200, 200, 210, 150); }
+        .dot.merged { border: 2dp #8fc7ff; }
+        .dot.end { border: 2dp #d6a95c; }
+        .dot.radius { border: 1dp rgba(143, 199, 255, 120); }
         .legend { margin-top: 8dp; text-align: center; color: #8d897f; font-size: 13dp; }
         .key { display: inline-block; width: 10dp; height: 10dp; border-radius: 5dp; margin: 0 6dp 0 16dp; }
         .key.raw { background-color: rgba(200, 200, 210, 150); }
         .key.merged { border: 2dp #8fc7ff; }
         .key.end { border: 2dp #d6a95c; }
+        .key.radius { border: 1dp rgba(143, 199, 255, 110); }
         .ir-status { margin: 6dp 0 8dp 0; text-align: center; color: #d6b37a; }
         .setting .name { width: 230dp; }
         input.range { width: 240dp; }
@@ -47,9 +51,11 @@
     <div class="title">Wii Remote pointer</div>
     <div id="camera">
         <div class="dot" data-for="dot : ir_dots" data-class-raw="dot.kind == 'raw'" data-class-merged="dot.kind == 'merged'"
-             data-class-end="dot.kind == 'end'" data-style-left="dot.left" data-style-top="dot.top"></div>
+             data-class-end="dot.kind == 'end'" data-class-radius="dot.kind == 'radius'" data-style-left="dot.left"
+             data-style-top="dot.top" data-style-width="dot.size" data-style-height="dot.size"
+             data-style-margin-left="dot.offset" data-style-margin-top="dot.offset"></div>
     </div>
-    <div class="legend"><span class="key raw"></span>dots seen<span class="key merged"></span>after merging<span class="key end"></span>bar ends tracked</div>
+    <div class="legend"><span class="key raw"></span>dots seen<span class="key merged"></span>after merging<span class="key end"></span>bar ends tracked<span class="key radius"></span>merge distance</div>
     <div class="ir-status">{{ ir_status }}</div>
 
     <div class="setting">
@@ -58,8 +64,9 @@
         <span class="value">{{ ir_merge == 0 ? 'Off' : ir_merge + ' px' }}</span>
     </div>
     <div class="setting">
-        <span class="name">Sensor bar above screen</span>
-        <input type="checkbox" data-checked="sensor_bar_above"/>
+        <span class="name">Sensor bar position</span>
+        <input type="range" min="-50" max="50" step="1" data-value="sensor_bar_offset"/>
+        <span class="value wide">{{ sensor_bar_label }}</span>
     </div>
     <div class="setting">
         <span class="name">IR sensitivity</span>

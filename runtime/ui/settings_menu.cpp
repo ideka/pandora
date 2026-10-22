@@ -60,6 +60,8 @@ bool SettingsMenu::init(const std::string& asset_dir) {
         dot.RegisterMember("left", &Dot::left);
         dot.RegisterMember("top", &Dot::top);
         dot.RegisterMember("kind", &Dot::kind);
+        dot.RegisterMember("size", &Dot::size);
+        dot.RegisterMember("offset", &Dot::offset);
     }
     c.RegisterArray<std::vector<Dot>>();
     c.Bind("ir_dots", &ir_dots_);
@@ -161,13 +163,19 @@ bool SettingsMenu::init(const std::string& asset_dir) {
             }
         });
     c.BindFunc(
-        "sensor_bar_above", [this](Rml::Variant& v) { v = settings_.sensor_bar_above; },
+        "sensor_bar_offset", [this](Rml::Variant& v) { v = settings_.sensor_bar_offset; },
         [this](const Rml::Variant& v) {
-            if (v.Get<bool>() != settings_.sensor_bar_above) {
-                settings_.sensor_bar_above = v.Get<bool>();
+            const int offset = std::clamp((int)std::lround(v.Get<float>()), -50, 50);
+            if (offset != settings_.sensor_bar_offset) {
+                settings_.sensor_bar_offset = offset;
+                model_.DirtyVariable("sensor_bar_label");
                 changed();
             }
         });
+    c.BindFunc("sensor_bar_label", [this](Rml::Variant& v) {
+        const int o = settings_.sensor_bar_offset;
+        v = Rml::String(o == -20 ? "Above (Wii)" : o == 20 ? "Below (Wii)" : std::to_string(o));
+    });
     c.BindFunc(
         "ir_sensitivity", [this](Rml::Variant& v) { v = settings_.ir_sensitivity; },
         [this](const Rml::Variant& v) {
@@ -419,25 +427,31 @@ void SettingsMenu::close_calibration() {
         button->Focus(true);
 }
 
-// The camera's view as dots on a 4:3 box: the raw dots, the dots after merging (when merging
-// changed anything) and the two bar ends tracking chose.
+// The camera's view as dots on a 4:3 box (CAMERA_DP wide, as calibration.rml sizes it): the raw
+// dots (sized by the camera's dot size when it reports one) with the merge distance around each,
+// the dots after merging (when merging changed anything) and the two bar ends tracking chose.
 void SettingsMenu::set_ir_view(bool connected, const Wiimote::IrView& view) {
     if (!calibration_doc_ || !calibration_doc_->IsVisible())
         return;
+    constexpr float CAMERA_DP = 400.0f;
     std::vector<Dot> dots;
-    auto add = [&](float x, float y, const char* kind) {
+    auto add = [&](float x, float y, const char* kind, float size_dp) {
         if (x < 0 || x > 1 || y < 0 || y > 1)
             return;  // an inferred end off the image
-        dots.push_back({Rml::ToString(x * 100.0f) + "%", Rml::ToString(y * 100.0f) + "%", kind});
+        dots.push_back({Rml::ToString(x * 100.0f) + "%", Rml::ToString(y * 100.0f) + "%", kind,
+                        Rml::ToString(size_dp) + "dp", Rml::ToString(-size_dp / 2.0f) + "dp"});
     };
     if (connected) {
+        if (view.merge > 0)
+            for (int i = 0; i < view.raw; i++)
+                add(view.raw_x[i], view.raw_y[i], "radius", 2.0f * view.merge * CAMERA_DP);
         for (int i = 0; i < view.raw; i++)
-            add(view.raw_x[i], view.raw_y[i], "raw");
+            add(view.raw_x[i], view.raw_y[i], "raw", view.raw_size[i] > 0 ? 4.0f + 1.25f * (float)view.raw_size[i] : 12.0f);
         if (view.merged != view.raw)
             for (int i = 0; i < view.merged; i++)
-                add(view.merged_x[i], view.merged_y[i], "merged");
+                add(view.merged_x[i], view.merged_y[i], "merged", 18.0f);
         for (int i = 0; i < view.ends; i++)
-            add(view.end_x[i], view.end_y[i], "end");
+            add(view.end_x[i], view.end_y[i], "end", 26.0f);
     }
     std::string status;
     if (!connected)
@@ -454,7 +468,7 @@ void SettingsMenu::set_ir_view(bool connected, const Wiimote::IrView& view) {
     }
     const bool same = dots.size() == ir_dots_.size() &&
                       std::equal(dots.begin(), dots.end(), ir_dots_.begin(), [](const Dot& a, const Dot& b) {
-                          return a.left == b.left && a.top == b.top && a.kind == b.kind;
+                          return a.left == b.left && a.top == b.top && a.kind == b.kind && a.size == b.size;
                       });
     if (!same) {
         ir_dots_ = std::move(dots);

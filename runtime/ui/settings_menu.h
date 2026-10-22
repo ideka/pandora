@@ -58,6 +58,7 @@ public:
     // A dot on the pointer calibration's camera view: position (CSS) and kind ("raw", "merged", "end").
     struct Dot {
         Rml::String left, top, kind;
+        Rml::String size, offset;  // diameter, and minus half of it (to centre it), as CSS lengths
     };
 
 private:

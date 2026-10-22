@@ -116,9 +116,10 @@
             <span class="note">Connects a Wii Remote when you press 1 and 2; may disturb other Bluetooth devices</span>
         </div>
         <div class="setting">
-            <span class="name">Sensor bar above screen</span>
-            <input type="checkbox" data-checked="sensor_bar_above"/>
-            <span class="note">The Wii's "Sensor Bar Position" setting, for a real Wii Remote's pointer</span>
+            <span class="name">Sensor bar position</span>
+            <input type="range" min="-50" max="50" step="1" data-value="sensor_bar_offset"/>
+            <span class="value wide">{{ sensor_bar_label }}</span>
+            <span class="note">The Wii's "Sensor Bar Position" (above or below the screen), finer: where the bar is, from the screen's centre</span>
         </div>
         <div class="setting">
             <span class="name">IR sensitivity</span>

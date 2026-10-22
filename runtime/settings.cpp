@@ -64,8 +64,10 @@ void Settings::load(const std::string& path) {
             rumble = std::clamp(std::atoi(value.c_str()), 0, 100);
         } else if (key == "mouse_pointer") {
             mouse_pointer = parse_bool(value);
-        } else if (key == "sensor_bar_above") {
-            sensor_bar_above = parse_bool(value);
+        } else if (key == "sensor_bar_above") {  // files from before the offset
+            sensor_bar_offset = parse_bool(value) ? -20 : 20;
+        } else if (key == "sensor_bar_offset") {
+            sensor_bar_offset = std::clamp(std::atoi(value.c_str()), -50, 50);
         } else if (key == "ir_sensitivity") {
             ir_sensitivity = std::clamp(std::atoi(value.c_str()), 1, 5);
         } else if (key == "ir_merge") {
@@ -110,7 +112,7 @@ bool Settings::save(const std::string& path) const {
     out << "muted=" << (muted ? 1 : 0) << "\n";
     out << "rumble=" << rumble << "\n";
     out << "mouse_pointer=" << (mouse_pointer ? 1 : 0) << "\n";
-    out << "sensor_bar_above=" << (sensor_bar_above ? 1 : 0) << "\n";
+    out << "sensor_bar_offset=" << sensor_bar_offset << "\n";
     out << "ir_sensitivity=" << ir_sensitivity << "\n";
     out << "ir_merge=" << ir_merge << "\n";
     out << "wiimote_scan=" << (wiimote_scan ? 1 : 0) << "\n";

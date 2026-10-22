@@ -299,12 +299,19 @@ aids. Open work is in [TODO.md](TODO.md).
   decoder restarts with it.
 - Pointer calibration (General > Calibrate...: `assets/ui/calibration.rml`, a modal document over
   the menu sharing its data model): the IR camera's view (`Wiimote::IrView`: dots seen, dots after
-  merging, the two ends tracking chose), Sensor bar above screen, IR sensitivity and "Merge nearby
+  merging, the two ends tracking chose), Sensor bar position, IR sensitivity and "Merge nearby
   dots" (`ir_merge`, camera pixels of 1024 x 768, 0 = off). A sensor bar end is a group of LEDs that
   the camera sometimes reports as several dots, and KPAD's tracking then hops between them;
   `parse_ir` merges, before tracking, the closest pair of dots while they are closer than the
-  setting (into their dot-count weighted midpoint). With the Nunchuk the remote reports basic IR
-  (positions only, report 0x37), so merging goes by distance alone.
+  setting, at their midpoint weighted by the camera's dot size (1-16) when it reports one, else by
+  how many dots each merged; the view draws the merge distance around each dot. The camera reports
+  dot sizes only in extended mode (report 0x33), which has no extension data: with a Nunchuk the
+  remote reports basic IR (positions only, report 0x37, as games with one do), without an
+  extension extended IR (`set_reporting` switches both with the extension).
+- Sensor bar position (`sensor_bar_offset`): the bar's offset from the screen's centre, in
+  hundredths of KPAD image units (y down), which sets the pointer's vertical origin. The Wii's
+  setting is -20 (above) or 20 (below), the slider's labelled presets; `sensor_bar_above` in older
+  settings files becomes those.
 - Continuous scanning (`runtime/wiimote_scanner.cpp`, Windows), as in Dolphin: while enabled and
   no remote is connected, a thread runs Bluetooth inquiries (2 x 1.28 s). A "Nintendo
   RVL-CNT-01(-TR)" in discoverable mode (1+2, sync) gets its HID service enabled with

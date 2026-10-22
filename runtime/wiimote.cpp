@@ -28,7 +28,8 @@ constexpr size_t REPORT_SIZE = 22;  // output report length over Bluetooth
 
 constexpr u8 OUT_LEDS = 0x11, OUT_REPORTING = 0x12, OUT_IR_PIXEL_CLOCK = 0x13, OUT_STATUS = 0x15,
              OUT_WRITE = 0x16, OUT_READ = 0x17, OUT_IR_LOGIC = 0x1A;
-constexpr u8 IN_STATUS = 0x20, IN_READ_DATA = 0x21, IN_ACK = 0x22, IN_CORE_ACC_IR10_EXT6 = 0x37;
+constexpr u8 IN_STATUS = 0x20, IN_READ_DATA = 0x21, IN_ACK = 0x22, IN_CORE_ACC_IR12 = 0x33,
+             IN_CORE_ACC_IR10_EXT6 = 0x37;
 
 constexpr u32 IR_REGISTERS = 0xB00000, EXT_REGISTERS = 0xA40000;
 
@@ -231,18 +232,19 @@ void Wiimote::setup() {
 }
 
 // Unencrypted extension access (0x55 to F0, 0x00 to FB), then its id: a Nunchuk ends in A4 20 00 00.
-// IR camera: basic mode (10 bytes for 4 dots) at the Wii's sensitivity level (1-5).
+// IR camera at the Wii's sensitivity level (1-5); its mode follows the reporting mode
+// (set_reporting).
 void Wiimote::setup_ir() {
     u8 r[2] = {OUT_IR_PIXEL_CLOCK, 0x04};
     send(r, sizeof r);
     r[0] = OUT_IR_LOGIC;
     send(r, sizeof r);
     const int level = std::clamp(ir_sensitivity_, 1, 5) - 1;
-    const u8 enable = 0x08, basic = 0x01;
+    const u8 enable = 0x08, mode = ir_extended_ ? 0x03 : 0x01;
     write_register(IR_REGISTERS + 0x30, &enable, 1);
     write_register(IR_REGISTERS + 0x00, IR_BLOCK1[level], sizeof IR_BLOCK1[level]);
     write_register(IR_REGISTERS + 0x1A, IR_BLOCK2[level], sizeof IR_BLOCK2[level]);
-    write_register(IR_REGISTERS + 0x33, &basic, 1);
+    write_register(IR_REGISTERS + 0x33, &mode, 1);
     write_register(IR_REGISTERS + 0x30, &enable, 1);
     ir_level_set_ = ir_sensitivity_;
 }
@@ -282,8 +284,18 @@ void Wiimote::setup_extension() {
 }
 
 // Continuous core buttons + accelerometer + 10 IR bytes + 6 extension bytes.
+// With an extension: core, accelerometers, basic IR (positions) and the extension (as games with a
+// Nunchuk use). Without one: extended IR, whose dots also have a size (IN_CORE_ACC_IR12; it has
+// no room for extension data), used to weight merged dots.
 void Wiimote::set_reporting() {
-    const u8 r[] = {OUT_REPORTING, 0x04, IN_CORE_ACC_IR10_EXT6};
+    const bool extended = !ext_connected_;
+    if (extended != ir_extended_) {
+        ir_extended_ = extended;
+        const u8 enable = 0x08, mode = extended ? 0x03 : 0x01;
+        write_register(IR_REGISTERS + 0x33, &mode, 1);
+        write_register(IR_REGISTERS + 0x30, &enable, 1);
+    }
+    const u8 r[] = {OUT_REPORTING, 0x04, extended ? IN_CORE_ACC_IR12 : IN_CORE_ACC_IR10_EXT6};
     send(r, sizeof r);
 }
 
@@ -311,6 +323,12 @@ void Wiimote::handle(const u8* r, int len) {
                     LOG_INFO("wiimote", "Nunchuk %s", ext ? "connected" : "disconnected");
             }
             set_reporting();
+        }
+        break;
+    case IN_CORE_ACC_IR12:
+        if (len >= 18) {
+            parse_core(r + 1, r + 3);
+            parse_ir_extended(r + 6);
         }
         break;
     case IN_CORE_ACC_IR10_EXT6:
@@ -361,28 +379,47 @@ void Wiimote::parse_core(const u8* b, const u8* a) {
 // and pos = 1.25 / 0.95 * (origin - midpoint in the bar's frame), horizon = the bar's direction,
 // dist from the separation (fn_805E76C0). KPAD orders the ends by its horizon reference, which
 // here is the accelerometer's roll (an upside-down remote reverses them).
+// Basic IR: 4 dots in 10 bytes (two 5-byte pairs), positions only.
 void Wiimote::parse_ir(const u8* ir) {
-    static const bool log = std::getenv("PANDORA_IR_LOG") != nullptr;
-    int rx[4], ry[4], raw = 0;
+    int rx[4], ry[4], size[4] = {}, raw = 0;
     for (int pair = 0; pair < 2; pair++) {
         const u8* p = ir + pair * 5;
         rx[raw] = p[0] | ((p[2] >> 4) & 3) << 8, ry[raw++] = p[1] | ((p[2] >> 6) & 3) << 8;
         rx[raw] = p[3] | (p[2] & 3) << 8, ry[raw++] = p[4] | ((p[2] >> 2) & 3) << 8;
     }
+    track_ir(rx, ry, size);
+}
+
+// Extended IR: 4 dots of 3 bytes, with a size (0-15: how big and bright the dot is).
+void Wiimote::parse_ir_extended(const u8* ir) {
+    int rx[4], ry[4], size[4];
+    for (int i = 0; i < 4; i++) {
+        const u8* p = ir + i * 3;
+        rx[i] = p[0] | ((p[2] >> 4) & 3) << 8, ry[i] = p[1] | ((p[2] >> 6) & 3) << 8, size[i] = (p[2] & 0x0F) + 1;
+    }
+    track_ir(rx, ry, size);
+}
+
+// size: 0 when unknown (basic IR), else 1-16.
+void Wiimote::track_ir(const int* rx, const int* ry, const int* size) {
+    static const bool log = std::getenv("PANDORA_IR_LOG") != nullptr;
     // The dots seen, then merged: while two are closer than ir_merge_ pixels, the closest pair
-    // becomes one at its (dot-count weighted) midpoint. A bar end's LEDs, seen as separate dots,
-    // would otherwise make tracking hop between them.
+    // becomes one, weighted towards the bigger (brighter) dot when sizes are known (else by how many
+    // dots each already merged). A bar end's LEDs, seen as separate dots, would otherwise make
+    // tracking hop between them.
     float cx[4], cy[4], cw[4];
     int seen = 0;
     ir_view_ = {};
     for (int i = 0; i < 4; i++) {
         if (rx[i] == 0x3FF || ry[i] == 0x3FF)
             continue;
-        cx[seen] = (float)rx[i], cy[seen] = (float)ry[i], cw[seen] = 1;
+        cx[seen] = (float)rx[i], cy[seen] = (float)ry[i], cw[seen] = size[i] > 0 ? (float)size[i] : 1.0f;
         ir_view_.raw_x[seen] = cx[seen] / 1024.0f, ir_view_.raw_y[seen] = (767.0f - cy[seen]) / 768.0f;
+        ir_view_.raw_size[seen] = size[i];
         seen++;
     }
     ir_view_.raw = seen;
+    ir_view_.merge = (float)ir_merge_ / 1024.0f;
     while (ir_merge_ > 0 && seen > 1) {
         int bi = -1, bj = -1;
         float best = (float)ir_merge_ * (float)ir_merge_;
@@ -537,7 +574,7 @@ void Wiimote::parse_ir(const u8* ir) {
         }
         const float mx = (ax + bx) / 2, my = (ay + by) / 2;
         const float px = dpd_ux_ * mx + dpd_uy_ * my, py = dpd_ux_ * my - dpd_uy_ * mx;
-        const float oy_origin = bar_above_ ? -KPAD_BAR_OFFSET : KPAD_BAR_OFFSET;
+        const float oy_origin = bar_offset_;
         state_.pointer_x = KPAD_POS_SCALE * (0.0f - px);
         state_.pointer_y = KPAD_POS_SCALE * (oy_origin - py);
         state_.horizon_x = dpd_ux_;

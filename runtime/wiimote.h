@@ -35,8 +35,9 @@ public:
     void set_rumble(bool on);
     // Look for the remote's HID device every second for a while (it was just made available).
     void rescan_soon();
-    // The Wii's sensor bar position and IR sensitivity (1-5) settings.
-    void set_sensor_bar_above(bool above) { bar_above_ = above; }
+    // The sensor bar's vertical offset from the screen's centre, in KPAD image units (y down): the
+    // Wii's "Sensor Bar Position" is -0.2 (above) or 0.2 (below). And the IR sensitivity (1-5).
+    void set_sensor_bar_offset(float offset) { bar_offset_ = offset; }
     void set_ir_sensitivity(int level);
     // Dots closer than this (camera pixels, of 1024 x 768; 0 = off) are merged into one: a sensor
     // bar end is a group of LEDs, which the camera sometimes sees as several dots.
@@ -45,10 +46,14 @@ public:
     // What the IR camera saw in the last report, for the calibration screen: dots in image
     // coordinates (0..1 across, 0..1 down, as KPAD orients them), before and after merging, and
     // the two bar ends tracking settled on (ends: 2 seen, 1 one seen and the other inferred, 0 none).
+    // raw_size: 1-16 in extended IR mode (no extension attached), 0 when unknown; merge: the merge
+    // distance, as a fraction of the image's width.
     struct IrView {
         int raw = 0, merged = 0, ends = 0;
         float raw_x[4]{}, raw_y[4]{}, merged_x[4]{}, merged_y[4]{};
+        int raw_size[4]{};
         float end_x[2]{}, end_y[2]{};
+        float merge = 0;
     };
     const IrView& ir_view() const { return ir_view_; }
 
@@ -69,6 +74,8 @@ private:
     void handle(const u8* r, int len);
     void parse_core(const u8* buttons, const u8* accel);
     void parse_ir(const u8* ir);
+    void parse_ir_extended(const u8* ir);
+    void track_ir(const int* rx, const int* ry, const int* size);
     void parse_nunchuk(const u8* ext);
 
     SDL_hid_device* dev_ = nullptr;
@@ -80,7 +87,8 @@ private:
     Clock::time_point rescan_until_{};
     State state_;
     bool rumble_ = false;
-    bool bar_above_ = false;
+    float bar_offset_ = 0.2f;
+    bool ir_extended_ = false;  // the camera in extended mode (dot sizes), when no extension is attached
     int ir_sensitivity_ = 3, ir_level_set_ = 0;
     int ir_merge_ = 0;
     IrView ir_view_;

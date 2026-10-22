@@ -11,7 +11,9 @@ struct Settings {
     bool muted = false;
     int rumble = 100;          // percent; 0 disables rumble
     bool mouse_pointer = true;  // the mouse aims the Wii Remote pointer
-    bool sensor_bar_above = false;  // real Wii Remote: sensor bar above (or below) the screen
+    // Real Wii Remote: the sensor bar's offset from the screen's centre in hundredths of KPAD image
+    // units, y down: the Wii's "Sensor Bar Position" is -20 (above) or 20 (below).
+    int sensor_bar_offset = 20;
     int ir_sensitivity = 3;         // real Wii Remote: the Wii's IR sensitivity setting (1-5)
     int ir_merge = 0;               // real Wii Remote: IR dots closer than this (camera pixels) merge; 0 = off
     bool wiimote_scan = true;       // scan for Wii Remotes over Bluetooth while none is connected

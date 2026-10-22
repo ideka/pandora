@@ -224,7 +224,7 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
         rt.input().set_free_stick(settings.free_stick);
         rt.input().set_classic(settings.classic_controller);
         aurora_set_forced_anisotropy((uint16_t)settings.anisotropy);
-        rt.input().set_sensor_bar_above(settings.sensor_bar_above);
+        rt.input().set_sensor_bar_offset((float)settings.sensor_bar_offset / 100.0f);
         rt.input().set_ir_sensitivity(settings.ir_sensitivity);
         rt.input().set_ir_merge(settings.ir_merge);
         rt.input().set_wiimote_scanning(settings.wiimote_scan && (!background || std::getenv("PANDORA_POLL_WIIMOTE")));
