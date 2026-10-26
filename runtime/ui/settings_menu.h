@@ -83,7 +83,9 @@ private:
 
     void navigate(int key);  // an Rml::Input::KeyIdentifier
     bool navigate_bindings(int key);
+    Rml::Element* focused_row();
     void mark_focused_row();
+    void set_preview(Rml::Element* row);
     void scroll(float seconds);
     Rml::Element* last_page_control();
     void switch_tab(int delta);
@@ -114,6 +116,7 @@ private:
     int capturing_ = -1;  // table * 1000 + index * 10 + slot while waiting for an input to bind
     Clock::time_point capture_deadline_;
     bool open_ = false;
+    Rml::Element* preview_row_ = nullptr;  // the only row shown while previewing a graphics setting
     Rml::Element* last_focus_ = nullptr;  // focused when the menu closed (compared, not dereferenced, until found again)
     uint64_t layer_ = 0;
 

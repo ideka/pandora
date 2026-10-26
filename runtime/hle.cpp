@@ -231,14 +231,15 @@ void Runtime::install_hle() {
         rt.cpu.pc = rt.input().state().pointer_active ? 0x8007BC48 : 0x8007BF24;
     });
 
-    // The ghosting filter (render item fn_8016D47C): a full-screen quad that blends the scene copy
-    // over itself, shifted, through a half-size mask the previous frame left. The result is a soft
-    // double image of everything. The setting skips the item; nothing after it depends on its state.
+    // The ghosting (render item fn_8016D47C): the last full-screen composite, which blends the scene
+    // copy over the post-processed frame through a half-size mask and a tiled 32x32 dither. Edges
+    // come out doubled (a sharp outline beside the softer image). Removing it skips the item;
+    // nothing after it depends on its state.
     hook(0x8016D47C, [](Runtime& rt) {
-        if (rt.ghost_filter())
-            run_original(rt, 0x8016D47C);
-        else
+        if (rt.remove_ghosting())
             rt.ret(rt.cpu.gpr[3]);
+        else
+            run_original(rt, 0x8016D47C);
     });
 
     // void fn_800CEC84(sys, bit, set): sets or clears one flag of the system data's save byte

@@ -9,6 +9,9 @@
 bool Nand::open(const std::filesystem::path& root) {
     root_ = root;
     std::error_code ec;
+    // IOS empties /tmp at boot. Games stage saves there (create, write, then rename into place),
+    // and a file left over from an interrupted save makes the next create fail with "exists".
+    std::filesystem::remove_all(root_ / "tmp", ec);
     std::filesystem::create_directories(root_ / "shared2/sys", ec);
     std::filesystem::create_directories(root_ / "tmp", ec);
     if (ec) {

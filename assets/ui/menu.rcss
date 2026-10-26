@@ -162,6 +162,11 @@ scrollbarvertical sliderarrowdec, scrollbarvertical sliderarrowinc { width: 0; h
     border-radius: 8dp;
     border-left: 3dp transparent;
 }
+/* Previewing a graphics setting: only its row stays, so the game shows behind it. */
+body.previewing { background-color: transparent; }
+body.previewing #panel { background-color: transparent; border-color: transparent; backdrop-filter: none; }
+.preview-hidden { visibility: hidden; }
+body.previewing .setting.previewed { background-color: rgba(16, 18, 26, 225); }
 /* The row of the focused control (SettingsMenu::update sets the class). */
 .setting.focused { background-color: rgba(214, 169, 92, 34); border-left-color: #d6a95c; }
 .setting.focused .name { color: #ffffff; }

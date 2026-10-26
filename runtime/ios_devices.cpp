@@ -1,7 +1,9 @@
 // IOS device implementations. Protocols follow Dolphin's IOS HLE (Source/Core/Core/IOS).
 #include <cstdio>
+#include <chrono>
 #include <cstring>
 #include <fstream>
+#include <thread>
 #include <vector>
 
 #include "ios.h"
@@ -301,7 +303,18 @@ public:
         case 8: {  // Rename
             auto from = host(in), to = host(in + 64);
             if (from.empty() || to.empty() || !std::filesystem::exists(from)) return FS_ENOENT;
-            std::filesystem::rename(from, to, ec);
+            // On Windows a file just written can be held for a moment (antivirus, the search
+            // indexer) and the rename fails with a sharing violation: retry for a while. A failed
+            // rename here is what the game turns into an empty banner.bin.
+            for (int attempt = 0; attempt < 50; attempt++) {
+                std::filesystem::rename(from, to, ec);
+                if (!ec)
+                    break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            if (ec)
+                LOG_ERROR("fs", "rename %s -> %s failed: %s", mem::cstr(c, in, 64).c_str(),
+                          mem::cstr(c, in + 64, 64).c_str(), ec.message().c_str());
             return ec ? FS_EINVAL : IOS_OK;
         }
         case 13:  // Shutdown

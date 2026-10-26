@@ -240,15 +240,31 @@ aids. Open work is in [TODO.md](TODO.md).
   pure cardinal direction once an axis passes 0.995, so the stick is kept within radius 0.994 -
   except while Z is held: the dodge (Z + stick) needs a fully pushed stick (at 0.994 Aeron only
   strafes). Scripted stick presses are shaped the same way (`PANDORA_FREE_STICK` forces the setting).
-- Ghosting filter (Graphics): the render item `fn_8016D47C` (called from the draw-list executor
-  `fn_804BA628`) draws one full-screen quad (genmode 0x813, three textures: a 32x32 map, the
-  320x240 I8 copy at 0xDEEE40 that the previous items re-copy every frame, and the 640x480 scene
-  copy). It blends the scene copy over itself, shifted, so everything gets a faint double: the
-  user saw it on Aeron's sword. Turning the setting off skips the item (a hook), which removes
-  exactly that draw (screenshots identical to skipping only the quad; 21% of pixels change in
-  the tower hall). It was found by skipping render items, then single quads by genmode, and
-  logging the call stack of each quad's GXBegin in the write-gather pipe. `PANDORA_GHOST_FILTER`
-  forces it in test runs.
+- Remove ghosting (Graphics, off by default): the render item `fn_8016D47C` (called from the
+  draw-list executor `fn_804BA628`) is the last full-screen composite: one quad, genmode 0x813,
+  that blends the 640x480 scene copy (0xC9D600) over the post-processed frame. Its alpha comes
+  from the 320x240 I8 mask at 0xDEEE40 and a 32x32 dither tiled 20x15 times (one texel per
+  native pixel); it also brightens the image (vanilla is about 1.27x the frame without it).
+  Edges come out doubled, a sharp outline beside the softer image: the user saw it on Aeron's
+  sword at 4K. The setting skips the item (a hook); in the tower hall 21% of pixels change, in
+  the Treetop forest under 2%. It was found by skipping render items, then single quads by
+  genmode, and logging the call stack of each quad's GXBegin in the write-gather pipe. The
+  forest also draws a background blur, `fn_801731EC`: a half-size copy drawn back four times,
+  shifted +-1.67 px, the second pass depth-tested so it lands on the background. Skipping it
+  changes 0.03% of the forest frame, since the composite covers it. `PANDORA_REMOVE_GHOSTING`
+  forces the setting in test runs.
+- Live preview: rows with the `live` class (anisotropic filtering, remove ghosting) hide the
+  rest of the menu when changed (`SettingsMenu::set_preview`: every sibling of the row and of
+  its ancestors gets `preview-hidden`; RmlUi can't show a child of a hidden element). Moving off
+  the row or closing the menu restores it. The game keeps running behind the menu (only F5
+  pauses it), so the change shows at once.
+- NAND /tmp: IOS empties it at boot, and so does `Nand::open`. Saves are staged there: create
+  `/tmp/x` and `/tmp/sys/x`, write the latter, then rename it to `/tmp/x` and that into the
+  title's `data/`. A rename that failed once (on Windows a freshly written file can be held
+  briefly by antivirus or the indexer) moved the empty placeholder into `data/banner.bin` and
+  left `/tmp/sys/banner.bin` behind. Every later banner save then failed at the create
+  ("exists"), wrote to fd 0 ("write on unknown fd") and hung the quick save. Renames now retry
+  for up to 0.5 s and log a failure.
 - Keep quick saves (General): the quick saves are `temp00-02.bin` in the save directory, and the
   game never deletes or rewrites them on a load. What it does is clear the slot's flag in
   `system.bin`: byte 0x0B, bits 0-2 mean slots 1-3 have save data and bits 3-5 mean they have a

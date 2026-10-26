@@ -137,10 +137,10 @@ bool SettingsMenu::init(const std::string& asset_dir) {
             }
         });
     c.BindFunc(
-        "ghost_filter", [this](Rml::Variant& v) { v = settings_.ghost_filter; },
+        "remove_ghosting", [this](Rml::Variant& v) { v = settings_.remove_ghosting; },
         [this](const Rml::Variant& v) {
-            if (v.Get<bool>() != settings_.ghost_filter) {
-                settings_.ghost_filter = v.Get<bool>();
+            if (v.Get<bool>() != settings_.remove_ghosting) {
+                settings_.remove_ghosting = v.Get<bool>();
                 changed();
             }
         });
@@ -326,6 +326,7 @@ void SettingsMenu::close() {
     if (calibration_doc_ && calibration_doc_->IsVisible())
         close_calibration();
     open_ = false;
+    set_preview(nullptr);
     Rml::Element* focus = aurora::rmlui::get_context()->GetFocusElement();
     last_focus_ = focus && focus != doc_ && focus->GetOwnerDocument() == doc_ ? focus : nullptr;
     doc_->Hide();
@@ -391,10 +392,39 @@ void SettingsMenu::update() {
 
 // The settings row holding the focused control gets the "focused" class (RmlUi has no
 // :focus-within), so sliders and checkboxes show where the cursor is.
-void SettingsMenu::mark_focused_row() {
+Rml::Element* SettingsMenu::focused_row() {
     Rml::Element* row = aurora::rmlui::get_context()->GetFocusElement();
     while (row && !row->IsClassSet("setting"))
         row = row->GetParentNode();
+    return row;
+}
+
+void SettingsMenu::set_preview(Rml::Element* row) {
+    if (row == preview_row_)
+        return;
+    // Everything beside the row and beside each of its ancestors is hidden (a hidden element hides
+    // its children in RmlUi, so the row itself can't be the exception).
+    auto hide_around = [](Rml::Element* e, bool hide) {
+        for (; e && e->GetParentNode(); e = e->GetParentNode())
+            for (int i = 0; i < e->GetParentNode()->GetNumChildren(); i++)
+                if (Rml::Element* sibling = e->GetParentNode()->GetChild(i); sibling != e)
+                    sibling->SetClass("preview-hidden", hide);
+    };
+    hide_around(preview_row_, false);
+    if (preview_row_)
+        preview_row_->SetClass("previewed", false);
+    preview_row_ = row;
+    hide_around(row, true);
+    if (row)
+        row->SetClass("previewed", true);
+    doc_->SetClass("previewing", row != nullptr);
+    doc_->UpdateDocument();  // so navigation right after sees the rows again
+}
+
+void SettingsMenu::mark_focused_row() {
+    Rml::Element* row = focused_row();
+    if (preview_row_ && row != preview_row_)
+        set_preview(nullptr);
     Rml::ElementList marked;
     doc_->GetElementsByClassName(marked, "focused");
     if (calibration_doc_)
@@ -531,7 +561,11 @@ void SettingsMenu::refresh_rows() {
     model_.DirtyVariable("classic_controller");
 }
 
+// Changing a setting on a "live" row (one whose effect shows at once, e.g. texture filtering)
+// hides the rest of the menu so the game can be seen; moving to another row brings it back.
 void SettingsMenu::changed() {
+    if (Rml::Element* row = focused_row(); row && row->IsClassSet("live"))
+        set_preview(row);
     if (on_change_)
         on_change_();
 }
@@ -719,6 +753,9 @@ void SettingsMenu::action(MenuAction a) {
             open();
         return;
     }
+    // Moving off a previewed row brings the menu back first (navigation skips hidden elements).
+    if (preview_row_ && a != MenuAction::Left && a != MenuAction::Right && a != MenuAction::Accept)
+        set_preview(nullptr);
     switch (a) {
     case MenuAction::Toggle: close(); break;
     case MenuAction::Cancel:  // back out to the current tab's button (the menu stays open)

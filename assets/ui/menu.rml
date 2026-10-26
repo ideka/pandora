@@ -76,7 +76,7 @@
             <input type="checkbox" data-checked="fullscreen"/>
             <span class="note">F11 or Alt+Enter</span>
         </div>
-        <div class="setting">
+        <div class="setting live">
             <span class="name">Anisotropic filtering</span>
             <input type="range" min="0" max="4" step="1" data-value="anisotropy_step"/>
             <span class="value">{{ anisotropy == 1 ? 'Off' : anisotropy + 'x' }}</span>
@@ -87,10 +87,10 @@
             <input type="checkbox" data-checked="msaa"/>
             <span class="note">4x MSAA: smoother edges; takes effect after restarting</span>
         </div>
-        <div class="setting">
-            <span class="name">Ghosting filter</span>
-            <input type="checkbox" data-checked="ghost_filter"/>
-            <span class="note">The game's faint shifted double of the whole picture; off is sharper</span>
+        <div class="setting live">
+            <span class="name">Remove ghosting</span>
+            <input type="checkbox" data-checked="remove_ghosting"/>
+            <span class="note">Skips the game's final blend, which leaves a faint shifted double of edges</span>
         </div>
     </div>
 

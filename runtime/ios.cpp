@@ -92,6 +92,7 @@ void Ios::submit(u32 addr) {
             Device& d = *it->second;
             switch (r.command) {
             case IPC_CLOSE:
+                LOG_DEBUG("ios", "close fd %d (%s)", r.fd, d.name().c_str());
                 result = d.close();
                 fds_.erase(it);
                 break;

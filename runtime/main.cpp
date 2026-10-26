@@ -161,8 +161,8 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
         settings.anisotropy = std::atoi(aniso);
     if (const char* keep = std::getenv("PANDORA_KEEP_QUICKSAVES"))  // test runs: force keeping quick saves on/off
         settings.keep_quicksaves = *keep != '0';
-    if (const char* ghost = std::getenv("PANDORA_GHOST_FILTER"))  // test runs: force the ghosting filter on/off
-        settings.ghost_filter = *ghost != '0';
+    if (const char* ghost = std::getenv("PANDORA_REMOVE_GHOSTING"))  // test runs: force removing the ghosting on/off
+        settings.remove_ghosting = *ghost != '0';
 
     LOG_INFO("main", "pandora %s, built %s", PANDORA_VERSION, PANDORA_BUILD_TIME);
     AuroraConfig config{};
@@ -228,7 +228,7 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
         rt.input().set_free_stick(settings.free_stick);
         rt.input().set_classic(settings.classic_controller);
         aurora_set_forced_anisotropy((uint16_t)settings.anisotropy);
-        rt.set_ghost_filter(settings.ghost_filter);
+        rt.set_remove_ghosting(settings.remove_ghosting);
         rt.set_keep_quicksaves(settings.keep_quicksaves);
         rt.input().set_sensor_bar_above(settings.sensor_bar_above);
         rt.input().set_ir_sensitivity(settings.ir_sensitivity);
