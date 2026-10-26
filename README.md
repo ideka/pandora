@@ -1,5 +1,9 @@
 # Pandora's Tower static recompilation
 
+> [!NOTE]
+> This project is vibe coded: nearly all of its code was written by an AI coding assistant (Claude),
+> directed and play-tested by a human. Expect rough edges.
+
 Work-in-progress static recompilation of *Pandora's Tower* (Wii, PAL `SX3P01`) to a native PC
 executable. Licensed under GPLv3.
 
@@ -132,3 +136,18 @@ temporary folder, deleted on exit, to see a first run.
     rather than overwriting the file.
   - `match_dsy.py` — matches functions against a Dolphin `.dsy` signature database.
   - `xref_analysis.py` — source-file attribution, GX FIFO writers, stack switchers.
+
+## Credits
+
+- [Dolphin](https://github.com/dolphin-emu/dolphin) — the DSP audio code in `runtime/dsp/` is
+  adapted from its DSP HLE (GPL-2.0-or-later), and its sources were the reference for much of the
+  rest of the hardware emulation.
+- [aurora](https://github.com/encounter/aurora) — the GX-to-WebGPU renderer, windowing and input.
+- [DolRecomp](https://github.com/ExpansionPak/DolRecomp) — the PowerPC-to-C static recompiler.
+- [decomp-toolkit](https://github.com/encounter/decomp-toolkit) — DOL analysis and splitting.
+- [Dawn](https://dawn.googlesource.com/dawn), [SDL](https://www.libsdl.org/),
+  [RmlUi](https://github.com/mikke89/RmlUi) and [Dear ImGui](https://github.com/ocornut/imgui),
+  used through aurora.
+- [Lato](https://www.latofonts.com/) by Łukasz Dziedzic — the menu font (SIL Open Font License,
+  `assets/fonts/LICENSE-Lato.txt`).
+- *Pandora's Tower* is by Ganbarion and Nintendo. This project is not affiliated with either.
