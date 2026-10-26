@@ -240,19 +240,18 @@ aids. Open work is in [TODO.md](TODO.md).
   pure cardinal direction once an axis passes 0.995, so the stick is kept within radius 0.994 -
   except while Z is held: the dodge (Z + stick) needs a fully pushed stick (at 0.994 Aeron only
   strafes). Scripted stick presses are shaped the same way (`PANDORA_FREE_STICK` forces the setting).
-- Remove ghosting (Graphics, off by default): the render item `fn_8016D47C` (called from the
-  draw-list executor `fn_804BA628`) is the last full-screen composite: one quad, genmode 0x813,
-  that blends the 640x480 scene copy (0xC9D600) over the post-processed frame. Its alpha comes
-  from the 320x240 I8 mask at 0xDEEE40 and a 32x32 dither tiled 20x15 times (one texel per
-  native pixel); it also brightens the image (vanilla is about 1.27x the frame without it).
-  Edges come out doubled, a sharp outline beside the softer image: the user saw it on Aeron's
-  sword at 4K. The setting skips the item (a hook); in the tower hall 21% of pixels change, in
-  the Treetop forest under 2%. It was found by skipping render items, then single quads by
-  genmode, and logging the call stack of each quad's GXBegin in the write-gather pipe. The
-  forest also draws a background blur, `fn_801731EC`: a half-size copy drawn back four times,
-  shifted +-1.67 px, the second pass depth-tested so it lands on the background. Skipping it
-  changes 0.03% of the forest frame, since the composite covers it. `PANDORA_REMOVE_GHOSTING`
-  forces the setting in test runs.
+- Remove ghosting (Graphics, off by default): the game's depth of field, render item
+  `fn_80176D94` (called from the draw-list executor `fn_804BA628`). One full-screen quad (genmode
+  0x803) blends a half-size copy of the frame (0xE01A60) over the background through a depth
+  mask (the 320x240 I8 copy at 0xDEEE40). That copy was blurred just before by `fn_801731EC`,
+  which draws a half-size copy back four times shifted +-1.67 px. At the Wii's 320x240 the four
+  copies merge into a haze; at high resolutions the half-size copy keeps its detail and they show
+  as shifted doubles of the whole background (the user's Treetop Tower 2F quick save, at 4K). The
+  setting skips the item: 74% of that frame changes, foreground and brightness stay. Found by
+  capturing the EFB before each post-effect draw at 4K (`--shot-draw`, `PANDORA_SHOT_SCALE=4`,
+  `--window 3840x2160`): sharp before draw 0x803, smeared after. The first guess,
+  `fn_8016D47C` (the last composite, genmode 0x813, which blends the scene copy back through a
+  tiled 32x32 dither), only changes brightness. `PANDORA_REMOVE_GHOSTING` forces the setting.
 - Live preview: rows with the `live` class (anisotropic filtering, remove ghosting) hide the
   rest of the menu when changed (`SettingsMenu::set_preview`: every sibling of the row and of
   its ancestors gets `preview-hidden`; RmlUi can't show a child of a hidden element). Moving off

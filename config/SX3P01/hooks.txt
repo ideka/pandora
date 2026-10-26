@@ -23,5 +23,5 @@ dynMgrExtraStep  # decides the cloth extra step per tick (60 FPS mode), then run
 sceneRefreshSkinned  # decides the skinned-node refresh per tick (60 FPS mode), then runs the original
 dynClothRefreshBones  # 60 FPS: refresh the cloth anchors every other tick, as at 30 FPS (the cape)
 dynClothSetAnchors  # 60 FPS: with dynClothRefreshBones, every other tick
-fn_8016D47C  # the ghosting composite render item (setting remove_ghosting)
+fn_80176D94  # the depth-of-field render item (setting remove_ghosting)
 fn_800CEC84  # sets/clears a save flag in the system data (setting keep_quicksaves)

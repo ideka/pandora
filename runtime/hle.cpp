@@ -231,15 +231,16 @@ void Runtime::install_hle() {
         rt.cpu.pc = rt.input().state().pointer_active ? 0x8007BC48 : 0x8007BF24;
     });
 
-    // The ghosting (render item fn_8016D47C): the last full-screen composite, which blends the scene
-    // copy over the post-processed frame through a half-size mask and a tiled 32x32 dither. Edges
-    // come out doubled (a sharp outline beside the softer image). Removing it skips the item;
-    // nothing after it depends on its state.
-    hook(0x8016D47C, [](Runtime& rt) {
+    // The ghosting (render item fn_80176D94): the game's depth of field. One full-screen quad
+    // (genmode 0x803) blends a half-size copy of the frame (0xE01A60), blurred by four copies
+    // shifted +-1.67 px (fn_801731EC), over the background, through a depth mask (0xDEEE40). At
+    // 320x240 the four copies merge into a haze; at high resolutions they show as shifted doubles
+    // of the whole background. Removing it skips the item; nothing after it depends on its state.
+    hook(0x80176D94, [](Runtime& rt) {
         if (rt.remove_ghosting())
             rt.ret(rt.cpu.gpr[3]);
         else
-            run_original(rt, 0x8016D47C);
+            run_original(rt, 0x80176D94);
     });
 
     // void fn_800CEC84(sys, bit, set): sets or clears one flag of the system data's save byte

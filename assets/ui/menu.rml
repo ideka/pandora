@@ -90,7 +90,7 @@
         <div class="setting live">
             <span class="name">Remove ghosting</span>
             <input type="checkbox" data-checked="remove_ghosting"/>
-            <span class="note">Skips the game's final blend, which leaves a faint shifted double of edges</span>
+            <span class="note">The game's depth of field, which at high resolutions doubles the background</span>
         </div>
     </div>
 
