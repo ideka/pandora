@@ -87,6 +87,11 @@
             <input type="checkbox" data-checked="msaa"/>
             <span class="note">4x MSAA: smoother edges; takes effect after restarting</span>
         </div>
+        <div class="setting">
+            <span class="name">Ghosting filter</span>
+            <input type="checkbox" data-checked="ghost_filter"/>
+            <span class="note">The game's faint shifted double of the whole picture; off is sharper</span>
+        </div>
     </div>
 
     <div class="page" data-if="tab == 'general'">
@@ -104,6 +109,11 @@
             <span class="name">Free stick direction</span>
             <input type="checkbox" data-checked="free_stick"/>
             <span class="note">Move in any direction at full tilt (the game snaps a nearly straight stick to straight)</span>
+        </div>
+        <div class="setting">
+            <span class="name">Keep quick saves</span>
+            <input type="checkbox" data-checked="keep_quicksaves"/>
+            <span class="note">Restarting from a quick save leaves it there to load again (the game deletes it)</span>
         </div>
         <div class="setting">
             <span class="name">Mouse aims pointer</span>

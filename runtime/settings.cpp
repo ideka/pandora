@@ -81,6 +81,10 @@ void Settings::load(const std::string& path) {
         } else if (key == "anisotropy") {
             const int a = std::atoi(value.c_str());
             anisotropy = a >= 16 ? 16 : a >= 8 ? 8 : a >= 4 ? 4 : a >= 2 ? 2 : 1;
+        } else if (key == "keep_quicksaves") {
+            keep_quicksaves = parse_bool(value);
+        } else if (key == "ghost_filter") {
+            ghost_filter = parse_bool(value);
         } else if (key == "msaa") {
             msaa = std::atoi(value.c_str()) >= 4 ? 4 : 1;
         } else {
@@ -118,6 +122,8 @@ bool Settings::save(const std::string& path) const {
     out << "free_stick=" << (free_stick ? 1 : 0) << "\n";
     out << "classic_controller=" << (classic_controller ? 1 : 0) << "\n";
     out << "anisotropy=" << anisotropy << "\n";
+    out << "keep_quicksaves=" << (keep_quicksaves ? 1 : 0) << "\n";
+    out << "ghost_filter=" << (ghost_filter ? 1 : 0) << "\n";
     out << "msaa=" << msaa << "\n";
     auto write = [&](const char* prefix, const char* id, const Mappings& m) {
         for (size_t d = 0; d < kDeviceCount; d++)

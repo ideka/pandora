@@ -231,6 +231,27 @@ void Runtime::install_hle() {
         rt.cpu.pc = rt.input().state().pointer_active ? 0x8007BC48 : 0x8007BF24;
     });
 
+    // The ghosting filter (render item fn_8016D47C): a full-screen quad that blends the scene copy
+    // over itself, shifted, through a half-size mask the previous frame left. The result is a soft
+    // double image of everything. The setting skips the item; nothing after it depends on its state.
+    hook(0x8016D47C, [](Runtime& rt) {
+        if (rt.ghost_filter())
+            run_original(rt, 0x8016D47C);
+        else
+            rt.ret(rt.cpu.gpr[3]);
+    });
+
+    // void fn_800CEC84(sys, bit, set): sets or clears one flag of the system data's save byte
+    // (bits 0-2: the slots have save data, 3-5: they have a quick save). Restarting from a quick
+    // save (the load menu, 8036FE2C) clears its flag, which is what deletes it; the file stays.
+    hook(0x800CEC84, [](Runtime& rt) {
+        if (rt.keep_quicksaves() && rt.cpu.lr == 0x8036FE70 && rt.cpu.gpr[5] == 0) {
+            rt.ret(rt.cpu.gpr[3]);
+            return;
+        }
+        run_original(rt, 0x800CEC84);
+    });
+
     // s32 WPADGetStatus(void): WPAD_STATE_SETUP (3). The game's remote sound system (fn_801250B4)
     // only initialises in that state; WPADInit is stubbed, so the library's own state byte stays 0.
     hook("WPADGetStatus", [](Runtime& rt) { rt.ret(3); });

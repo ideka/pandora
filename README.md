@@ -60,9 +60,11 @@ No game code or data is included. You need your own copy of the game.
      select one and press the new input, or clear it with x (Open/Close Menu and Accept reset
      their first mapping to the default instead). The right stick scrolls the list.
    - **Sound**: volume and mute.
-   - **Graphics**: 60 FPS mode, fullscreen, anisotropic filtering (off to 16x) and 4x MSAA
-     anti-aliasing (applies after a restart).
-   - **General**: rumble, Classic Controller, free stick direction, the mouse pointer, and the real
+   - **Graphics**: 60 FPS mode, fullscreen, anisotropic filtering (off to 16x), 4x MSAA
+     anti-aliasing (applies after a restart) and the ghosting filter (the game's faint shifted
+     double of the whole picture; turn it off for a sharper image).
+   - **General**: rumble, Classic Controller, free stick direction, keeping quick saves after
+     restarting from them (the game deletes them), the mouse pointer, and the real
      Wii Remote's settings and pointer calibration (below).
 
    In the menu: D-pad/left stick or arrows/WASD move (fixed, not bindable; they repeat while held),

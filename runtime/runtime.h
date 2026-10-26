@@ -80,6 +80,12 @@ public:
     void remote_speaker_data(const u8* packet, size_t len);
     void reset_remote_speaker_decoder() { audio_out_.reset_speaker(); }
     int audio_queued_ms() const { return audio_out_.queued_ms(); }
+    // The game's ghosting filter (a full-screen blend of a shifted copy of the scene), off when false.
+    void set_ghost_filter(bool enabled) { ghost_filter_ = enabled; }
+    bool ghost_filter() const { return ghost_filter_; }
+    // Loading a quick save leaves it in place (the game clears its flag in the system data).
+    void set_keep_quicksaves(bool keep) { keep_quicksaves_ = keep; }
+    bool keep_quicksaves() const { return keep_quicksaves_; }
     AuroraBridge* bridge() { return bridge_.get(); }
     Input& input() { return input_; }
     std::string backtrace(int max_frames) const;
@@ -141,6 +147,8 @@ private:
     std::unique_ptr<Ios> ios_;
     AudioDump audio_dump_;
     AudioOut audio_out_;
+    bool ghost_filter_ = true;
+    bool keep_quicksaves_ = false;
     bool speaker_on_ = false, speaker_playing_ = false;  // the game's speaker state
     struct Continuation {
         u32 lr;

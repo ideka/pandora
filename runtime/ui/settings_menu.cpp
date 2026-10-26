@@ -129,6 +129,22 @@ bool SettingsMenu::init(const std::string& asset_dir) {
             }
         });
     c.BindFunc(
+        "keep_quicksaves", [this](Rml::Variant& v) { v = settings_.keep_quicksaves; },
+        [this](const Rml::Variant& v) {
+            if (v.Get<bool>() != settings_.keep_quicksaves) {
+                settings_.keep_quicksaves = v.Get<bool>();
+                changed();
+            }
+        });
+    c.BindFunc(
+        "ghost_filter", [this](Rml::Variant& v) { v = settings_.ghost_filter; },
+        [this](const Rml::Variant& v) {
+            if (v.Get<bool>() != settings_.ghost_filter) {
+                settings_.ghost_filter = v.Get<bool>();
+                changed();
+            }
+        });
+    c.BindFunc(
         "classic_controller", [this](Rml::Variant& v) { v = settings_.classic_controller; },
         [this](const Rml::Variant& v) {
             if (v.Get<bool>() != settings_.classic_controller) {

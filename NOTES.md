@@ -240,6 +240,25 @@ aids. Open work is in [TODO.md](TODO.md).
   pure cardinal direction once an axis passes 0.995, so the stick is kept within radius 0.994 -
   except while Z is held: the dodge (Z + stick) needs a fully pushed stick (at 0.994 Aeron only
   strafes). Scripted stick presses are shaped the same way (`PANDORA_FREE_STICK` forces the setting).
+- Ghosting filter (Graphics): the render item `fn_8016D47C` (called from the draw-list executor
+  `fn_804BA628`) draws one full-screen quad (genmode 0x813, three textures: a 32x32 map, the
+  320x240 I8 copy at 0xDEEE40 that the previous items re-copy every frame, and the 640x480 scene
+  copy). It blends the scene copy over itself, shifted, so everything gets a faint double: the
+  user saw it on Aeron's sword. Turning the setting off skips the item (a hook), which removes
+  exactly that draw (screenshots identical to skipping only the quad; 21% of pixels change in
+  the tower hall). It was found by skipping render items, then single quads by genmode, and
+  logging the call stack of each quad's GXBegin in the write-gather pipe. `PANDORA_GHOST_FILTER`
+  forces it in test runs.
+- Keep quick saves (General): the quick saves are `temp00-02.bin` in the save directory, and the
+  game never deletes or rewrites them on a load. What it does is clear the slot's flag in
+  `system.bin`: byte 0x0B, bits 0-2 mean slots 1-3 have save data and bits 3-5 mean they have a
+  quick save. A CRC-like word at the end covers it. `fn_800CEC84(sys, bit, set)` sets and
+  clears those bits. The load menu's "Restart from Quick Save" case (0x8036FE2C) clears bit
+  slot+3 (the call returns to 0x8036FE70) before writing the system data. With the setting on,
+  the hook skips that one clear, so the quick save stays offered and loads again; it was tested
+  twice in a row from the same quick save. Loading normal save data (case 0x8036FCE0) still
+  discards the slot's quick save, as does deleting the slot. `PANDORA_KEEP_QUICKSAVES` forces
+  the setting in test runs.
 - Shake (a binding, and `--press Shake@<frame>`): while held, the remote's acceleration swings
   +-3 g on all three axes at 6 Hz (like Dolphin's emulated shake), replacing a real remote's.
   Which game actions read it is not traced yet (KPADRead returns one sample per call, and the
