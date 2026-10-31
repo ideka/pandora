@@ -65,9 +65,10 @@ No game code or data is included. You need your own copy of the game.
      their first mapping to the default instead). The right stick scrolls the list.
    - **Sound**: volume and mute.
    - **Graphics**: 60 FPS mode, fullscreen, anisotropic filtering (off to 16x), 4x MSAA
-     anti-aliasing (applies after a restart) and removing the ghosting (the game's depth of field,
-     which at high resolutions shows as shifted doubles of the background). Changing texture filtering or the ghosting
-     hides the rest of the menu until you move to another row, so the game shows behind it.
+     anti-aliasing (applies after a restart) and the depth of field: Custom (the default, a smooth
+     blur), Vanilla (the game's, which at high resolutions shows as shifted doubles of the
+     background) or Disabled. Changing texture filtering or the depth of field hides the rest of
+     the menu until you move to another row, so the game shows behind it.
    - **General**: rumble, Classic Controller, free stick direction, keeping quick saves after
      restarting from them (the game deletes them), the mouse pointer, and the real
      Wii Remote's settings and pointer calibration (below).

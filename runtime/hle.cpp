@@ -6,12 +6,16 @@
 #include <string>
 #include <cstdlib>
 
+#include "gpu/aurora_bridge.h"
 #include "input.h"
 #include "log.h"
 #include "memory.h"
 #include "runtime.h"
 
 namespace {
+
+// Custom depth of field: the Gaussian's standard deviation, in pixels of the game's 320x240 copy.
+constexpr float kDofBlur = 1.5f;
 
 // printf-style formatting of a guest format string. Integer arguments come from GPRs starting at
 // first_gpr, then from the caller's parameter save area; doubles from f1-f8 (EABI varargs).
@@ -231,16 +235,25 @@ void Runtime::install_hle() {
         rt.cpu.pc = rt.input().state().pointer_active ? 0x8007BC48 : 0x8007BF24;
     });
 
-    // The ghosting (render item fn_80176D94): the game's depth of field. One full-screen quad
-    // (genmode 0x803) blends a half-size copy of the frame (0xE01A60), blurred by four copies
-    // shifted +-1.67 px (fn_801731EC), over the background, through a depth mask (0xDEEE40). At
-    // 320x240 the four copies merge into a haze; at high resolutions they show as shifted doubles
-    // of the whole background. Removing it skips the item; nothing after it depends on its state.
+    // The depth of field. fn_801731EC (late in the frame) copies the frame at half size and redraws
+    // it shifted +-1.67 px (a blur meant for 320x240), ending with a copy to 0xE01A60. Next frame
+    // the render item fn_80176D94 blends that copy over the background through a depth mask
+    // (0xDEEE40). At 320x240 that is a haze; at high resolutions the copy keeps its detail and the
+    // blend shows shifted doubles of the whole background. Custom blurs the copy (a Gaussian, in
+    // aurora) just before the blend; disabled skips fn_80176D94.
+    hook(0x801731EC, [](Runtime& rt) {
+        if (rt.depth_of_field() == 1 && rt.bridge())
+            rt.bridge()->track_dof_copies();
+        run_original(rt, 0x801731EC);
+    });
     hook(0x80176D94, [](Runtime& rt) {
-        if (rt.remove_ghosting())
+        if (rt.depth_of_field() == 2) {
             rt.ret(rt.cpu.gpr[3]);
-        else
-            run_original(rt, 0x80176D94);
+            return;
+        }
+        if (rt.depth_of_field() == 1 && rt.bridge())
+            rt.bridge()->blur_dof_copy(kDofBlur);
+        run_original(rt, 0x80176D94);
     });
 
     // void fn_800CEC84(sys, bit, set): sets or clears one flag of the system data's save byte

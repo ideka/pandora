@@ -83,8 +83,11 @@ void Settings::load(const std::string& path) {
             anisotropy = a >= 16 ? 16 : a >= 8 ? 8 : a >= 4 ? 4 : a >= 2 ? 2 : 1;
         } else if (key == "keep_quicksaves") {
             keep_quicksaves = parse_bool(value);
-        } else if (key == "remove_ghosting") {
-            remove_ghosting = parse_bool(value);
+        } else if (key == "depth_of_field") {
+            depth_of_field = std::clamp(std::atoi(value.c_str()), 0, 2);
+        } else if (key == "remove_ghosting") {  // before depth_of_field: removing it was the only choice
+            if (parse_bool(value))
+                depth_of_field = 2;
         } else if (key == "msaa") {
             msaa = std::atoi(value.c_str()) >= 4 ? 4 : 1;
         } else {
@@ -123,7 +126,7 @@ bool Settings::save(const std::string& path) const {
     out << "classic_controller=" << (classic_controller ? 1 : 0) << "\n";
     out << "anisotropy=" << anisotropy << "\n";
     out << "keep_quicksaves=" << (keep_quicksaves ? 1 : 0) << "\n";
-    out << "remove_ghosting=" << (remove_ghosting ? 1 : 0) << "\n";
+    out << "depth_of_field=" << depth_of_field << "\n";
     out << "msaa=" << msaa << "\n";
     auto write = [&](const char* prefix, const char* id, const Mappings& m) {
         for (size_t d = 0; d < kDeviceCount; d++)

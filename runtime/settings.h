@@ -20,7 +20,7 @@ struct Settings {
     bool classic_controller = false;  // a Classic Controller instead of the Nunchuk
     bool keep_quicksaves = false;   // loading a quick save leaves it in place (the game discards it)
     int anisotropy = 16;            // anisotropic filtering forced on the game's textures: 1 (off), 2, 4, 8, 16
-    bool remove_ghosting = false;   // skip the game's full-screen composite that leaves a faint double image
+    int depth_of_field = 1;         // 0 the game's, 1 custom (a smooth blur at any resolution), 2 off
     int msaa = 1;                   // anti-aliasing samples: 1 (off) or 4 (applies at startup)
     Bindings bindings = Bindings::defaults();
 

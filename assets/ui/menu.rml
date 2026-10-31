@@ -88,9 +88,10 @@
             <span class="note">4x MSAA: smoother edges; takes effect after restarting</span>
         </div>
         <div class="setting live">
-            <span class="name">Remove ghosting</span>
-            <input type="checkbox" data-checked="remove_ghosting"/>
-            <span class="note">The game's depth of field, which at high resolutions doubles the background</span>
+            <span class="name">Depth of field</span>
+            <input type="range" min="0" max="2" step="1" data-value="depth_of_field"/>
+            <span class="value">{{ depth_of_field == 0 ? 'Vanilla' : depth_of_field == 1 ? 'Custom' : 'Disabled' }}</span>
+            <span class="note">Custom: a smooth blur; Vanilla doubles the background at high resolutions</span>
         </div>
     </div>
 

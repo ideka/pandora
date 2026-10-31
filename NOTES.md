@@ -240,19 +240,31 @@ aids. Open work is in [TODO.md](TODO.md).
   pure cardinal direction once an axis passes 0.995, so the stick is kept within radius 0.994 -
   except while Z is held: the dodge (Z + stick) needs a fully pushed stick (at 0.994 Aeron only
   strafes). Scripted stick presses are shaped the same way (`PANDORA_FREE_STICK` forces the setting).
-- Remove ghosting (Graphics, off by default): the game's depth of field, render item
-  `fn_80176D94` (called from the draw-list executor `fn_804BA628`). One full-screen quad (genmode
-  0x803) blends a half-size copy of the frame (0xE01A60) over the background through a depth
-  mask (the 320x240 I8 copy at 0xDEEE40). That copy was blurred just before by `fn_801731EC`,
-  which draws a half-size copy back four times shifted +-1.67 px. At the Wii's 320x240 the four
-  copies merge into a haze; at high resolutions the half-size copy keeps its detail and they show
-  as shifted doubles of the whole background (the user's Treetop Tower 2F quick save, at 4K). The
-  setting skips the item: 74% of that frame changes, foreground and brightness stay. Found by
-  capturing the EFB before each post-effect draw at 4K (`--shot-draw`, `PANDORA_SHOT_SCALE=4`,
-  `--window 3840x2160`): sharp before draw 0x803, smeared after. The first guess,
-  `fn_8016D47C` (the last composite, genmode 0x813, which blends the scene copy back through a
-  tiled 32x32 dither), only changes brightness. `PANDORA_REMOVE_GHOSTING` forces the setting.
-- Live preview: rows with the `live` class (anisotropic filtering, remove ghosting) hide the
+- Depth of field (Graphics: Vanilla, Custom (default), Disabled). Late in each frame
+  `fn_801731EC` copies the frame at half size (0xC49A40, RGB565) and draws it back four times
+  shifted +-1.67 px, twice (the second time depth-tested onto the background), ending with a copy
+  to 0xE01A60. In the user's Treetop Tower 2F quick save those draws change nothing (the three
+  copies read back identical). Next frame the render item `fn_80176D94` (called from the
+  draw-list executor `fn_804BA628`; one full-screen quad, genmode 0x803, three texgens) blends
+  0xE01A60 over the background through a depth mask (the 320x240 I8 copy at 0xDEEE40). At the
+  Wii's 320x240 the result is a haze; at high resolutions the half-size copy keeps its detail and
+  the blend shows it as shifted doubles of the whole background.
+  - Disabled skips `fn_80176D94`: 56% of that frame at 4K changes.
+    Found by capturing the EFB before each post-effect draw at 4K (`--shot-draw`,
+    `PANDORA_SHOT_SCALE=4`, `--window 3840x2160`): sharp before draw 0x803, smeared after. The first
+    guess, `fn_8016D47C` (the last composite, genmode 0x813, which blends the scene copy back
+    through a tiled 32x32 dither), only changes brightness.
+  - Custom blurs 0xE01A60 in place (a separable Gaussian, sigma 1.5 of its 320x240 pixels) just
+    before the blend. The bridge notes the full-frame half-size RGB565 copies from
+    `fn_801731EC`'s start to the display copy; at `fn_80176D94` it sends aurora
+    `GX_AURORA_BLUR_COPY_TEX` (patches/aurora/0011) for the last one. Aurora seals the EFB pass,
+    blurs the copy texture after it (horizontal into a scratch texture, vertical back) and goes on
+    in a pass that loads the EFB. Blurring the first copy instead does nothing, since the shifted
+    draws don't change the frame. The strength was matched against Vanilla at 640x480 (RMS
+    difference 2.4 at 1.5, 3.2 at 2.5, 9.1 with the effect disabled) and shows no doubles at 4K.
+  - `PANDORA_DEPTH_OF_FIELD` (0 Vanilla, 1 Custom, 2 Disabled) forces the setting. Settings files
+    from before keep `remove_ghosting=1` as Disabled.
+- Live preview: rows with the `live` class (anisotropic filtering, depth of field) hide the
   rest of the menu when changed (`SettingsMenu::set_preview`: every sibling of the row and of
   its ancestors gets `preview-hidden`; RmlUi can't show a child of a hidden element). Moving off
   the row or closing the menu restores it. The game keeps running behind the menu (only F5

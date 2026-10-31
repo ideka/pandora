@@ -137,10 +137,11 @@ bool SettingsMenu::init(const std::string& asset_dir) {
             }
         });
     c.BindFunc(
-        "remove_ghosting", [this](Rml::Variant& v) { v = settings_.remove_ghosting; },
+        "depth_of_field", [this](Rml::Variant& v) { v = settings_.depth_of_field; },
         [this](const Rml::Variant& v) {
-            if (v.Get<bool>() != settings_.remove_ghosting) {
-                settings_.remove_ghosting = v.Get<bool>();
+            const int mode = std::clamp((int)std::lround(v.Get<float>()), 0, 2);
+            if (mode != settings_.depth_of_field) {
+                settings_.depth_of_field = mode;
                 changed();
             }
         });

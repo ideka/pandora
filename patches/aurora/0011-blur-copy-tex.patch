@@ -1,0 +1,307 @@
+diff --git a/include/dolphin/gx/GXAurora.h b/include/dolphin/gx/GXAurora.h
+--- a/include/dolphin/gx/GXAurora.h
++++ b/include/dolphin/gx/GXAurora.h
+@@ -98,6 +98,13 @@ extern "C" {
+ /** Sets whether subsequent draws wait for pipeline compilation. Followed by a u8 boolean. */
+ #define GX_AURORA_SET_DRAWS_BLOCKING 0x0042
+ 
++/**
++ * Blurs a texture copy in place with a separable Gaussian, at this point in the command stream.
++ * Followed by a u64 copy destination and an f32 standard deviation in the copy's pixels (its size
++ * as copied, before any render-resolution scaling). Does nothing if there is no copy there.
++ */
++#define GX_AURORA_BLUR_COPY_TEX 0x0043
++
+ /**
+  * Asynchronous readback of EFB points.
+  *
+diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
+--- a/lib/gx/command_processor.cpp
++++ b/lib/gx/command_processor.cpp
+@@ -738,6 +738,15 @@ void handle_aurora(ByteReader& reader) noexcept {
+       g_gxState.drawsBlocking = blocking;
+       g_gxState.dirty |= DirtyPipeline;
+     }
++  } else if (subCmd == GX_AURORA_BLUR_COPY_TEX) {
++    const auto dest = reinterpret_cast<const void*>(reader.read<u64>());
++    const f32 sigma = reader.read<f32>();
++    const auto it = g_gxState.copyTextures.find(dest);
++    if (it != g_gxState.copyTextures.end() && it->second && it->second.width != 0 && sigma > 0.f) {
++      // The copy texture may be scaled to the render resolution
++      const auto& handle = it->second.handle;
++      gfx::blur_texture(handle, sigma * static_cast<float>(handle->size.width) / static_cast<float>(it->second.width));
++    }
+   } else if (subCmd == GX_AURORA_LOAD_COPY_SRC) {
+     const s32 left = reader.read<s32>();
+     const s32 top = reader.read<s32>();
+diff --git a/lib/gfx/recording.hpp b/lib/gfx/recording.hpp
+--- a/lib/gfx/recording.hpp
++++ b/lib/gfx/recording.hpp
+@@ -114,6 +114,8 @@ PipelineRef pipeline_ref(const PipelineConfig& config);
+ void resolve_pass_into(TextureHandle texture, ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth,
+                        Vec4<float> clearColorValue, float clearDepthValue, GXTexFmt resolveFormat,
+                        GXPixelFmt sourceFormat);
++// Blurs a texture in place (a separable Gaussian, sigma in texels) after what was drawn so far.
++void blur_texture(TextureHandle texture, float sigma);
+ uint32_t align_uniform(uint32_t value);
+ Vec2<uint32_t> get_render_target_size() noexcept;
+ void set_viewport(const Viewport& viewport) noexcept;
+diff --git a/lib/gfx/recording.cpp b/lib/gfx/recording.cpp
+--- a/lib/gfx/recording.cpp
++++ b/lib/gfx/recording.cpp
+@@ -20,7 +20,9 @@
+ #endif
+ #include "../window.hpp"
+ 
++#include <algorithm>
+ #include <array>
++#include <cmath>
+ #include <cstring>
+ #include <new>
+ #include <optional>
+@@ -1106,6 +1108,25 @@ bool resolve_pass(const ResolveDesc& desc, ResolvedTargets& out) {
+   return true;
+ }
+ 
++void blur_texture(TextureHandle texture, float sigma) {
++  if (!g_recorder.active() || g_recorder.currentRenderPass == UINT32_MAX || g_recorder.inOffscreen || !texture) {
++    return;
++  }
++  auto& prevPass = current_render_passes()[g_recorder.currentRenderPass];
++  const auto& size = texture->size;
++  const auto radius = std::min<uint32_t>(static_cast<uint32_t>(std::ceil(sigma * 3.f)), 128);
++  prevPass.blurUniformRanges = {
++      push_uniform(tex_copy_conv::BlurUniforms{
++          .step = {1.f / static_cast<float>(size.width), 0.f}, .sigma = sigma, .radius = radius}),
++      push_uniform(tex_copy_conv::BlurUniforms{
++          .step = {0.f, 1.f / static_cast<float>(size.height)}, .sigma = sigma, .radius = radius}),
++  };
++  prevPass.blurTarget = std::move(texture);
++  // Seal the current EFB pass and continue on a new one that loads the existing contents.
++  enqueue_pass(current_frame_packet(), g_recorder.currentRenderPass);
++  resume_efb_pass_loading(prevPass);
++}
++
+ ReadbackCapture readback_capture() noexcept {
+   if (!g_recorder.active() || g_recorder.currentRenderPass == UINT32_MAX) {
+     return {};
+diff --git a/lib/gfx/frame_packet.hpp b/lib/gfx/frame_packet.hpp
+--- a/lib/gfx/frame_packet.hpp
++++ b/lib/gfx/frame_packet.hpp
+@@ -98,6 +98,8 @@ struct RenderPass {
+   wgpu::Texture snapshotColorDst;
+   wgpu::TextureView snapshotDepthDst;
+   wgpu::Texture snapshotNormalDst;
++  TextureHandle blurTarget;                // blurred in place after the pass (GX_AURORA_BLUR_COPY_TEX)
++  std::array<Range, 2> blurUniformRanges;  // horizontal, vertical
+   float clearDepthValue = 1.f;
+   wgpu::LoadOp depthLoadOp = wgpu::LoadOp::Undefined;
+   wgpu::StoreOp depthStoreOp = wgpu::StoreOp::Store;
+@@ -114,7 +116,9 @@ struct RenderPass {
+   std::vector<tex_palette_conv::ConvRequest> paletteConvs;
+ 
+   RenderTargetLayout target_layout() const noexcept;
+-  bool has_consumer() const { return resolveTarget || snapshotColorDst || snapshotDepthDst || snapshotNormalDst; }
++  bool has_consumer() const {
++    return resolveTarget || snapshotColorDst || snapshotDepthDst || snapshotNormalDst || blurTarget;
++  }
+   bool has_content() const {
+     if (hasDraws || clearDepth) {
+       return true;
+diff --git a/lib/gfx/encoding.cpp b/lib/gfx/encoding.cpp
+--- a/lib/gfx/encoding.cpp
++++ b/lib/gfx/encoding.cpp
+@@ -294,6 +294,9 @@ void render(wgpu::CommandEncoder& cmd, FramePacket& frame, RenderPass& passInfo,
+       cmd.CopyTextureToTexture(&src, &dst, &size);
+     }
+   }
++  if (passInfo.blurTarget) {
++    tex_copy_conv::blur(cmd, passInfo.blurTarget, passInfo.blurUniformRanges);
++  }
+ 
+   if (passInfo.snapshotColorDst) {
+     const webgpu::gpu_prof::Zone zone{cmd, "Pass snapshot"};
+diff --git a/lib/gfx/tex_copy_conv.hpp b/lib/gfx/tex_copy_conv.hpp
+--- a/lib/gfx/tex_copy_conv.hpp
++++ b/lib/gfx/tex_copy_conv.hpp
+@@ -21,6 +21,14 @@ struct alignas(16) Uniforms {
+ };
+ static_assert(sizeof(Uniforms) == 32);
+ 
++// One pass of the separable Gaussian applied to a copy (GX_AURORA_BLUR_COPY_TEX).
++struct alignas(16) BlurUniforms {
++  Vec2<float> step; // one texel along the pass direction, in UV units
++  float sigma;      // in texels
++  uint32_t radius;  // taps each side, in texels
++};
++static_assert(sizeof(BlurUniforms) == 16);
++
+ struct ConvRequest {
+   GXTexFmt fmt;
+   GXPixelFmt srcFmt;
+@@ -36,6 +44,8 @@ void initialize();
+ void shutdown();
+ void run(const wgpu::CommandEncoder& cmd, const ConvRequest& req);
+ void blit(const wgpu::CommandEncoder& cmd, const ConvRequest& req);
++// Blurs a texture in place: horizontally into a scratch texture, then vertically back.
++void blur(const wgpu::CommandEncoder& cmd, const TextureHandle& tex, const std::array<Range, 2>& uniformRanges);
+ 
+ bool snapshot_depth_supported() noexcept;
+ void snapshot_depth(const wgpu::CommandEncoder& cmd, const wgpu::TextureView& srcDepth, uint32_t msaaSamples,
+diff --git a/lib/gfx/tex_copy_conv.cpp b/lib/gfx/tex_copy_conv.cpp
+--- a/lib/gfx/tex_copy_conv.cpp
++++ b/lib/gfx/tex_copy_conv.cpp
+@@ -375,6 +375,8 @@ static wgpu::BindGroupLayout g_bindGroupLayout;
+ static wgpu::BindGroupLayout g_depthBindGroupLayout;
+ static wgpu::Sampler g_nearestSampler;
+ static wgpu::Sampler g_linearSampler;
++static absl::flat_hash_map<wgpu::TextureFormat, wgpu::RenderPipeline> g_blurPipelines;
++static TextureHandle g_blurScratch;
+ static absl::flat_hash_map<GXTexFmt, wgpu::RenderPipeline> g_pipelines;
+ static wgpu::RenderPipeline g_blitPipeline;
+ static wgpu::BindGroupLayout g_depthSnapshotBindGroupLayout;
+@@ -498,6 +500,135 @@ static wgpu::RenderPipeline create_pipeline(const ConvPipeline& conv, const std:
+ 
+ bool needs_conversion(const GXTexFmt fmt) { return g_pipelines.contains(fmt); }
+ 
++// One pass of a separable Gaussian. Pairs of taps share one bilinear sample, placed between them
++// by their weights.
++static constexpr std::string_view BlurShader = R"(
++@group(0) @binding(0) var src_samp: sampler;
++@group(0) @binding(1) var src: texture_2d<f32>;
++
++struct BlurUniforms {
++    step: vec2f,
++    sigma: f32,
++    radius: u32,
++};
++@group(0) @binding(2) var<uniform> ubuf: BlurUniforms;
++
++struct VertexOutput {
++    @builtin(position) pos: vec4f,
++    @location(0) uv: vec2f,
++};
++
++var<private> positions: array<vec2f, 3> = array(
++    vec2f(-1.0, 1.0),
++    vec2f(-1.0, -3.0),
++    vec2f(3.0, 1.0),
++);
++var<private> uvs: array<vec2f, 3> = array(
++    vec2f(0.0, 0.0),
++    vec2f(0.0, 2.0),
++    vec2f(2.0, 0.0),
++);
++
++@vertex fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
++    var out: VertexOutput;
++    out.pos = vec4f(positions[vi], 0.0, 1.0);
++    out.uv = uvs[vi];
++    return out;
++}
++
++@fragment fn fs_main(in: VertexOutput) -> @location(0) vec4f {
++    let k = -0.5 / (ubuf.sigma * ubuf.sigma);
++    var sum = textureSampleLevel(src, src_samp, in.uv, 0.0);
++    var total = 1.0;
++    for (var i = 1u; i <= ubuf.radius; i += 2u) {
++        let a = f32(i);
++        let b = a + 1.0;
++        let wa = exp(k * a * a);
++        let wb = exp(k * b * b);
++        let w = wa + wb;
++        let o = ubuf.step * ((a * wa + b * wb) / w);
++        sum += (textureSampleLevel(src, src_samp, in.uv + o, 0.0) +
++                textureSampleLevel(src, src_samp, in.uv - o, 0.0)) * w;
++        total += 2.0 * w;
++    }
++    return sum / total;
++}
++)"sv;
++
++static const wgpu::RenderPipeline& blur_pipeline(wgpu::TextureFormat format) {
++  auto& pipeline = g_blurPipelines[format];
++  if (!pipeline) {
++    pipeline = create_pipeline({GX_TF_RGBA8, "", format, "TexCopyConv Blur"}, BlurShader, g_bindGroupLayout);
++  }
++  return pipeline;
++}
++
++static void blur_pass(const wgpu::CommandEncoder& cmd, const wgpu::RenderPipeline& pipeline,
++                      const wgpu::TextureView& src, const wgpu::TextureView& dst, const Range& uniformRange) {
++  const std::array bindGroupEntries{
++      wgpu::BindGroupEntry{
++          .binding = 0,
++          .sampler = g_linearSampler,
++      },
++      wgpu::BindGroupEntry{
++          .binding = 1,
++          .textureView = src,
++      },
++      wgpu::BindGroupEntry{
++          .binding = 2,
++          .buffer = detail::resources().uniformBuffer,
++          .offset = uniformRange.offset,
++          .size = uniformRange.size,
++      },
++  };
++  const wgpu::BindGroupDescriptor bindGroupDescriptor{
++      .layout = g_bindGroupLayout,
++      .entryCount = bindGroupEntries.size(),
++      .entries = bindGroupEntries.data(),
++  };
++  const auto bindGroup = g_device.CreateBindGroup(&bindGroupDescriptor);
++  const std::array colorAttachments{
++      wgpu::RenderPassColorAttachment{
++          .view = dst,
++          .loadOp = wgpu::LoadOp::Clear,
++          .storeOp = wgpu::StoreOp::Store,
++          .clearValue = {0.0, 0.0, 0.0, 0.0},
++      },
++  };
++  const wgpu::RenderPassDescriptor renderPassDescriptor{
++      .label = "TexCopyConv Blur Pass",
++      .colorAttachmentCount = colorAttachments.size(),
++      .colorAttachments = colorAttachments.data(),
++      .timestampWrites = webgpu::gpu_prof::pass_writes("Copy blur"),
++  };
++  const auto pass = cmd.BeginRenderPass(&renderPassDescriptor);
++  pass.SetPipeline(pipeline);
++  pass.SetBindGroup(0, bindGroup);
++  pass.Draw(3);
++  pass.End();
++}
++
++void blur(const wgpu::CommandEncoder& cmd, const TextureHandle& tex, const std::array<Range, 2>& uniformRanges) {
++  const auto& pipeline = blur_pipeline(tex->format);
++  if (!pipeline) {
++    return;
++  }
++  if (!g_blurScratch || g_blurScratch->size.width != tex->size.width ||
++      g_blurScratch->size.height != tex->size.height || g_blurScratch->format != tex->format) {
++    const wgpu::TextureDescriptor descriptor{
++        .label = "TexCopyConv Blur Scratch",
++        .usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::RenderAttachment,
++        .size = {tex->size.width, tex->size.height, 1},
++        .format = tex->format,
++    };
++    auto texture = g_device.CreateTexture(&descriptor);
++    auto view = texture.CreateView();
++    g_blurScratch = std::make_shared<TextureRef>(texture, view, view, descriptor.size, tex->format, 1, 0);
++  }
++  blur_pass(cmd, pipeline, tex->sampleTextureView, g_blurScratch->attachmentTextureView, uniformRanges[0]);
++  blur_pass(cmd, pipeline, g_blurScratch->sampleTextureView, tex->attachmentTextureView, uniformRanges[1]);
++}
++
+ void initialize() {
+   static constexpr std::array bindGroupLayoutEntries{
+       wgpu::BindGroupLayoutEntry{
+@@ -601,6 +732,8 @@ void initialize() {
+ 
+ void shutdown() {
+   g_pipelines.clear();
++  g_blurPipelines.clear();
++  g_blurScratch.reset();
+   g_blitPipeline = {};
+   g_bindGroupLayout = {};
+   g_depthBindGroupLayout = {};

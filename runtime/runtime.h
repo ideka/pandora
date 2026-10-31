@@ -81,8 +81,8 @@ public:
     void reset_remote_speaker_decoder() { audio_out_.reset_speaker(); }
     int audio_queued_ms() const { return audio_out_.queued_ms(); }
     // Skip the game's full-screen composite that leaves a faint double image (a setting).
-    void set_remove_ghosting(bool remove) { remove_ghosting_ = remove; }
-    bool remove_ghosting() const { return remove_ghosting_; }
+    void set_depth_of_field(int mode) { depth_of_field_ = mode; }
+    int depth_of_field() const { return depth_of_field_; }
     // Loading a quick save leaves it in place (the game clears its flag in the system data).
     void set_keep_quicksaves(bool keep) { keep_quicksaves_ = keep; }
     bool keep_quicksaves() const { return keep_quicksaves_; }
@@ -147,7 +147,7 @@ private:
     std::unique_ptr<Ios> ios_;
     AudioDump audio_dump_;
     AudioOut audio_out_;
-    bool remove_ghosting_ = false;
+    int depth_of_field_ = 1;
     bool keep_quicksaves_ = false;
     bool speaker_on_ = false, speaker_playing_ = false;  // the game's speaker state
     struct Continuation {

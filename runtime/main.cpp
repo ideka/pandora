@@ -161,8 +161,8 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
         settings.anisotropy = std::atoi(aniso);
     if (const char* keep = std::getenv("PANDORA_KEEP_QUICKSAVES"))  // test runs: force keeping quick saves on/off
         settings.keep_quicksaves = *keep != '0';
-    if (const char* ghost = std::getenv("PANDORA_REMOVE_GHOSTING"))  // test runs: force removing the ghosting on/off
-        settings.remove_ghosting = *ghost != '0';
+    if (const char* dof = std::getenv("PANDORA_DEPTH_OF_FIELD"))  // test runs: 0 the game's, 1 custom, 2 off
+        settings.depth_of_field = std::clamp(std::atoi(dof), 0, 2);
 
     LOG_INFO("main", "pandora %s, built %s", PANDORA_VERSION, PANDORA_BUILD_TIME);
     AuroraConfig config{};
@@ -228,7 +228,7 @@ static int run_windowed(Runtime& rt, int argc, char** argv, bool background, boo
         rt.input().set_free_stick(settings.free_stick);
         rt.input().set_classic(settings.classic_controller);
         aurora_set_forced_anisotropy((uint16_t)settings.anisotropy);
-        rt.set_remove_ghosting(settings.remove_ghosting);
+        rt.set_depth_of_field(settings.depth_of_field);
         rt.set_keep_quicksaves(settings.keep_quicksaves);
         rt.input().set_sensor_bar_above(settings.sensor_bar_above);
         rt.input().set_ir_sensitivity(settings.ir_sensitivity);

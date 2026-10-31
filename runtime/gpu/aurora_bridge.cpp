@@ -3,6 +3,7 @@
 #include <intrin.h>
 
 #include <algorithm>
+#include <bit>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -24,7 +25,8 @@ namespace {
 // Aurora extension opcode and subcommands (include/dolphin/gx/GXAurora.h).
 constexpr u8 GX_AURORA = 0x50;
 constexpr u16 LOAD_ARRAYBASE = 0x0010, LOAD_TEXOBJ = 0x0030, LOAD_TLUT = 0x0031, LOAD_COPY_SRC = 0x0035,
-              LOAD_COPY_DST = 0x0036, LOAD_COPY_DEST = 0x0037;
+              LOAD_COPY_DST = 0x0036, LOAD_COPY_DEST = 0x0037,
+              BLUR_COPY_TEX = 0x0043;
 
 u32 be32(const u8* p) { return (u32)p[0] << 24 | (u32)p[1] << 16 | (u32)p[2] << 8 | p[3]; }
 u16 be16(const u8* p) { return (u16)(p[0] << 8 | p[1]); }
@@ -497,6 +499,7 @@ void AuroraBridge::efb_copy(u32 control) {
         if ((control >> 11) & 1)
             display_clear_ = {true, copy_src_, copy_size_, bp_[0x4F], bp_[0x50], bp_[0x51]};
         frame_end_ = true;
+        dof_tracking_ = false;
         frames_++;
         frame_copies_ = 0;
         frame_draws_ = 0;
@@ -526,6 +529,8 @@ void AuroraBridge::efb_copy(u32 control) {
     aurora_cmd(LOAD_COPY_DEST);
     const u64 dest = host((copy_dest_ & 0x00FFFFFF) << 5, (u32)(w * h * 4));
     put64(dest);
+    if (dof_tracking_ && half && w == 640 && h == 480 && copy_format(control) == 4)  // RGB565
+        dof_copy_ = dest;
     for (auto it = copy_shots_.begin(); it != copy_shots_.end();) {
         if (it->frame != frames_ || it->index != frame_copies_) {
             ++it;
@@ -540,6 +545,17 @@ void AuroraBridge::efb_copy(u32 control) {
         it = copy_shots_.erase(it);
     }
     frame_copies_++;
+}
+
+void AuroraBridge::blur_dof_copy(float sigma) {
+    if (!dof_copy_)
+        return;
+    if (frames_ == debug_frame())
+        LOG_DEBUG("bridge", "  blur copy %016llX by %.2f", (unsigned long long)dof_copy_, sigma);
+    aurora_cmd(BLUR_COPY_TEX);
+    put64(dof_copy_);
+    put32(std::bit_cast<u32>(sigma));
+    dof_copy_ = 0;
 }
 
 void AuroraBridge::request_copy_shot(u64 frame, u32 index, std::string path) {
