@@ -64,10 +64,6 @@ public:
     void request_draw_shot(u64 frame, u32 draw, std::string path);
     void poll_screenshot();
 
-    // Custom depth of field: blurs in place the frame's last full-frame, half-size RGB565 copy (the
-    // game's blurred frame), with a Gaussian of this standard deviation in the copy's pixels.
-    void blur_dof_copy(float sigma);
-
 private:
     void write(const void* data, u32 len);
     void aurora_cmd(u16 sub);
@@ -120,7 +116,6 @@ private:
     u32 copy_src_ = 0, copy_size_ = 0, copy_dest_ = 0;
 
     bool frame_end_ = false;
-    u64 dof_copy_ = 0;  // host address of this frame's last full-frame, half-size RGB565 copy
     u32 display_gamma_ = 99, display_filter_[2] = {};  // the display copy's gamma (BP 0x52 bits 7-8) and copy filter (0x53/0x54), logged on change
     // A display copy's clear, deferred to the next frame: aurora presents the EFB itself, so
     // clearing at the copy would wipe the frame before it is shown.
