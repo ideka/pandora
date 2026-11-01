@@ -499,7 +499,7 @@ void AuroraBridge::efb_copy(u32 control) {
         if ((control >> 11) & 1)
             display_clear_ = {true, copy_src_, copy_size_, bp_[0x4F], bp_[0x50], bp_[0x51]};
         frame_end_ = true;
-        dof_tracking_ = false;
+        dof_copy_ = 0;
         frames_++;
         frame_copies_ = 0;
         frame_draws_ = 0;
@@ -529,7 +529,7 @@ void AuroraBridge::efb_copy(u32 control) {
     aurora_cmd(LOAD_COPY_DEST);
     const u64 dest = host((copy_dest_ & 0x00FFFFFF) << 5, (u32)(w * h * 4));
     put64(dest);
-    if (dof_tracking_ && half && w == 640 && h == 480 && copy_format(control) == 4)  // RGB565
+    if (half && w == 640 && h == 480 && copy_format(control) == 4)  // RGB565
         dof_copy_ = dest;
     for (auto it = copy_shots_.begin(); it != copy_shots_.end();) {
         if (it->frame != frames_ || it->index != frame_copies_) {

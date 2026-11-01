@@ -255,13 +255,15 @@ aids. Open work is in [TODO.md](TODO.md).
     guess, `fn_8016D47C` (the last composite, genmode 0x813, which blends the scene copy back
     through a tiled 32x32 dither), only changes brightness.
   - Custom blurs 0xE01A60 in place (a separable Gaussian, sigma 1.5 of its 320x240 pixels) just
-    before the blend. The bridge notes the full-frame half-size RGB565 copies from
-    `fn_801731EC`'s start to the display copy; at `fn_80176D94` it sends aurora
-    `GX_AURORA_BLUR_COPY_TEX` (patches/aurora/0011) for the last one. Aurora seals the EFB pass,
-    blurs the copy texture after it (horizontal into a scratch texture, vertical back) and goes on
-    in a pass that loads the EFB. Blurring the first copy instead does nothing, since the shifted
-    draws don't change the frame. The strength was matched against Vanilla at 640x480 (RMS
-    difference 2.4 at 1.5, 3.2 at 2.5, 9.1 with the effect disabled) and shows no doubles at 4K.
+    before the blend. The bridge remembers the frame's last full-frame, half-size RGB565 copy; at
+    `fn_80176D94` it sends aurora `GX_AURORA_BLUR_COPY_TEX` (patches/aurora/0011) for it. Aurora
+    seals the EFB pass, blurs the copy texture after it (horizontal into a scratch texture,
+    vertical back) and goes on in a pass that loads the EFB. Not every scene goes through
+    `fn_801731EC`: in the user's current saves the 0xE01A60 copy is a plain one with no
+    shifted draws, so Custom must not depend on it (the first version did and changed nothing
+    there). Blurring the first `fn_801731EC` copy instead does nothing, since the shifted draws
+    don't change the frame. The strength was matched against Vanilla at 640x480 (RMS difference
+    2.4 at 1.5, 3.2 at 2.5, 9.1 with the effect disabled) and shows no doubles at 4K.
   - `PANDORA_DEPTH_OF_FIELD` (0 Vanilla, 1 Custom, 2 Disabled) forces the setting. Settings files
     from before keep `remove_ghosting=1` as Disabled.
 - Live preview: rows with the `live` class (anisotropic filtering, depth of field) hide the

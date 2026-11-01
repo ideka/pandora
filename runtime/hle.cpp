@@ -235,17 +235,13 @@ void Runtime::install_hle() {
         rt.cpu.pc = rt.input().state().pointer_active ? 0x8007BC48 : 0x8007BF24;
     });
 
-    // The depth of field. fn_801731EC (late in the frame) copies the frame at half size and redraws
-    // it shifted +-1.67 px (a blur meant for 320x240), ending with a copy to 0xE01A60. Next frame
-    // the render item fn_80176D94 blends that copy over the background through a depth mask
-    // (0xDEEE40). At 320x240 that is a haze; at high resolutions the copy keeps its detail and the
-    // blend shows shifted doubles of the whole background. Custom blurs the copy (a Gaussian, in
-    // aurora) just before the blend; disabled skips fn_80176D94.
-    hook(0x801731EC, [](Runtime& rt) {
-        if (rt.depth_of_field() == 1 && rt.bridge())
-            rt.bridge()->track_dof_copies();
-        run_original(rt, 0x801731EC);
-    });
+    // The depth of field. Earlier in the frame the game copies it at half size to 0xE01A60 (in some
+    // scenes fn_801731EC first redraws the copy shifted +-1.67 px, a blur meant for 320x240; in
+    // others it is a plain copy). The render item fn_80176D94 then blends that copy over the
+    // background through a depth mask (0xDEEE40). At 320x240 that is a haze; at high resolutions
+    // the copy keeps its detail and the blend shows doubles of the whole background. Custom blurs
+    // the frame's last half-size copy (a Gaussian, in aurora) just before the blend; disabled
+    // skips fn_80176D94.
     hook(0x80176D94, [](Runtime& rt) {
         if (rt.depth_of_field() == 2) {
             rt.ret(rt.cpu.gpr[3]);
